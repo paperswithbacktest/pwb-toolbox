@@ -1,0 +1,2 @@
+#!/bin/bash
+pylint systematic_trading --rcfile=.pylintrc -f text
