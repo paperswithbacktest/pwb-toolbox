@@ -7,7 +7,7 @@ Financial markets are complex systems like no other. Extracting signal from fina
 
 > **pip install systematic-trading**
 
-We lower barriers to entry for all users by providing extensive [documentation and tutorialss](https://www.edarchimbaud.com/become-a-quant-trader.html).
+We lower barriers to entry for all users by providing extensive [documentation and tutorials](https://www.edarchimbaud.com/become-a-quant-trader.html).
 
 # Who am I?
 
