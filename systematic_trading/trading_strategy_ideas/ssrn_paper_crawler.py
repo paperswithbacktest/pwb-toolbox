@@ -29,7 +29,7 @@ class SsrnPaperCrawler:
 
     def from_kili(self, src_kili_project_id: str):
         """
-        List all abstract ids from Quantpedia
+        List all abstract ids from Kili
         """
         kili_client = Kili(api_key=os.getenv("KILI_API_KEY"))
         assets = kili_client.assets(
