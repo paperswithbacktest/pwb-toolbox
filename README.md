@@ -1,9 +1,9 @@
 <div align="center">
-  <img src="static/images/future-trading.jpeg" height=200 alt=""/>
+  <img src="static/images/systematic-trading.jpeg" height=200 alt=""/>
   <h1>Systematic Trading</h1>
 </div>
 
-The `systematic-trading` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms.
+The `systematic-trading` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms. For detailed instructions on how to use this package effectively, please refer to the associated Substack publication by visiting: https://edarchimbaud.substack.com/.
 
 
 ## Installation
