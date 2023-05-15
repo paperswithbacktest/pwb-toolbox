@@ -1,0 +1,6 @@
+beautifulsoup4
+datasets
+huggingface_hub
+pandas
+tqdm
+yfinance

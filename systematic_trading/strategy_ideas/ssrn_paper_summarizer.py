@@ -1,5 +1,5 @@
 """
-Zero-shot Classifier module.
+SSRN Paper Summarizer.
 """
 import os
 import json
