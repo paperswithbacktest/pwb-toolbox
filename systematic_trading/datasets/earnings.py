@@ -1,13 +1,13 @@
 """
-Timeseries daily data.
+Earnings data.
 """
 from dataset import Dataset
 import pandas as pd
 
 
-class TimeseriesDaily(Dataset):
+class Earnings(Dataset):
     """
-    Timeseries daily data.
+    Earnings data.
     """
 
     def __init__(self):
@@ -15,11 +15,8 @@ class TimeseriesDaily(Dataset):
         self.expected_columns = [
             "symbol",
             "date",
-            "open",
-            "high",
-            "low",
-            "close",
-            "adj_close",
-            "volume",
+            "eps_estimate",
+            "reported_eps",
+            "surprise",
         ]
         self.data = pd.DataFrame(columns=self.expected_columns)

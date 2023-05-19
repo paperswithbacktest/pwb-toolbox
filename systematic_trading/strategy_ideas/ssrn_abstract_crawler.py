@@ -5,7 +5,6 @@ import time
 from typing import Optional
 
 from bs4 import BeautifulSoup
-import click
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -79,22 +78,3 @@ class SsrnAbstractCrawler:
             abstract_ids = list(set(abstract_ids))
             time.sleep(10)
             self.__download_and_save_to_kili(abstract_ids)
-
-
-@click.command()
-@click.option("--mode", default="")
-@click.option("--jel-code", default="G14", help="JEL code: G14, G12, G11")
-@click.option("--from-page", default=1)
-@click.option("--kili-project-id")
-def main(mode: str, jel_code: str, from_page: int, kili_project_id: str):
-    """
-    Main entrypoint.
-    """
-    if mode == "jel-code":
-        SsrnAbstractCrawler(kili_project_id=kili_project_id).from_jel_code(
-            jel_code, from_page
-        )
-
-
-if __name__ == "__main__":
-    main()

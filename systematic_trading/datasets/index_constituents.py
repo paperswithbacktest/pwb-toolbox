@@ -3,9 +3,13 @@ import pandas as pd
 
 
 class IndexConstituents(Dataset):
+    """
+    Index constituents data.
+    """
+
     def __init__(self):
         super().__init__()
-        self._columns = [
+        self.expected_columns = [
             "symbol",
             "security",
             "gics_sector",
@@ -15,5 +19,4 @@ class IndexConstituents(Dataset):
             "cik",
             "founded",
         ]
-        self.data = pd.DataFrame(columns=self._columns)
-        self.name = None
+        self.data = pd.DataFrame(columns=self.expected_columns)

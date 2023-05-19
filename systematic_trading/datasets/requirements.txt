@@ -3,4 +3,3 @@ datasets
 huggingface_hub
 pandas
 tqdm
-yfinance

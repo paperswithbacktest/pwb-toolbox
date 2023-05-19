@@ -5,7 +5,6 @@ import os
 import json
 from pprint import pprint
 
-import click
 from kili.client import Kili
 from langchain.prompts import (
     ChatPromptTemplate,
@@ -170,18 +169,3 @@ Here is an example:
                 markdown = strategy.to_markdown()
                 f.write(markdown)
                 print(markdown)
-
-
-@click.command()
-@click.option("--kili-project-id")
-@click.option("--target-folder", default="data/summaries")
-def main():
-    """
-    Run predictions.
-    """
-    ssrn_paper_summarizer = SsrnPaperSummarizer()
-    ssrn_paper_summarizer.predict(kili_project_id, target_folder)
-
-
-if __name__ == "__main__":
-    main()

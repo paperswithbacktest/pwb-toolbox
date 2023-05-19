@@ -5,7 +5,6 @@ import time
 from typing import Optional
 
 from bs4 import BeautifulSoup
-import click
 from kili.client import Kili
 import requests
 from selenium import webdriver
@@ -58,19 +57,3 @@ class SsrnPaperCrawler:
             if paper.pdf_path is None:
                 continue
             paper.to_kili(self.tgt_kili_project_id, metadata={"text": filename})
-
-
-@click.command()
-@click.option("--src-kili-project-id")
-@click.option("--tgt-kili-project-id")
-def main(src_kili_project_id: str, tgt_kili_project_id=src):
-    """
-    Main entrypoint.
-    """
-    SsrnPaperCrawler(tgt_kili_project_id=tgt_kili_project_id).from_kili(
-        src_kili_project_id=src_kili_project_id
-    )
-
-
-if __name__ == "__main__":
-    main()

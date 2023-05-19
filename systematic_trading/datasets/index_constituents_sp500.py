@@ -1,3 +1,6 @@
+"""
+Index constituents S&P 500.
+"""
 from bs4 import BeautifulSoup
 import pandas as pd
 import requests
@@ -7,16 +10,20 @@ from index_constituents import IndexConstituents
 
 
 class IndexConstituentsSP500(IndexConstituents):
+    """
+    Index constituents S&P 500.
+    """
+
     def __init__(self):
         super().__init__()
-        self.name = "index-constituents-sp500"
+        self.name = f"index-constituents-{self.suffix}"
 
     def download(self):
         """
         Download the list of S&P 500 constituents from Wikipedia.
         """
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        response = requests.get(url)
+        response = requests.get(url, headers=self.headers)
         body_html = response.content.decode("utf-8")
         soup = BeautifulSoup(body_html, features="lxml")
         table = soup.find("table", {"id": "constituents"})
@@ -54,8 +61,7 @@ def main():
     Main function.
     """
     index_constituents_sp500 = IndexConstituentsSP500()
-    index_constituents_sp500.download()
-    index_constituents_sp500.to_hf_datasets()
+    index_constituents_sp500.crawl()
 
 
 if __name__ == "__main__":
