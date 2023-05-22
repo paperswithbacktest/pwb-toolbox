@@ -1,13 +1,14 @@
 """
-Earning estimate data.
+Revenue estimate data.
 """
-from dataset import Dataset
 import pandas as pd
 
+from systematic_trading.datasets.dataset import Dataset
 
-class EarningsEstimate(Dataset):
+
+class RevenueEstimate(Dataset):
     """
-    Earning estimate data.
+    Revenue estimate data.
     """
 
     def __init__(self):
@@ -35,9 +36,13 @@ class EarningsEstimate(Dataset):
             "high_estimate_next_qtr",
             "high_estimate_current_year",
             "high_estimate_next_year",
-            "year_ago_eps_current_qtr",
-            "year_ago_eps_next_qtr",
-            "year_ago_eps_current_year",
-            "year_ago_eps_next_year",
+            "year_ago_sales_current_qtr",
+            "year_ago_sales_next_qtr",
+            "year_ago_sales_current_year",
+            "year_ago_sales_next_year",
+            "sales_growth_yearest_current_qtr",
+            "sales_growth_yearest_next_qtr",
+            "sales_growth_yearest_current_year",
+            "sales_growth_yearest_next_year",
         ]
         self.data = pd.DataFrame(columns=self.expected_columns)

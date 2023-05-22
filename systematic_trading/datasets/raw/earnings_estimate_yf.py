@@ -1,5 +1,5 @@
 """
-Revenue estimate from Yahoo Finance.
+Earnings estimate from Yahoo Finance.
 """
 import datetime
 from typing import Union
@@ -9,18 +9,18 @@ import pandas as pd
 import time
 from tqdm import tqdm
 
-from analysis_yf import AnalysisYF
-from revenue_estimate import RevenueEstimate
+from systematic_trading.datasets.raw.analysis_yf import AnalysisYF
+from systematic_trading.datasets.raw.earnings_estimate import EarningsEstimate
 
 
-class RevenueEstimateYF(AnalysisYF, RevenueEstimate):
+class EarningsEstimateYF(AnalysisYF, EarningsEstimate):
     """
-    Revenue estimate from Yahoo Finance.
+    Earnings estimate from Yahoo Finance.
     """
 
     def __init__(self):
         super().__init__()
-        self.name = f"revenue-estimate-{self.suffix}"
+        self.name = f"earnings-estimate-{self.suffix}"
         self._exception_whitelist = ["L", "MTB", "NWS"]
 
     def format_value(self, key: str, value: str) -> Union[int, float]:
@@ -31,14 +31,14 @@ class RevenueEstimateYF(AnalysisYF, RevenueEstimate):
             return None
         elif key.startswith("no_of_analysts"):
             return int(value)
-        elif (
-            key.startswith("avg_estimate")
-            or key.startswith("low_estimate")
-            or key.startswith("high_estimate")
-            or key.startswith("year_ago_sales")
-            or key.startswith("sales_growth_yearest")
-        ):
-            return value
+        elif key.startswith("avg_estimate"):
+            return float(value)
+        elif key.startswith("low_estimate"):
+            return float(value)
+        elif key.startswith("high_estimate"):
+            return float(value)
+        elif key.startswith("year_ago_eps"):
+            return float(value)
         elif key == "current_qtr" or key == "next_qtr":
             return value
         elif key == "current_year" or key == "next_year":
@@ -48,7 +48,7 @@ class RevenueEstimateYF(AnalysisYF, RevenueEstimate):
 
     def download(self):
         """
-        Download the quarterly revenue data from Yahoo Finance.
+        Download the quarterly earnings data from Yahoo Finance.
         """
         symbols = self.get_index_symbols()
         frames = []
@@ -57,8 +57,8 @@ class RevenueEstimateYF(AnalysisYF, RevenueEstimate):
             try:
                 data = self.get_analysis(ticker)
                 df = self.data_to_df(
-                    data=data[1]["Revenue Estimate"],
-                    field="Revenue Estimate",
+                    data=data[0]["Earnings Estimate"],
+                    field="Earnings Estimate",
                     symbol=symbol,
                 )
             except IndexError as e:
@@ -80,8 +80,8 @@ def main():
     """
     Main function.
     """
-    revenue_estimate_yf = RevenueEstimateYF()
-    revenue_estimate_yf.crawl()
+    earnings_estimate_yf = EarningsEstimateYF()
+    earnings_estimate_yf.crawl()
 
 
 if __name__ == "__main__":

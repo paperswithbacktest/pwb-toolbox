@@ -8,7 +8,8 @@ import pandas as pd
 import re
 import requests
 
-from analysis import Analysis
+from systematic_trading.datasets.raw.analysis import Analysis
+from systematic_trading.helpers import retry_get
 
 
 class AnalysisYF(Analysis):
@@ -21,7 +22,7 @@ class AnalysisYF(Analysis):
         Get analysis for a given ticker.
         """
         url = f"https://finance.yahoo.com/quote/{ticker}/analysis?p={ticker}"
-        response = requests.get(url, headers=self.headers)
+        response = retry_get(url)
         soup = BeautifulSoup(response.text, features="lxml")
         div = soup.find("div", {"id": "Col1-0-AnalystLeafPage-Proxy"})
         tables = div.find_all("table") if div is not None else None
@@ -80,7 +81,7 @@ class AnalysisYF(Analysis):
                 column = self.__format_column(index + " " + period_column)
                 data_dict[column] = self.format_value(column, row[col])
         df = pd.DataFrame(data=[data_dict])
-        df["date"] = self.today
+        df["date"] = self.today.isoformat()
         df["symbol"] = symbol
         df = df.reindex(columns=["symbol", "date"] + list(df.columns[:-2]))
         return df

@@ -3,14 +3,15 @@ Timeseries daily from Yahoo Finance.
 """
 
 from datetime import datetime
+import urllib
+import time
 
 from datasets import load_dataset
 import pandas as pd
 import requests
-import time
 from tqdm import tqdm
 
-from timeseries_daily import TimeseriesDaily
+from systematic_trading.datasets.raw.timeseries_daily import TimeseriesDaily
 
 
 class TimeseriesDailyYF(TimeseriesDaily):
@@ -22,13 +23,52 @@ class TimeseriesDailyYF(TimeseriesDaily):
         super().__init__()
         self.name = f"timeseries-daily-{self.suffix}"
 
-    def get_timeseries_daily(self, ticker: str):
+    def __read_csv_with_retry(url, retries=5, wait_time=5):
+        for i in range(retries):
+            try:
+                df = pd.read_csv(url)
+                return df
+            except urllib.error.HTTPError as e:
+                if e.code == 503:
+                    print(
+                        "HTTP Error 503: Service Unavailable. Retrying in {} seconds...".format(
+                            wait_time
+                        )
+                    )
+                    time.sleep(wait_time)
+                else:
+                    raise
+        # If all retries fail
+        print("Unable to fetch data after {} retries.".format(retries))
+        return None
+
+    def __get_timeseries_daily(self, ticker: str):
         from_timestamp = int(datetime.timestamp(datetime(1980, 1, 1)))
         to_timestamp = int(datetime.timestamp(datetime.now()))
         url = f"https://query1.finance.yahoo.com/v7/finance/download/{ticker}?period1={from_timestamp}&period2={to_timestamp}&interval=1d&events=history&includeAdjustedClose=true"
         df = pd.read_csv(url)
-        df["Date"] = pd.to_datetime(df["Date"]).dt.date
+        df["Date"] = pd.to_datetime(df["Date"]).dt.date.apply(lambda x: x.isoformat())
         return df
+
+    def __get_timeseries_daily_with_retry(self, ticker: str):
+        retries = 5
+        wait_time = 5
+        for i in range(retries):
+            try:
+                df = self.__get_timeseries_daily(ticker)
+                return df
+            except urllib.error.HTTPError as e:
+                if e.code == 503:
+                    print(
+                        "HTTP Error 503: Service Unavailable. Retrying in {} seconds...".format(
+                            wait_time
+                        )
+                    )
+                    sleep(wait_time)
+                else:
+                    raise
+        print("Unable to fetch data after {} retries.".format(retries))
+        return None
 
     def download(self):
         """
@@ -38,7 +78,9 @@ class TimeseriesDailyYF(TimeseriesDaily):
         frames = []
         for symbol in tqdm(symbols):
             ticker = self.symbol_to_ticker(symbol)
-            df = self.get_timeseries_daily(ticker)
+            df = self.__get_timeseries_daily_with_retry(ticker)
+            if df is None:
+                continue
             df.rename(
                 columns={
                     "Date": "date",

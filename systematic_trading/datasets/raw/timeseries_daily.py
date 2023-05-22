@@ -1,8 +1,9 @@
 """
 Timeseries daily data.
 """
-from dataset import Dataset
 import pandas as pd
+
+from systematic_trading.datasets.dataset import Dataset
 
 
 class TimeseriesDaily(Dataset):

@@ -11,7 +11,8 @@ import requests
 import time
 from tqdm import tqdm
 
-from news import News
+from systematic_trading.datasets.raw.news import News
+from systematic_trading.helpers import retry_get
 
 
 class Article:
@@ -46,7 +47,7 @@ class Article:
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36"
         }
-        response = requests.get(url, headers=headers)
+        response = retry_get(url)
         soup = BeautifulSoup(response.text, "html.parser")
         return soup
 
@@ -75,7 +76,7 @@ class NewsYF(News):
         Get news for a given ticker.
         """
         url = f"https://finance.yahoo.com/quote/{ticker}/?p={ticker}"
-        response = requests.get(url, headers=self.headers)
+        response = retry_get(url)
         soup = BeautifulSoup(response.text, "html.parser")
         news_tag = soup.find("div", {"id": "quoteNewsStream-0-Stream"})
         data = []
@@ -107,8 +108,8 @@ class NewsYF(News):
             frames.append(df)
             time.sleep(self.sleep_time)
         self.data = pd.concat(frames)
-        # if self.check_file_exists():
-        #     self.add_previous_data()
+        if self.check_file_exists():
+            self.add_previous_data()
         self.data.sort_values(by=["symbol", "publish_time"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
 

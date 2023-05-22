@@ -6,7 +6,8 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from index_constituents import IndexConstituents
+from systematic_trading.datasets.raw.index_constituents import IndexConstituents
+from systematic_trading.helpers import retry_get
 
 
 class IndexConstituentsSP500(IndexConstituents):
@@ -23,7 +24,7 @@ class IndexConstituentsSP500(IndexConstituents):
         Download the list of S&P 500 constituents from Wikipedia.
         """
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        response = requests.get(url, headers=self.headers)
+        response = retry_get(url)
         body_html = response.content.decode("utf-8")
         soup = BeautifulSoup(body_html, features="lxml")
         table = soup.find("table", {"id": "constituents"})

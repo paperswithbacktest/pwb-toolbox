@@ -12,7 +12,8 @@ import requests
 import time
 from tqdm import tqdm
 
-from earnings import Earnings
+from systematic_trading.datasets.raw.earnings import Earnings
+from systematic_trading.helpers import retry_get
 
 
 class EarningsYF(Earnings):
@@ -52,7 +53,7 @@ class EarningsYF(Earnings):
         Get earnings for a given ticker.
         """
         url = f"https://finance.yahoo.com/calendar/earnings?symbol={ticker}"
-        response = requests.get(url, headers=self.headers)
+        response = retry_get(url)
         soup = BeautifulSoup(response.text, features="lxml")
         div = soup.find("div", {"id": "cal-res-table"})
         if div is None:

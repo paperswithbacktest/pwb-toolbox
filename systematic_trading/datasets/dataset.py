@@ -1,4 +1,5 @@
 from datetime import date
+import time
 from typing import Optional
 
 from datasets import Dataset as HFDataset, load_dataset
@@ -15,9 +16,6 @@ class Dataset:
     def __init__(self):
         self.expected_columns = []
         self.data: pd.DataFrame = pd.DataFrame(columns=self.expected_columns)
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36"
-        }
         self.name: str = None
         self.today = date.today()
         self.username: str = "edarchimbaud"

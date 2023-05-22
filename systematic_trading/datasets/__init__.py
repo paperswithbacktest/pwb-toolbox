@@ -1,15 +1,17 @@
 from datetime import date
 
 import click
-from datasets import Dataset
-from earnings_yf import EarningsYF
-from earnings_estimate_yf import EarningsEstimateYF
-from eps_revisions_yf import EPSRevisionsYF
-from eps_trend_yf import EPSTrendYF
-from index_constituents_sp500 import IndexConstituentsSP500
-from news_yf import NewsYF
-from revenue_estimate_yf import RevenueEstimateYF
-from timeseries_daily_yf import TimeseriesDailyYF
+from systematic_trading.datasets.dataset import Dataset
+from systematic_trading.datasets.raw.earnings_yf import EarningsYF
+from systematic_trading.datasets.raw.earnings_estimate_yf import EarningsEstimateYF
+from systematic_trading.datasets.raw.eps_revisions_yf import EPSRevisionsYF
+from systematic_trading.datasets.raw.eps_trend_yf import EPSTrendYF
+from systematic_trading.datasets.raw.index_constituents_sp500 import (
+    IndexConstituentsSP500,
+)
+from systematic_trading.datasets.raw.news_yf import NewsYF
+from systematic_trading.datasets.raw.revenue_estimate_yf import RevenueEstimateYF
+from systematic_trading.datasets.raw.timeseries_daily_yf import TimeseriesDailyYF
 
 
 @click.command()
@@ -43,4 +45,4 @@ def crawl_all_datasets(dataset: str):
 
 
 if __name__ == "__main__":
-    crawl_all_datasets()  # pylint: disable=no-value-for-parameter@
+    crawl_all_datasets()  # pylint: disable=no-value-for-parameter

@@ -3,7 +3,7 @@ Earnings data.
 """
 import pandas as pd
 
-from dataset import Dataset
+from systematic_trading.datasets.dataset import Dataset
 
 
 class Analysis(Dataset):

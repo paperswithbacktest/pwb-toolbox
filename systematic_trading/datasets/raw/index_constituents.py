@@ -1,5 +1,9 @@
-from dataset import Dataset
+"""
+Index constituents data.
+"""
 import pandas as pd
+
+from systematic_trading.datasets.dataset import Dataset
 
 
 class IndexConstituents(Dataset):
