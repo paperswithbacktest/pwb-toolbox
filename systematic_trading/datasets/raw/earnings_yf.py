@@ -86,7 +86,7 @@ class EarningsYF(Earnings):
         df = pd.DataFrame(data)
         return df
 
-    def download(self):
+    def build(self):
         """
         Download the quarterly earnings data from Yahoo Finance.
         """
@@ -120,15 +120,3 @@ class EarningsYF(Earnings):
         self.data = pd.concat(frames)
         self.data.sort_values(by=["symbol", "date"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    earnings_yf = EarningsYF()
-    earnings_yf.crawl()
-
-
-if __name__ == "__main__":
-    main()

@@ -38,7 +38,7 @@ class EPSTrendYF(AnalysisYF, EPSTrend):
         else:
             raise ValueError(f"Unknown key: {key}")
 
-    def download(self):
+    def build(self):
         """
         Download the EPS trend data from Yahoo Finance.
         """
@@ -66,15 +66,3 @@ class EPSTrendYF(AnalysisYF, EPSTrend):
         #     self.add_previous_data()
         self.data.sort_values(by=["symbol", "date"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    eps_trend_yf = EPSTrendYF()
-    eps_trend_yf.crawl()
-
-
-if __name__ == "__main__":
-    main()

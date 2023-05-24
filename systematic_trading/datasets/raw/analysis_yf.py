@@ -81,7 +81,7 @@ class AnalysisYF(Analysis):
                 column = self.__format_column(index + " " + period_column)
                 data_dict[column] = self.format_value(column, row[col])
         df = pd.DataFrame(data=[data_dict])
-        df["date"] = self.today.isoformat()
+        df["date"] = self.tag_date.isoformat()
         df["symbol"] = symbol
         df = df.reindex(columns=["symbol", "date"] + list(df.columns[:-2]))
         return df

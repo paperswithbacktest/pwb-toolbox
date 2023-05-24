@@ -28,14 +28,14 @@ class TargetsMonthly(Dataset):
                 quintile_id.append(2)
         return quintile_id
 
-    def compute(self):
+    def build(self):
         """
         Compute the dataset.
         """
         timeseries_daily_df = pd.DataFrame(
             load_dataset(
                 f"{self.username}/timeseries-daily-{self.suffix}",
-                revision=self.today.isoformat(),
+                revision=self.tag_date.isoformat(),
                 split="train",
             ),
         )
@@ -56,14 +56,3 @@ class TargetsMonthly(Dataset):
         )
         monthly_df.reset_index(drop=True, inplace=True)
         self.data = monthly_df
-
-
-def main():
-    targets_monthly = TargetsMonthly()
-    targets_monthly.today = pd.to_datetime("2023-05-19").date()
-    targets_monthly.compute()
-    targets_monthly.to_hf_datasets(tag=targets_monthly.today.isoformat())
-
-
-if __name__ == "__main__":
-    main()

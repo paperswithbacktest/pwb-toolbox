@@ -46,7 +46,7 @@ class RevenueEstimateYF(AnalysisYF, RevenueEstimate):
         else:
             raise ValueError(f"Unknown key: {key}")
 
-    def download(self):
+    def build(self):
         """
         Download the quarterly revenue data from Yahoo Finance.
         """
@@ -74,15 +74,3 @@ class RevenueEstimateYF(AnalysisYF, RevenueEstimate):
         #     self.add_previous_data()
         self.data.sort_values(by=["symbol", "date"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    revenue_estimate_yf = RevenueEstimateYF()
-    revenue_estimate_yf.crawl()
-
-
-if __name__ == "__main__":
-    main()

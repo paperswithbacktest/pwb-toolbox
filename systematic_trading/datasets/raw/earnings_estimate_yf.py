@@ -46,7 +46,7 @@ class EarningsEstimateYF(AnalysisYF, EarningsEstimate):
         else:
             raise ValueError(f"Unknown key: {key}")
 
-    def download(self):
+    def build(self):
         """
         Download the quarterly earnings data from Yahoo Finance.
         """
@@ -74,15 +74,3 @@ class EarningsEstimateYF(AnalysisYF, EarningsEstimate):
             self.add_previous_data()
         self.data.sort_values(by=["symbol", "date"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    earnings_estimate_yf = EarningsEstimateYF()
-    earnings_estimate_yf.crawl()
-
-
-if __name__ == "__main__":
-    main()

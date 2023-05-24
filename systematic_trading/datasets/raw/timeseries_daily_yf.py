@@ -70,7 +70,7 @@ class TimeseriesDailyYF(TimeseriesDaily):
         print("Unable to fetch data after {} retries.".format(retries))
         return None
 
-    def download(self):
+    def build(self):
         """
         Download the daily data from Yahoo Finance.
         """
@@ -101,15 +101,3 @@ class TimeseriesDailyYF(TimeseriesDaily):
         self.data = pd.concat(frames)
         self.data.sort_values(by=["symbol", "date"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    timeseries_daily_yf = TimeseriesDailyYF()
-    timeseries_daily_yf.crawl()
-
-
-if __name__ == "__main__":
-    main()

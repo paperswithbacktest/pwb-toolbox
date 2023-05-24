@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 import time
 from typing import Optional
 
@@ -17,9 +17,9 @@ class Dataset:
         self.expected_columns = []
         self.data: pd.DataFrame = pd.DataFrame(columns=self.expected_columns)
         self.name: str = None
-        self.today = date.today()
+        self.tag_date = date.today() - timedelta(days=1)
         self.username: str = "edarchimbaud"
-        self.sleep_time: int = 3
+        self.sleep_time: int = 10
         self.suffix: str = "sp500"
 
     def add_previous_data(self):
@@ -46,20 +46,20 @@ class Dataset:
         except FileNotFoundError:
             return False
 
-    def crawl(self) -> None:
+    def update(self) -> None:
         """
         Crawl data.
         """
         print(f"Crawl dataset: {self.name}")
-        tag = self.today.isoformat()
+        tag = self.tag_date.isoformat()
         if self.name is None:
             raise ValueError("self.name must be set")
         if self.check_file_exists(tag=tag):
             raise ValueError("tag reference exists")
-        self.download()
+        self.build()
         self.to_hf_datasets(tag)
 
-    def download(self) -> None:
+    def build(self) -> None:
         """
         Download data.
         """
@@ -82,7 +82,9 @@ class Dataset:
         To Hugging Face datasets.
         """
         if self.data.columns.tolist() != self.expected_columns:
-            raise ValueError("self.data must have the right columns")
+            raise ValueError(
+                f"self.data must have the right columns\n{self.data.columns.tolist()}\n!=\n{self.expected_columns}"
+            )
         if len(self.data) == 0:
             raise ValueError("self.data must be set")
         dataset = HFDataset.from_pandas(self.data)

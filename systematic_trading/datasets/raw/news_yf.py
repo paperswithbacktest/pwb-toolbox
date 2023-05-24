@@ -93,7 +93,7 @@ class NewsYF(News):
         df = pd.DataFrame(data)
         return df
 
-    def download(self):
+    def build(self):
         """
         Download the news data from Yahoo Finance.
         """
@@ -112,15 +112,3 @@ class NewsYF(News):
             self.add_previous_data()
         self.data.sort_values(by=["symbol", "publish_time"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    news_yf = NewsYF()
-    news_yf.crawl()
-
-
-if __name__ == "__main__":
-    main()

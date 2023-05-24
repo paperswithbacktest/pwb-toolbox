@@ -38,7 +38,7 @@ class EPSRevisionsYF(AnalysisYF, EPSRevisions):
         else:
             raise ValueError(f"Unknown key: {key}")
 
-    def download(self):
+    def build(self):
         """
         Download the EPS Revisions data from Yahoo Finance.
         """
@@ -66,15 +66,3 @@ class EPSRevisionsYF(AnalysisYF, EPSRevisions):
         #     self.add_previous_data()
         self.data.sort_values(by=["symbol", "date"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    eps_revisions_yf = EPSRevisionsYF()
-    eps_revisions_yf.crawl()
-
-
-if __name__ == "__main__":
-    main()

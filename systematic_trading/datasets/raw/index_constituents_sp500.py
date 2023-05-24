@@ -19,7 +19,7 @@ class IndexConstituentsSP500(IndexConstituents):
         super().__init__()
         self.name = f"index-constituents-{self.suffix}"
 
-    def download(self):
+    def build(self):
         """
         Download the list of S&P 500 constituents from Wikipedia.
         """
@@ -55,15 +55,3 @@ class IndexConstituentsSP500(IndexConstituents):
         self.data = pd.DataFrame(data=data)
         self.data.sort_values(by=["symbol"], inplace=True)
         self.data.reset_index(drop=True, inplace=True)
-
-
-def main():
-    """
-    Main function.
-    """
-    index_constituents_sp500 = IndexConstituentsSP500()
-    index_constituents_sp500.crawl()
-
-
-if __name__ == "__main__":
-    main()
