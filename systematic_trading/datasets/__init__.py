@@ -1,3 +1,4 @@
+import concurrent.futures
 from datetime import date, timedelta
 
 import click
@@ -16,34 +17,43 @@ from systematic_trading.datasets.raw.timeseries_daily_yf import TimeseriesDailyY
 from systematic_trading.datasets.targets.targets_monthly import TargetsMonthly
 
 
+def update(dataset: Dataset, tag_date: date):
+    """
+    Crawl the data.
+    """
+    dataset.suffix = "sp500"
+    dataset.tag_date = tag_date
+    dataset.username = "edarchimbaud"
+    try:
+        dataset.update()
+    except ValueError as err:
+        print(err)
+
+
 def update_all_datasets():
     """
     Main function.
     """
 
-    def update(dataset: Dataset, tag_date: date):
-        """
-        Crawl the data.
-        """
-        dataset.suffix = "sp500"
-        dataset.tag_date = tag_date
-        dataset.username = "edarchimbaud"
-        try:
-            dataset.update()
-        except ValueError as e:
-            print(e)
-
     tag_date = date.today() - timedelta(days=1)
-    update(dataset=IndexConstituentsSP500(), tag_date=tag_date)
-    update(dataset=EarningsYF(), tag_date=tag_date)
-    update(dataset=EarningsEstimateYF(), tag_date=tag_date)
-    update(dataset=EPSRevisionsYF(), tag_date=tag_date)
-    update(dataset=EPSTrendYF(), tag_date=tag_date)
-    update(dataset=NewsYF(), tag_date=tag_date)
-    update(dataset=RevenueEstimateYF(), tag_date=tag_date)
-    update(dataset=TimeseriesDailyYF(), tag_date=tag_date)
-    update(dataset=FeaturesMonthly(), tag_date=tag_date)
-    update(dataset=TargetsMonthly(), tag_date=tag_date)
+
+    update(IndexConstituentsSP500(), tag_date)
+
+    datasets = [
+        EarningsYF(),
+        EarningsEstimateYF(),
+        EPSRevisionsYF(),
+        EPSTrendYF(),
+        NewsYF(),
+        RevenueEstimateYF(),
+        TimeseriesDailyYF(),
+    ]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(update, dataset, tag_date) for dataset in datasets]
+        concurrent.futures.wait(futures)
+
+    update(FeaturesMonthly(), tag_date)
+    update(TargetsMonthly(), tag_date)
 
 
 if __name__ == "__main__":
