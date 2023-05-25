@@ -29,10 +29,35 @@ pip install -r requirements.txt
 
 The `systematic-trading` package offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:
 
-- Crawling Datasets: `PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets/__init__.py`
+- Crawling Datasets:
+
+```python
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets/__init__.py \
+  --username [YOUR_HUGGINGFACE_USERNAME]
+```
+
 - Crawling Strategy Ideas:
-  - Import the desired dataset module from the strategy_ideas directory.
-  - Use the provided functions or methods to crawl and push the data to Kili Technology.
+
+```python
+# Download SSRN paper abtract to a Kili project of id YOUR_KILI_PROJECT_ID
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
+  --mode abstract \
+  --jel-code G14 \
+  --from-page 1
+  --kili-project-id [YOUR_KILI_PROJECT_ID] \
+
+# Use the abtracts labeled in YOUR_SOURCE_KILI_PROJECT_ID to download SSRN paper PDF to another Kili project YOUR_TARGET_KILI_PROJECT_ID
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
+  --mode paper \
+  --src-kili-project-id [YOUR_SOURCE_KILI_PROJECT_ID] \
+  --tgt-kili-project-id [YOUR_TARGET_KILI_PROJECT_ID]
+
+# Transform the annotations of YOUR_KILI_PROJECT_ID into markdown strategy ID cards
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
+  --mode summary \
+  --kili-project-id [YOUR_KILI_PROJECT_ID] \
+  --tgt-folder [YOUR_TARGET_FOLDER]
+```
 
 ## Contributing
 

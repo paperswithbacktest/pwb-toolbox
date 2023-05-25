@@ -2,6 +2,7 @@ beautifulsoup4
 click
 datasets
 huggingface_hub
+kili
 langchain
 lxml
 numba

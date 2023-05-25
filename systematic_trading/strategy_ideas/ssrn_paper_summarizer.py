@@ -14,8 +14,8 @@ from langchain.prompts import (
 from langchain.chat_models import ChatOpenAI
 from tqdm import tqdm
 
-from ssrn_abstract import SsrnAbstract
-from ssrn_strategy import SsrnStrategy
+from systematic_trading.strategy_ideas.ssrn_abstract import SsrnAbstract
+from systematic_trading.strategy_ideas.ssrn_strategy import SsrnStrategy
 
 
 class SsrnPaperSummarizer:

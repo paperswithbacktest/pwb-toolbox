@@ -17,26 +17,29 @@ from systematic_trading.datasets.raw.timeseries_daily_yf import TimeseriesDailyY
 from systematic_trading.datasets.targets.targets_monthly import TargetsMonthly
 
 
-def update(dataset: Dataset, tag_date: date):
+def update(dataset: Dataset, tag_date: date, username: str):
     """
     Crawl the data.
     """
     dataset.suffix = "sp500"
     dataset.tag_date = tag_date
-    dataset.username = "edarchimbaud"
+    dataset.username = username
     try:
         dataset.update()
     except ValueError as err:
         print(err)
 
 
-def update_all():
+def update_all(username: str):
     """
     Update all datasets.
+
+    Args:
+        username (str): Username to use.
     """
     tag_date = date.today() - timedelta(days=1)
 
-    update(IndexConstituentsSP500(), tag_date)
+    update(IndexConstituentsSP500(), tag_date, username)
 
     datasets = [
         EarningsYF(),
@@ -48,20 +51,23 @@ def update_all():
         TimeseriesDailyYF(),
     ]
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(update, dataset, tag_date) for dataset in datasets]
+        futures = [
+            executor.submit(update, dataset, tag_date, username) for dataset in datasets
+        ]
         concurrent.futures.wait(futures)
 
     if TimeseriesDailyYF().check_file_exists(tag=tag_date.isoformat()):
-        update(FeaturesMonthly(), tag_date)
-        update(TargetsMonthly(), tag_date)
+        update(FeaturesMonthly(), tag_date, username)
+        update(TargetsMonthly(), tag_date, username)
 
 
-def update_one(dataset: str) -> None:
+def update_one(dataset: str, username: str) -> None:
     """
     Update one dataset.
 
     Args:
         dataset (str): Dataset to update.
+        username (str): Username to use.
 
     Raises:
         ValueError: Unknown dataset.
@@ -81,19 +87,20 @@ def update_one(dataset: str) -> None:
     }
     if dataset not in datasets:
         raise ValueError(f"Unknown dataset {dataset}")
-    update(datasets[dataset], tag_date)
+    update(datasets[dataset], tag_date, username)
 
 
 @click.command()
 @click.option("--dataset", default="all", help="Dataset to update")
-def main(dataset: str):
+@click.option("--username", default="edarchimbaud", help="Username to use")
+def main(dataset: str, username: str):
     """
     Main function.
     """
     if dataset == "all":
-        update_all()
+        update_all(username)
     else:
-        update_one(dataset)
+        update_one(dataset, username)
 
 
 if __name__ == "__main__":

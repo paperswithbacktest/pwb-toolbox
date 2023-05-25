@@ -12,7 +12,7 @@ import textract
 from tqdm import tqdm
 from webdriver_manager.chrome import ChromeDriverManager
 
-from ssrn_abstract import SsrnAbstract
+from systematic_trading.strategy_ideas.ssrn_abstract import SsrnAbstract
 
 
 class SsrnAbstractCrawler:
