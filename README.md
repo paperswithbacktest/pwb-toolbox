@@ -43,10 +43,11 @@ PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets/__init__.py \
 PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
   --mode abstract \
   --jel-code G14 \
-  --from-page 1
-  --kili-project-id [YOUR_KILI_PROJECT_ID] \
+  --from-page 1 \
+  --kili-project-id [YOUR_KILI_PROJECT_ID]
 
-# Use the abtracts labeled in YOUR_SOURCE_KILI_PROJECT_ID to download SSRN paper PDF to another Kili project YOUR_TARGET_KILI_PROJECT_ID
+# Use the abtracts labeled in YOUR_SOURCE_KILI_PROJECT_ID to download SSRN paper PDF
+# into another Kili project YOUR_TARGET_KILI_PROJECT_ID
 PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
   --mode paper \
   --src-kili-project-id [YOUR_SOURCE_KILI_PROJECT_ID] \
