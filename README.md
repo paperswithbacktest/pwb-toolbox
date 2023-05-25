@@ -10,17 +10,26 @@ The `systematic-trading` package is designed to provide tools and resources for 
 
 To install the systematic-trading package, follow these steps:
 
-Clone the repository or download the package from the official source.
-Navigate to the package directory: `cd systematic-trading`.
-Install the required dependencies by running: `pip install -r requirements.txt`.
+```bash
+# Install python and its dependencies
+sudo apt install python3 python3-pip python3-venv
+# Clone the repository or download the package from the official source
+git clone https://github.com/edarchimbaud/systematic-trading.git
+# Navigate to the package directory
+cd systematic-trading/
+# Create a virtual environment
+python3 -m venv ~/myenv
+# Activate it
+source ~/myenv/bin/activate
+# Install the required dependencies by running
+pip install -r requirements.txt
+```
 
 ## Usage
 
 The `systematic-trading` package offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:
 
-- Crawling Datasets:
-  - Import the desired dataset module from the datasets directory.
-  - Use the provided functions or methods to crawl and push the data to HuggingFace Hub.
+- Crawling Datasets: `PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets/__init__.py`
 - Crawling Strategy Ideas:
   - Import the desired dataset module from the strategy_ideas directory.
   - Use the provided functions or methods to crawl and push the data to Kili Technology.

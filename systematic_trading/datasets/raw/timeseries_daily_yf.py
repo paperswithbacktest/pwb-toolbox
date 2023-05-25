@@ -23,25 +23,6 @@ class TimeseriesDailyYF(TimeseriesDaily):
         super().__init__()
         self.name = f"timeseries-daily-{self.suffix}"
 
-    def __read_csv_with_retry(url, retries=5, wait_time=5):
-        for i in range(retries):
-            try:
-                df = pd.read_csv(url)
-                return df
-            except urllib.error.HTTPError as e:
-                if e.code == 503:
-                    print(
-                        "HTTP Error 503: Service Unavailable. Retrying in {} seconds...".format(
-                            wait_time
-                        )
-                    )
-                    time.sleep(wait_time)
-                else:
-                    raise
-        # If all retries fail
-        print("Unable to fetch data after {} retries.".format(retries))
-        return None
-
     def __get_timeseries_daily(self, ticker: str):
         from_timestamp = int(datetime.timestamp(datetime(1980, 1, 1)))
         to_timestamp = int(datetime.timestamp(datetime.now()))
@@ -50,25 +31,15 @@ class TimeseriesDailyYF(TimeseriesDaily):
         df["Date"] = pd.to_datetime(df["Date"]).dt.date.apply(lambda x: x.isoformat())
         return df
 
-    def __get_timeseries_daily_with_retry(self, ticker: str):
-        retries = 5
-        wait_time = 5
+    def __get_timeseries_daily_with_retry(self, ticker: str, retries=10, wait_time=300):
         for i in range(retries):
             try:
                 df = self.__get_timeseries_daily(ticker)
                 return df
-            except urllib.error.HTTPError as e:
-                if e.code == 503:
-                    print(
-                        "HTTP Error 503: Service Unavailable. Retrying in {} seconds...".format(
-                            wait_time
-                        )
-                    )
-                    sleep(wait_time)
-                else:
-                    raise
-        print("Unable to fetch data after {} retries.".format(retries))
-        return None
+            except urllib.error.HTTPError:
+                print(f"Connection error with {url}. Retrying in {delay} seconds...")
+                time.sleep(delay)
+        raise ConnectionError(f"Failed to connect to {url} after {retries} retries")
 
     def build(self):
         """

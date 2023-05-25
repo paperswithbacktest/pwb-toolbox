@@ -30,11 +30,10 @@ def update(dataset: Dataset, tag_date: date):
         print(err)
 
 
-def update_all_datasets():
+def update_all():
     """
-    Main function.
+    Update all datasets.
     """
-
     tag_date = date.today() - timedelta(days=1)
 
     update(IndexConstituentsSP500(), tag_date)
@@ -52,9 +51,50 @@ def update_all_datasets():
         futures = [executor.submit(update, dataset, tag_date) for dataset in datasets]
         concurrent.futures.wait(futures)
 
-    update(FeaturesMonthly(), tag_date)
-    update(TargetsMonthly(), tag_date)
+    if TimeseriesDailyYF().check_file_exists(tag=tag_date.isoformat()):
+        update(FeaturesMonthly(), tag_date)
+        update(TargetsMonthly(), tag_date)
+
+
+def update_one(dataset: str) -> None:
+    """
+    Update one dataset.
+
+    Args:
+        dataset (str): Dataset to update.
+
+    Raises:
+        ValueError: Unknown dataset.
+    """
+    tag_date = date.today() - timedelta(days=1)
+    datasets = {
+        "index-constituents-sp500": IndexConstituentsSP500(),
+        "earnings-sp500": EarningsYF(),
+        "earnings-estimate-sp500": EarningsEstimateYF(),
+        "eps-revisions-sp500": EPSRevisionsYF(),
+        "eps-trend-sp500": EPSTrendYF(),
+        "news-sp500": NewsYF(),
+        "revenue-estimate-sp500": RevenueEstimateYF(),
+        "timeseries-daily-sp500": TimeseriesDailyYF(),
+        "features-monthly-sp500": FeaturesMonthly(),
+        "targets-monthly-sp500": TargetsMonthly(),
+    }
+    if dataset not in datasets:
+        raise ValueError(f"Unknown dataset {dataset}")
+    update(datasets[dataset], tag_date)
+
+
+@click.command()
+@click.option("--dataset", default="all", help="Dataset to update")
+def main(dataset: str):
+    """
+    Main function.
+    """
+    if dataset == "all":
+        update_all()
+    else:
+        update_one(dataset)
 
 
 if __name__ == "__main__":
-    update_all_datasets()
+    main()

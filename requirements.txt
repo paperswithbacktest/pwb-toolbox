@@ -1,7 +1,9 @@
 beautifulsoup4
+click
 datasets
 huggingface_hub
 langchain
+lxml
 numba
 pandas
 tqdm
