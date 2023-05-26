@@ -39,7 +39,11 @@ class Dataset:
         Check if file exists.
         """
         try:
-            load_dataset(f"{self.username}/{self.name}", revision=tag)
+            load_dataset(
+                f"{self.username}/{self.name}",
+                revision=tag,
+                verification_mode="no_checks",
+            )
             return True
         except FileNotFoundError:
             return False
