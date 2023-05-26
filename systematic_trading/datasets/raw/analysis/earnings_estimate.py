@@ -18,7 +18,6 @@ class EarningsEstimate(Analysis):
     def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
         super().__init__(suffix, tag_date, username)
         self.name = f"earnings-estimate-{suffix}"
-        self._exception_whitelist = ["L", "MTB", "NWS"]
         self.expected_columns = [
             "symbol",
             "date",
@@ -82,11 +81,8 @@ class EarningsEstimate(Analysis):
                 symbol=symbol,
             )
         except IndexError as e:
-            if symbol in self._exception_whitelist:
-                print(f"Exception for {symbol}: {e}")
-                return
-            else:
-                raise e
+            print(f"Exception for {self.name}: {symbol}: {e}")
+            return
         self.frames[symbol] = df
 
     def set_dataset_df(self):

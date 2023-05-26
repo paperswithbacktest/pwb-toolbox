@@ -103,7 +103,11 @@ class News(Raw):
 
     def append_frame(self, symbol: str):
         ticker = self.symbol_to_ticker(symbol)
-        df = self.__get_news(ticker)
+        try:
+            df = self.__get_news(ticker)
+        except AttributeError as e:
+            print(f"Exception for {self.name}: {symbol}: {e}")
+            return
         df["symbol"] = symbol
         # use reindex() to set 'symbol' as the first column
         df = df.reindex(columns=["symbol"] + list(df.columns[:-1]))

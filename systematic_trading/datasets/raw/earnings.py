@@ -22,7 +22,6 @@ class Earnings(Raw):
     def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
         super().__init__(suffix, tag_date, username)
         self.name = f"earnings-{suffix}"
-        self._exception_whitelist = ["FOX", "NWS"]
         self.expected_columns = [
             "symbol",
             "date",
@@ -100,11 +99,8 @@ class Earnings(Raw):
         try:
             df = self.__get_earnings(ticker)
         except ValueError as e:
-            if symbol in self._exception_whitelist:
-                print(f"Exception for {symbol}: {e}")
-                return
-            else:
-                raise e
+            print(f"Exception for {self.name}: {symbol}: {e}")
+            return
         df.drop(columns=["Symbol", "Company"], inplace=True)
         df.rename(
             columns={
