@@ -8,11 +8,11 @@ import pandas as pd
 import re
 import requests
 
-from systematic_trading.datasets.raw.analysis import Analysis
+from systematic_trading.datasets.raw import Raw
 from systematic_trading.helpers import retry_get
 
 
-class AnalysisYF(Analysis):
+class Analysis(Raw):
     """
     Analysis data from Yahoo Finance.
     """

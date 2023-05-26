@@ -32,7 +32,7 @@ The `systematic-trading` package offers a range of functionalities for systemati
 - Crawling Datasets:
 
 ```python
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets/__init__.py \
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets \
   --username [YOUR_HUGGINGFACE_USERNAME]
 ```
 
@@ -40,7 +40,7 @@ PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets/__init__.py \
 
 ```python
 # Download SSRN paper abtract to a Kili project of id YOUR_KILI_PROJECT_ID
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas \
   --mode abstract \
   --jel-code G14 \
   --from-page 1 \
@@ -48,13 +48,13 @@ PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
 
 # Use the abtracts labeled in YOUR_SOURCE_KILI_PROJECT_ID to download SSRN paper PDF
 # into another Kili project YOUR_TARGET_KILI_PROJECT_ID
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas \
   --mode paper \
   --src-kili-project-id [YOUR_SOURCE_KILI_PROJECT_ID] \
   --tgt-kili-project-id [YOUR_TARGET_KILI_PROJECT_ID]
 
 # Transform the annotations of YOUR_KILI_PROJECT_ID into markdown strategy ID cards
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas/__init__.py \
+PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas \
   --mode summary \
   --kili-project-id [YOUR_KILI_PROJECT_ID] \
   --tgt-folder [YOUR_TARGET_FOLDER]

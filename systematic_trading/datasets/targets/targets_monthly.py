@@ -1,3 +1,5 @@
+from datetime import date
+
 from datasets import load_dataset
 import numpy as np
 import pandas as pd
@@ -6,8 +8,8 @@ from systematic_trading.datasets.dataset import Dataset
 
 
 class TargetsMonthly(Dataset):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
+        super().__init__(suffix, tag_date, username)
         self.name = f"targets-monthly-{self.suffix}"
         self.expected_columns = ["symbol", "date", "return", "return_quintile"]
 
@@ -28,7 +30,7 @@ class TargetsMonthly(Dataset):
                 quintile_id.append(2)
         return quintile_id
 
-    def build(self):
+    def set_dataset_df(self):
         """
         Compute the dataset.
         """
@@ -55,4 +57,4 @@ class TargetsMonthly(Dataset):
             lambda x: pd.qcut(x, 5, labels=False)
         )
         monthly_df.reset_index(drop=True, inplace=True)
-        self.data = monthly_df
+        self.dataset_df = monthly_df

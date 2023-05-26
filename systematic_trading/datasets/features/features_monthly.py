@@ -1,3 +1,4 @@
+from datetime import date
 import os
 
 from datasets import load_dataset
@@ -18,8 +19,8 @@ from systematic_trading.datasets.features.estimators.slope import (
 
 
 class FeaturesMonthly(Dataset):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
+        super().__init__(suffix, tag_date, username)
         self.name = f"features-monthly-{self.suffix}"
         self.expected_columns = [
             "symbol",
@@ -36,7 +37,7 @@ class FeaturesMonthly(Dataset):
             "barycentre_of_progressive_slopes_12m_quintile",
         ]
 
-    def build(self):
+    def set_dataset_df(self):
         path = os.path.join(os.getenv("HOME"), "Downloads", "timeseries_daily_df.pkl")
         if os.path.exists(path):
             with open(path, "rb") as handler:
@@ -97,4 +98,4 @@ class FeaturesMonthly(Dataset):
                 feature_name
             ].transform(lambda x: pd.qcut(x, 5, labels=False))
         monthly_df.reset_index(drop=True, inplace=True)
-        self.data = monthly_df
+        self.dataset_df = monthly_df

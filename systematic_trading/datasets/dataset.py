@@ -1,5 +1,4 @@
 from datetime import date, timedelta
-import time
 from typing import Optional
 
 from datasets import Dataset as HFDataset, load_dataset
@@ -13,28 +12,27 @@ class Dataset:
     Dataset.
     """
 
-    def __init__(self):
+    def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
+        self.suffix: str = suffix
+        self.tag_date = tag_date
+        self.username: str = username
         self.expected_columns = []
-        self.data: pd.DataFrame = pd.DataFrame(columns=self.expected_columns)
+        self.dataset_df: pd.DataFrame = pd.DataFrame(columns=self.expected_columns)
         self.name: str = None
-        self.tag_date = date.today() - timedelta(days=1)
-        self.username: str = "edarchimbaud"
-        self.sleep_time: int = 10
-        self.suffix: str = "sp500"
+        self.symbols = self.get_index_symbols()
 
     def add_previous_data(self):
         """
         Add previous data to the current data.
         """
-        symbols = self.get_index_symbols()
         prev_data = pd.DataFrame(
             load_dataset(f"{self.username}/{self.name}")["train"],
         )
         # filter out news that are not related to the index
-        still_in_index = prev_data.symbol.isin(symbols)
+        still_in_index = prev_data.symbol.isin(self.symbols)
         prev_data = prev_data.loc[still_in_index]
-        self.data = pd.concat([prev_data, self.data])
-        self.data.drop_duplicates(inplace=True)
+        self.dataset_df = pd.concat([prev_data, self.dataset_df])
+        self.dataset_df.drop_duplicates(inplace=True)
 
     def check_file_exists(self, tag: Optional[str] = None) -> bool:
         """
@@ -46,22 +44,9 @@ class Dataset:
         except FileNotFoundError:
             return False
 
-    def update(self) -> None:
+    def set_dataset_df(self):
         """
-        Crawl data.
-        """
-        print(f"Crawl dataset: {self.name}")
-        tag = self.tag_date.isoformat()
-        if self.name is None:
-            raise ValueError("self.name must be set")
-        if self.check_file_exists(tag=tag):
-            raise ValueError("tag reference exists")
-        self.build()
-        self.to_hf_datasets(tag)
-
-    def build(self) -> None:
-        """
-        Download data.
+        Frames to dataset.
         """
         raise NotImplementedError
 
@@ -77,17 +62,18 @@ class Dataset:
         pattern = re.compile(r"\.B$")
         return pattern.sub("-B", symbol)
 
-    def to_hf_datasets(self, tag: str) -> None:
+    def to_hf_datasets(self) -> None:
         """
         To Hugging Face datasets.
         """
-        if self.data.columns.tolist() != self.expected_columns:
+        if self.dataset_df.columns.tolist() != self.expected_columns:
             raise ValueError(
-                f"self.data must have the right columns\n{self.data.columns.tolist()}\n!=\n{self.expected_columns}"
+                f"self.dataset_df must have the right columns\n{self.dataset_df.columns.tolist()}\n!=\n{self.expected_columns}"
             )
-        if len(self.data) == 0:
-            raise ValueError("self.data must be set")
-        dataset = HFDataset.from_pandas(self.data)
+        if len(self.dataset_df) == 0:
+            raise ValueError("self.dataset_df must be set")
+        tag = self.tag_date.isoformat()
+        dataset = HFDataset.from_pandas(self.dataset_df)
         repo_id: str = f"edarchimbaud/{self.name}"
         dataset.push_to_hub(repo_id, private=False)
         huggingface_hub.create_tag(repo_id, tag=tag, repo_type="dataset")
