@@ -26,6 +26,8 @@ class Analysis(Raw):
         soup = BeautifulSoup(response.text, features="lxml")
         div = soup.find("div", {"id": "Col1-0-AnalystLeafPage-Proxy"})
         tables = div.find_all("table") if div is not None else None
+        if tables is None:
+            raise ValueError(f"No tables found for {ticker}")
         expected_table_names = [
             "Earnings Estimate",
             "Revenue Estimate",

@@ -68,7 +68,7 @@ class EPSRevisions(Analysis):
                 field="EPS Revisions",
                 symbol=symbol,
             )
-        except IndexError as e:
+        except (IndexError, ValueError) as e:
             print(f"Exception for {self.name}: {symbol}: {e}")
             return
         self.frames[symbol] = df
