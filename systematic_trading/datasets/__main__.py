@@ -15,6 +15,7 @@ from systematic_trading.datasets.raw.analysis.eps_trend import EPSTrend
 from systematic_trading.datasets.raw.news import News
 from systematic_trading.datasets.raw.analysis.revenue_estimate import RevenueEstimate
 from systematic_trading.datasets.raw.timeseries_daily import TimeseriesDaily
+from systematic_trading.datasets.raw.timeseries_1mn import Timeseries1mn
 from systematic_trading.datasets.targets.targets_monthly import TargetsMonthly
 
 
@@ -52,6 +53,9 @@ def main(suffix: str, username: str):
             suffix=suffix, tag_date=tag_date, username=username
         ),
         "timeseries-daily-sp500": TimeseriesDaily(
+            suffix=suffix, tag_date=tag_date, username=username
+        ),
+        "timeseries-1mn-sp500": Timeseries1mn(
             suffix=suffix, tag_date=tag_date, username=username
         ),
     }
