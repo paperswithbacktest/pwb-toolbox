@@ -1,5 +1,5 @@
 """
-Timeseries daily from Yahoo Finance.
+Timeseries 1mn from Yahoo Finance.
 """
 
 from datetime import date, datetime
@@ -16,7 +16,7 @@ from systematic_trading.helpers import retry_get
 
 class Timeseries1mn(Raw):
     """
-    Timeseries daily from Yahoo Finance.
+    Timeseries 1mn from Yahoo Finance.
     """
 
     def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
@@ -46,16 +46,15 @@ class Timeseries1mn(Raw):
         data = {"datetime": [datetime.fromtimestamp(t) for t in timestamp]}
         data.update(indicators)
         df = pd.DataFrame(data=data)
-        df = df.reindex(columns=["datetime", "open", "high", "low", "close", "volume"])
         df["symbol"] = symbol
-        # use reindex() to set 'symbol' as the first column
-        df = df.reindex(columns=["symbol"] + list(df.columns[:-1]))
-        print(df)
+        df = df.reindex(columns=self.expected_columns)
         self.frames[symbol] = df
 
     def set_dataset_df(self):
         self.dataset_df = pd.concat(self.frames.values())
-        self.dataset_df.sort_values(by=["symbol", "date"], inplace=True)
+        if self.check_file_exists():
+            self.add_previous_data()
+        self.dataset_df.sort_values(by=["symbol", "datetime"], inplace=True)
         self.dataset_df.reset_index(drop=True, inplace=True)
 
 
