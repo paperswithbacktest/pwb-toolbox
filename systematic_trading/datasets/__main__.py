@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime
 from typing import List
 
 import click
@@ -25,13 +25,13 @@ from systematic_trading.datasets.targets.targets_monthly import TargetsMonthly
 
 @click.command()
 @click.option("--suffix", default="sp500", help="Suffix to use")
+@click.option("--tag", default=date.today().isoformat(), help="Tag to use")
 @click.option("--username", default="edarchimbaud", help="Username to use")
-def main(suffix: str, username: str):
+def main(suffix: str, tag: str, username: str):
     """
     Main function.
     """
-    tag_date = date.today() - timedelta(days=1)
-    tag = tag_date.isoformat()
+    tag_date = datetime.strptime(tag, "%Y-%m-%d").date()
     print("Updating index constituents...")
     if suffix == "sp500":
         index_constituents = SP500(tag_date=tag_date, username=username)
