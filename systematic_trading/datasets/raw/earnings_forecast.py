@@ -55,7 +55,7 @@ class EarningsForecast(Raw):
             "upgrade-insecure-requests": "1",
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
         }
-        response = retry_get(url, headers=headers)
+        response = retry_get(url, headers=headers, mode="curl")
         json_data = response.json()
         if json_data["data"] is None:
             return
