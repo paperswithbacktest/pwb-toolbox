@@ -1,9 +1,18 @@
+import json
 import subprocess
 import time
 
 import requests
 from requests.exceptions import ConnectionError, HTTPError, ReadTimeout
 from requests.models import Response
+
+
+def is_valid_json(data):
+    try:
+        json.loads(data)
+        return True
+    except json.JSONDecodeError:
+        return False
 
 
 def retry_get(
@@ -27,10 +36,11 @@ def retry_get(
         ]
         for _ in range(retries):
             result = subprocess.run(curl_command, capture_output=True, text=True)
-            if result.returncode == 0:
+            content = result.stdout
+            if result.returncode == 0 and is_valid_json(content):
                 response = Response()
                 response.status_code = 200
-                response._content = result.stdout.encode("utf-8")
+                response._content = content.encode("utf-8")
                 return response
             else:
                 print(f"Connection error with {url}. Retrying in {delay} seconds...")
