@@ -25,13 +25,19 @@ from systematic_trading.datasets.targets.targets_monthly import TargetsMonthly
 
 @click.command()
 @click.option("--suffix", default="sp500", help="Suffix to use")
-@click.option("--tag", default=date.today().isoformat(), help="Tag to use")
 @click.option("--username", default="edarchimbaud", help="Username to use")
-def main(suffix: str, tag: str, username: str):
+def main(suffix: str, username: str):
     """
     Main function.
     """
-    tag_date = datetime.strptime(tag, "%Y-%m-%d").date()
+    now = datetime.now()
+    if now.hour > 22:
+        tag_date = date.today()
+    elif now.hour < 4:
+        tag_date = date.today() - timedelta(days=1)
+    else:
+        raise ValueError("This script should be run between 22:00 and 04:00")
+
     print("Updating index constituents...")
     if suffix == "sp500":
         index_constituents = SP500(tag_date=tag_date, username=username)
