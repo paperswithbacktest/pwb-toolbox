@@ -53,6 +53,7 @@ class TimeseriesDaily(Raw):
         ticker = self.symbol_to_ticker(symbol)
         df = self.__get_timeseries_daily_with_retry(ticker)
         if df is None:
+            self.frames[symbol] = None
             return
         df.rename(
             columns={
@@ -72,6 +73,6 @@ class TimeseriesDaily(Raw):
         self.frames[symbol] = df
 
     def set_dataset_df(self):
-        self.dataset_df = pd.concat(self.frames.values())
+        self.dataset_df = pd.concat([f for f in self.frames.values() if f is not None])
         self.dataset_df.sort_values(by=["symbol", "date"], inplace=True)
         self.dataset_df.reset_index(drop=True, inplace=True)

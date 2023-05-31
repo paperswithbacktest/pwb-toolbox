@@ -56,9 +56,11 @@ class ShortInterest(Raw):
         response = retry_get(url, headers=headers, mode="curl")
         json_data = response.json()
         if json_data["data"] is None:
+            self.frames[symbol] = None
             return
         short_interest_table = json_data["data"]["shortInterestTable"]
         if short_interest_table is None:
+            self.frames[symbol] = None
             return
         data = short_interest_table["rows"]
         df = pd.DataFrame(data=data)
@@ -84,7 +86,7 @@ class ShortInterest(Raw):
         self.frames[symbol] = df
 
     def set_dataset_df(self):
-        self.dataset_df = pd.concat(self.frames.values())
+        self.dataset_df = pd.concat([f for f in self.frames.values() if f is not None])
         if self.check_file_exists():
             self.add_previous_data()
         self.dataset_df.sort_values(by=["symbol", "date", "id"], inplace=True)

@@ -100,6 +100,7 @@ class Earnings(Raw):
             df = self.__get_earnings(ticker)
         except ValueError as e:
             print(f"Exception for {self.name}: {symbol}: {e}")
+            self.frames[symbol] = None
             return
         df.drop(columns=["Symbol", "Company"], inplace=True)
         df.rename(
@@ -120,6 +121,6 @@ class Earnings(Raw):
         """
         Set the dataset dataframe.
         """
-        self.dataset_df = pd.concat(self.frames.values())
+        self.dataset_df = pd.concat([f for f in self.frames.values() if f is not None])
         self.dataset_df.sort_values(by=["symbol", "date"], inplace=True)
         self.dataset_df.reset_index(drop=True, inplace=True)

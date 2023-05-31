@@ -82,6 +82,7 @@ class EarningsEstimate(Analysis):
             )
         except (IndexError, ValueError) as e:
             print(f"Exception for {self.name}: {symbol}: {e}")
+            self.frames[symbol] = None
             return
         self.frames[symbol] = df
 
@@ -89,7 +90,7 @@ class EarningsEstimate(Analysis):
         """
         Convert the frames to a dataset.
         """
-        self.dataset_df = pd.concat(self.frames.values())
+        self.dataset_df = pd.concat([f for f in self.frames.values() if f is not None])
         if self.check_file_exists():
             self.add_previous_data()
         self.dataset_df.sort_values(by=["symbol", "date"], inplace=True)

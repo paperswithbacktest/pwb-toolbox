@@ -58,9 +58,11 @@ class EarningsForecast(Raw):
         response = retry_get(url, headers=headers, mode="curl")
         json_data = response.json()
         if json_data["data"] is None:
+            self.frames[symbol] = None
             return
         quarterly_forecast = json_data["data"]["quarterlyForecast"]
         if quarterly_forecast is None:
+            self.frames[symbol] = None
             return
         df = pd.DataFrame(data=quarterly_forecast["rows"])
         df.rename(
@@ -80,7 +82,7 @@ class EarningsForecast(Raw):
         self.frames[symbol] = df
 
     def set_dataset_df(self):
-        self.dataset_df = pd.concat(self.frames.values())
+        self.dataset_df = pd.concat([f for f in self.frames.values() if f is not None])
         if self.check_file_exists():
             self.add_previous_data()
         self.dataset_df.sort_values(by=["symbol", "date", "id"], inplace=True)

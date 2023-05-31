@@ -1,3 +1,4 @@
+backtrader
 beautifulsoup4
 click
 datasets
