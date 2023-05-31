@@ -31,7 +31,7 @@ def main(suffix: str, username: str):
     Main function.
     """
     now = datetime.now()
-    if now.hour > 22:
+    if now.hour > 21:
         tag_date = date.today()
     elif now.hour < 4:
         tag_date = date.today() - timedelta(days=1)

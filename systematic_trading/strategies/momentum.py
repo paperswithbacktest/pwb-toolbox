@@ -148,9 +148,6 @@ def main():
     df.loc[df.index >= starting_date, ["Nav"]].plot()
     plt.show()
 
-    # Plot the Results
-    # cerebro.plot()
-
 
 if __name__ == "__main__":
     main()
