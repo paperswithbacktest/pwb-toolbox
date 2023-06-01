@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, timedelta
 from typing import List
 
 import click
@@ -33,10 +33,10 @@ def main(suffix: str, username: str):
     now = datetime.now()
     if now.hour > 21:
         tag_date = date.today()
-    elif now.hour < 4:
+    elif now.hour < 10:
         tag_date = date.today() - timedelta(days=1)
     else:
-        raise ValueError("This script should be run between 22:00 and 04:00")
+        raise ValueError("This script should be run between 21:00 and 10:00")
 
     print("Updating index constituents...")
     if suffix == "sp500":
