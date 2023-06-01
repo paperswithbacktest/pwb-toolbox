@@ -37,7 +37,7 @@ def main(suffix: str, username: str):
         tag_date = date.today() - timedelta(days=1)
     else:
         raise ValueError("This script should be run between 21:00 and 10:00")
-
+    tag = tag_date.isoformat()
     print("Updating index constituents...")
     if suffix == "sp500":
         index_constituents = SP500(tag_date=tag_date, username=username)
