@@ -2,6 +2,7 @@ backtrader
 beautifulsoup4
 click
 datasets
+ffn
 huggingface_hub
 kili
 langchain

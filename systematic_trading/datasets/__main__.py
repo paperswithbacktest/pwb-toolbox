@@ -5,7 +5,6 @@ import click
 from tqdm import tqdm
 
 from systematic_trading.datasets.dataset import Dataset
-from systematic_trading.datasets.features.features_monthly import FeaturesMonthly
 from systematic_trading.datasets.index_constituents import IndexConstituents
 from systematic_trading.datasets.index_constituents.sp500 import SP500
 from systematic_trading.datasets.raw.analysis.earnings_estimate import EarningsEstimate
@@ -20,7 +19,6 @@ from systematic_trading.datasets.raw.news import News
 from systematic_trading.datasets.raw.short_interest import ShortInterest
 from systematic_trading.datasets.raw.timeseries_daily import TimeseriesDaily
 from systematic_trading.datasets.raw.timeseries_1mn import Timeseries1mn
-from systematic_trading.datasets.targets.targets_monthly import TargetsMonthly
 
 
 @click.command()
@@ -97,18 +95,6 @@ def main(suffix: str, username: str):
     for name in dataset_names:
         raw_datasets[name].set_dataset_df()
         raw_datasets[name].to_hf_datasets()
-    print("Updating feature and target datasets...")
-    feature_target_datasets = {
-        "features-monthly-sp500": FeaturesMonthly(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "targets-monthly-sp500": TargetsMonthly(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-    }
-    for name in feature_target_datasets:
-        feature_target_datasets[name].set_dataset_df()
-        feature_target_datasets[name].to_hf_datasets()
 
 
 if __name__ == "__main__":
