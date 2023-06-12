@@ -3,19 +3,6 @@
 </div>
 
 
-## Reits, bonds, commodities, equities
-
-| Title | Sharpe Ratio | Annual Return | Rebalancing | Implementation | Source |
-|-------|--------------|---------------|-------------|----------------|--------|
-| Relative Strength Strategies for Investing | `1.15` | `15.0%` | `Monthly` | [Details](./details/relative-strength-strategies-for-investing.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1585517) |
-| Protective Asset Allocation (PAA): A Simple Momentum-Based Alternative for Term Deposits | `0.82` | `10.5%` | `Monthly` | [Details](./details/protective-asset-allocation-paa-a-simple-momentum-based-alternative-for-term-deposits.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2759734) |
-
-## Reits, bonds, equities
-
-| Title | Sharpe Ratio | Annual Return | Rebalancing | Implementation | Source |
-|-------|--------------|---------------|-------------|----------------|--------|
-| How Do Factor Premia Vary Over Time? A Century of Evidence | `0.79` | `11.9%` | `Monthly` | [Details](./details/how-do-factor-premia-vary-over-time-a-century-of-evidence.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3400998) |
-
 ## Bonds
 
 | Title | Sharpe Ratio | Annual Return | Rebalancing | Implementation | Source |
@@ -296,3 +283,16 @@
 | Using Option-Implied Information to Improve Currency Carry Trade Profits | `1.01` | `9.16%` | `Monthly` | [Details](./details/using-option-implied-information-to-improve-currency-carry-trade-profits.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2851543) |
 | Predictability of Currency Carry Trades and Asset Pricing Implications | `0.86` | `12.6%` | `Monthly` | [Details](./details/predictability-of-currency-carry-trades-and-asset-pricing-implications.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1977642) |
 | Carry Trades and Global Foreign Exchange Volatility | `0.48` | `4.2%` | `6 Months` | [Details](./details/carry-trades-and-global-foreign-exchange-volatility.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1342968) |
+
+## REITs, bonds, commodities, equities
+
+| Title | Sharpe Ratio | Annual Return | Rebalancing | Implementation | Source |
+|-------|--------------|---------------|-------------|----------------|--------|
+| Relative Strength Strategies for Investing | `1.15` | `15.0%` | `Monthly` | [Details](./details/relative-strength-strategies-for-investing.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1585517) |
+| Protective Asset Allocation (PAA): A Simple Momentum-Based Alternative for Term Deposits | `0.82` | `10.5%` | `Monthly` | [Details](./details/protective-asset-allocation-paa-a-simple-momentum-based-alternative-for-term-deposits.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2759734) |
+
+## REITs, bonds, equities
+
+| Title | Sharpe Ratio | Annual Return | Rebalancing | Implementation | Source |
+|-------|--------------|---------------|-------------|----------------|--------|
+| How Do Factor Premia Vary Over Time? A Century of Evidence | `0.79` | `11.9%` | `Monthly` | [Details](./details/how-do-factor-premia-vary-over-time-a-century-of-evidence.md) | [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3400998) |
