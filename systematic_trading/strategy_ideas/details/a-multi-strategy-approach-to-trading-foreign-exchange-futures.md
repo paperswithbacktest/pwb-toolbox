@@ -29,7 +29,7 @@
 
 ## Statistics
 
-- **Markets Traded:** currencies
+- **Markets Traded:** Currencies
 - **Period of Rebalancing:** Monthly
 - **Backtest period:** 1995-2019
 - **Annual Return:** 6.58%

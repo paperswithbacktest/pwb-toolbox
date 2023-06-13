@@ -18,7 +18,7 @@
 
 ## Statistics
 
-- **Markets Traded:** equities
+- **Markets Traded:** Equities
 - **Period of Rebalancing:** Monthly
 - **Backtest period:** 2000-2013
 - **Annual Return:** 14.44%
