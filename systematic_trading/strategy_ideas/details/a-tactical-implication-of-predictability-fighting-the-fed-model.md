@@ -21,7 +21,7 @@
 - **Period of Rebalancing:** Monthly
 - **Backtest period:** 1959-2003
 - **Annual Return:** 11%
-- **Maximum Drawdown:** not stated
+- **Maximum Drawdown:** N/A
 - **Sharpe Ratio:** 0.7
 - **Annual Standard Deviation:** 10%
 
