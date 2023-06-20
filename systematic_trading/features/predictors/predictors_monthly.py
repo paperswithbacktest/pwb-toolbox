@@ -9,7 +9,7 @@ import pickle
 from tqdm import tqdm
 
 from systematic_trading.datasets.dataset import Dataset
-from systematic_trading.datasets.signals.estimators.slope import (
+from systematic_trading.datasets.predictors.estimators.slope import (
     bayesian_slope,
     linear_regression_slope,
     median_of_local_slopes,
@@ -18,10 +18,10 @@ from systematic_trading.datasets.signals.estimators.slope import (
 )
 
 
-class SignalsMonthly(Dataset):
+class PredictorsMonthly(Dataset):
     def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
         super().__init__(suffix, tag_date, username)
-        self.name = f"signals-monthly-{self.suffix}"
+        self.name = f"predictors-monthly-{self.suffix}"
         self.expected_columns = [
             "symbol",
             "date",
@@ -55,7 +55,7 @@ class SignalsMonthly(Dataset):
         timeseries_daily_df["date"] = pd.to_datetime(timeseries_daily_df["date"])
         timeseries_daily_df.set_index("date", inplace=True)
         BARYCENTRE_OF_PROGRESSIVE_SLOPES_12M = "barycentre_of_progressive_slopes_12m"
-        signals = {
+        predictors = {
             "bayesian_slope_12m": bayesian_slope,
             "linear_regression_slope_12m": linear_regression_slope,
             "median_of_progressive_slopes_12m": median_of_progressive_slopes,
@@ -63,17 +63,17 @@ class SignalsMonthly(Dataset):
             BARYCENTRE_OF_PROGRESSIVE_SLOPES_12M: "custom",
         }
         frames = []
-        for signal_name, signal in tqdm(signals.items()):
-            if signal != "custom":
+        for predictor_name, predictor in tqdm(predictors.items()):
+            if predictor != "custom":
                 monthly_df = (
                     timeseries_daily_df.groupby("symbol")["close"]
                     .resample("M")
                     .last()
                     .rolling(window=12)
-                    .apply(signal)
+                    .apply(predictor)
                 )
-                monthly_df.rename(signal_name, inplace=True)
-            elif signal_name == BARYCENTRE_OF_PROGRESSIVE_SLOPES_12M:
+                monthly_df.rename(predictor_name, inplace=True)
+            elif predictor_name == BARYCENTRE_OF_PROGRESSIVE_SLOPES_12M:
                 monthly_close_df = (
                     timeseries_daily_df.groupby("symbol")["close"].resample("M").last()
                 )
@@ -93,9 +93,9 @@ class SignalsMonthly(Dataset):
             frames.append(monthly_df)
         monthly_df = pd.concat(frames, axis=1)
         monthly_df = monthly_df.reset_index(level=["symbol", "date"]).dropna()
-        for signal_name in signals.keys():
-            monthly_df[f"{signal_name}_quintile"] = monthly_df.groupby("date")[
-                signal_name
+        for predictor_name in predictors.keys():
+            monthly_df[f"{predictor_name}_quintile"] = monthly_df.groupby("date")[
+                predictor_name
             ].transform(lambda x: pd.qcut(x, 5, labels=False))
         monthly_df.reset_index(drop=True, inplace=True)
         self.dataset_df = monthly_df

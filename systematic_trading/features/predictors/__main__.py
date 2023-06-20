@@ -1,6 +1,6 @@
 from datetime import date
 
-from systematic_trading.features.signals.signals_monthly import SignalsMonthly
+from systematic_trading.features.predictors.predictors_monthly import PredictorsMonthly
 from systematic_trading.features.targets.targets_monthly import TargetsMonthly
 
 
@@ -8,7 +8,7 @@ def main():
     tag_date = date.today()
     print("Updating feature and target datasets...")
     features = {
-        "signals-monthly-sp500": SignalsMonthly(
+        "predictors-monthly-sp500": PredictorsMonthly(
             suffix=suffix, tag_date=tag_date, username=username
         ),
         "targets-monthly-sp500": TargetsMonthly(

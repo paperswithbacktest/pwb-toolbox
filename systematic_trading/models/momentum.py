@@ -11,17 +11,17 @@ from sklearn.metrics import confusion_matrix
 
 
 def main():
-    signals_df = pd.DataFrame(
-        load_dataset("edarchimbaud/signals-monthly-sp500", split="train")
+    predictors_df = pd.DataFrame(
+        load_dataset("edarchimbaud/predictors-monthly-sp500", split="train")
     )
     targets_df = pd.DataFrame(
         load_dataset("edarchimbaud/targets-monthly-sp500", split="train")
     )
-    print(signals_df.iloc[0, :])
+    print(predictors_df.iloc[0, :])
     print(targets_df.iloc[0, :])
 
     # merging the two dataframes on the 'symbol' and 'date' columns
-    merged_df = pd.merge(signals_df, targets_df, on=["symbol", "date"])
+    merged_df = pd.merge(predictors_df, targets_df, on=["symbol", "date"])
     merged_df.set_index(["symbol", "date"], inplace=True)
 
     # filter the merged dataframe to include only "*quintile" columns from the first dataset
