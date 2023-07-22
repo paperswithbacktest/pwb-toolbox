@@ -9,7 +9,7 @@ import pickle
 from tqdm import tqdm
 
 from systematic_trading.datasets.dataset import Dataset
-from systematic_trading.features.signals.estimators.slope import (
+from systematic_trading.datasets.predictors.estimators.slope import (
     bayesian_slope,
     linear_regression_slope,
     median_of_local_slopes,

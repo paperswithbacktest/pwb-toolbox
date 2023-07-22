@@ -52,7 +52,7 @@ class MomentumStrategy(bt.Strategy):
         )
         self.log(self.broker.getvalue())
 
-        # Count the number of stocks that have a valid momentum signal
+        # Count the number of stocks that have a valid momentum predictor
         num_stocks = np.count_nonzero(~np.isnan(self.ret))
 
         # Compute the quantile thresholds
