@@ -1,3 +1,4 @@
+import click
 from datasets import load_dataset
 import ffn
 import matplotlib.pyplot as plt
@@ -10,7 +11,19 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 from sklearn.metrics import confusion_matrix
 
 
-def main():
+def train_test_split_v2(X, y, dt=None):
+    if dt is None:
+        return train_test_split(X, y, test_size=0.5, random_state=42)
+    X_train = X.index.get_level_values("date") < dt
+    y_train = y.index.get_level_values("date") < dt
+    return X.loc[X_train, :], X.loc[~X_train, :], y.loc[y_train, :], y.loc[~y_train, :]
+
+
+@click.command()
+@click.option(
+    "--test_start_date", help="Starting date of the out of sample (yyyy-mm-dd)"
+)
+def main(test_start_date: str):
     signals_df = pd.DataFrame(
         load_dataset("edarchimbaud/signals-monthly-sp500", split="train")
     )
@@ -36,9 +49,7 @@ def main():
     y = merged_df[["return_quintile", "return"]]
 
     # split the data into training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.5, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split_v2(X, y, dt=test_start_date)
 
     # use a random forest classifier
     clf = RandomForestClassifier(n_estimators=100, random_state=42)

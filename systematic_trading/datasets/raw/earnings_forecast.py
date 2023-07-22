@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 
 from systematic_trading.datasets.raw import Raw
-from systematic_trading.helpers import retry_get
+from systematic_trading.helpers import nasdaq_headers, retry_get
 
 
 class EarningsForecast(Raw):
@@ -39,23 +39,7 @@ class EarningsForecast(Raw):
     def append_frame(self, symbol: str):
         ticker = self.symbol_to_ticker(symbol)
         url = f"https://api.nasdaq.com/api/analyst/{ticker}/earnings-forecast"
-        headers = {
-            "authority": "api.nasdaq.com",
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "accept-language": "en-US,en;q=0.5",
-            "cache-control": "max-age=0",
-            "sec-ch-ua": '"Brave";v="113", "Chromium";v="113", "Not-A.Brand";v="24"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"macOS"',
-            "sec-fetch-dest": "document",
-            "sec-fetch-mode": "navigate",
-            "sec-fetch-site": "none",
-            "sec-fetch-user": "?1",
-            "sec-gpc": "1",
-            "upgrade-insecure-requests": "1",
-            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
-        }
-        response = retry_get(url, headers=headers, mode="curl")
+        response = retry_get(url, headers=nasdaq_headers(), mode="curl")
         json_data = response.json()
         if json_data["data"] is None:
             self.frames[symbol] = None
