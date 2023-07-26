@@ -7,6 +7,7 @@ from tqdm import tqdm
 from systematic_trading.datasets.dataset import Dataset
 from systematic_trading.datasets.index_constituents import IndexConstituents
 from systematic_trading.datasets.index_constituents.sp500 import SP500
+from systematic_trading.datasets.knowledge_graph.stocks import Stocks
 from systematic_trading.datasets.raw.analysis.earnings_estimate import EarningsEstimate
 from systematic_trading.datasets.raw.analysis.eps_revisions import EPSRevisions
 from systematic_trading.datasets.raw.analysis.eps_trend import EPSTrend
@@ -22,79 +23,84 @@ from systematic_trading.datasets.raw.timeseries_1mn import Timeseries1mn
 
 
 @click.command()
-@click.option("--suffix", default="sp500", help="Suffix to use")
+@click.option("--mode", default="", help="Mode to use, daily / on-demand")
 @click.option("--username", default="edarchimbaud", help="Username to use")
-def main(suffix: str, username: str):
+def main(mode: str, username: str):
     """
     Main function.
     """
-    now = datetime.now()
-    if now.hour > 21:
-        tag_date = date.today()
-    elif now.hour < 10:
-        tag_date = date.today() - timedelta(days=1)
-    else:
-        raise ValueError("This script should be run between 21:00 and 10:00")
-    tag = tag_date.isoformat()
-    print("Updating index constituents...")
-    if suffix == "sp500":
+    if mode == "daily":
+        now = datetime.now()
+        if now.hour > 21:
+            tag_date = date.today()
+        elif now.hour < 10:
+            tag_date = date.today() - timedelta(days=1)
+        else:
+            raise ValueError("This script should be run between 21:00 and 10:00")
+        tag = tag_date.isoformat()
+        print("Updating index constituents...")
         index_constituents = SP500(tag_date=tag_date, username=username)
-    else:
-        raise ValueError(f"Unknown suffix {suffix}")
-    if not index_constituents.check_file_exists(tag=tag):
-        index_constituents.set_dataset_df()
-        index_constituents.to_hf_datasets()
-    print("Updating raw datasets...")
-    raw_datasets = {
-        "earnings-sp500": Earnings(suffix=suffix, tag_date=tag_date, username=username),
-        "earnings-estimate-sp500": EarningsEstimate(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "earnings-forecast-sp500": EarningsForecast(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "earnings-surprise-sp500": EarningsSurprise(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "extended-trading-sp500": ExtendedTrading(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "eps-revisions-sp500": EPSRevisions(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "eps-trend-sp500": EPSTrend(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "news-sp500": News(suffix=suffix, tag_date=tag_date, username=username),
-        "revenue-estimate-sp500": RevenueEstimate(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "short-interest-sp500": ShortInterest(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "timeseries-daily-sp500": TimeseriesDaily(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-        "timeseries-1mn-sp500": Timeseries1mn(
-            suffix=suffix, tag_date=tag_date, username=username
-        ),
-    }
-    dataset_names = [
-        name
-        for name in raw_datasets
-        if not raw_datasets[name].check_file_exists(tag=tag)
-    ]
-    for name in dataset_names:
-        raw_datasets[name].load_frames()
-    for symbol in tqdm(index_constituents.symbols):
+        if not index_constituents.check_file_exists(tag=tag):
+            index_constituents.set_dataset_df()
+            index_constituents.to_hf_datasets()
+        print("Updating raw datasets...")
+        raw_datasets = {
+            "earnings-stocks": Earnings(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "earnings-estimate-stocks": EarningsEstimate(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "earnings-forecast-stocks": EarningsForecast(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "earnings-surprise-stocks": EarningsSurprise(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "extended-trading-stocks": ExtendedTrading(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "eps-revisions-stocks": EPSRevisions(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "eps-trend-stocks": EPSTrend(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "news-stocks": News(suffix="stocks", tag_date=tag_date, username=username),
+            "revenue-estimate-stocks": RevenueEstimate(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "short-interest-stocks": ShortInterest(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "timeseries-daily-stocks": TimeseriesDaily(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+            "timeseries-1mn-stocks": Timeseries1mn(
+                suffix="stocks", tag_date=tag_date, username=username
+            ),
+        }
+        dataset_names = [
+            name
+            for name in raw_datasets
+            if not raw_datasets[name].check_file_exists(tag=tag)
+        ]
         for name in dataset_names:
-            if symbol in raw_datasets[name].frames:
-                continue
-            raw_datasets[name].append_frame(symbol)
-            raw_datasets[name].save_frames()
-    for name in dataset_names:
-        raw_datasets[name].set_dataset_df()
-        raw_datasets[name].to_hf_datasets()
+            raw_datasets[name].load_frames()
+        for symbol in tqdm(index_constituents.symbols):
+            for name in dataset_names:
+                if symbol in raw_datasets[name].frames:
+                    continue
+                raw_datasets[name].append_frame(symbol)
+                raw_datasets[name].save_frames()
+        for name in dataset_names:
+            raw_datasets[name].set_dataset_df()
+            raw_datasets[name].to_hf_datasets()
+    elif mode == "on-demand":
+        print("Updating list of stocks...")
+        stocks = Stocks(username=username)
+        stocks.set_dataset_df()
+        stocks.to_hf_datasets()
 
 
 if __name__ == "__main__":

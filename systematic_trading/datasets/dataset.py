@@ -19,7 +19,7 @@ class Dataset:
         self.expected_columns = []
         self.dataset_df: pd.DataFrame = pd.DataFrame(columns=self.expected_columns)
         self.name: str = None
-        self.symbols = self.get_index_symbols()
+        self.symbols = self.get_scope_symbols()
 
     def add_previous_data(self):
         """
@@ -29,8 +29,8 @@ class Dataset:
             load_dataset(f"{self.username}/{self.name}")["train"],
         )
         # filter out news that are not related to the index
-        still_in_index = prev_data.symbol.isin(self.symbols)
-        prev_data = prev_data.loc[still_in_index]
+        still_in_scope = prev_data.symbol.isin(self.symbols)
+        prev_data = prev_data.loc[still_in_scope]
         self.dataset_df = pd.concat([prev_data, self.dataset_df])
         self.dataset_df.drop_duplicates(inplace=True)
 
@@ -54,10 +54,10 @@ class Dataset:
         """
         raise NotImplementedError
 
-    def get_index_symbols(self):
-        return load_dataset(f"{self.username}/index-constituents-{self.suffix}")[
-            "train"
-        ]["symbol"]
+    def get_scope_symbols(self) -> list:
+        if self.check_file_exists():
+            return load_dataset(f"{self.username}/{self.suffix}")["train"]["symbol"]
+        return []
 
     def symbol_to_ticker(self, symbol: str) -> str:
         """

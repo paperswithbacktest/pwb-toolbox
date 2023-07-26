@@ -70,7 +70,7 @@ class ExtendedTrading(Raw):
 
 if __name__ == "__main__":
     symbol = "AAPL"
-    suffix = "sp500"
+    suffix = "stocks"
     tag_date = datetime(2023, 5, 26).date()
     username = "edarchimbaud"
     dataset = ExtendedTrading(suffix=suffix, tag_date=tag_date, username=username)

@@ -33,7 +33,7 @@ class Wikipedia:
         Returns the Wikipedia pages of companies that are traded.
         """
         pages = {}
-        for line in tqdm(self.handler):
+        for line in tqdm(self.handler, total=22962775):
             line = line.decode("utf-8")
             if "<page>" in line:
                 page_content = []

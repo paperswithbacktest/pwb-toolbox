@@ -18,7 +18,7 @@ class SP500(IndexConstituents):
     """
 
     def __init__(self, tag_date: date = None, username: str = None):
-        super().__init__("sp500", tag_date, username)
+        super().__init__("stocks", tag_date, username)
         self.name = f"index-constituents-sp500"
 
     def set_dataset_df(self):
