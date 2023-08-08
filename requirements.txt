@@ -9,4 +9,6 @@ langchain
 lxml
 numba
 pandas
+selenium
 tqdm
+webdriver_manager

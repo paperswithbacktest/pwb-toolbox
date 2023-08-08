@@ -3,6 +3,7 @@ Timeseries daily from Yahoo Finance.
 """
 
 from datetime import date, datetime
+from io import StringIO
 import time
 import urllib
 
@@ -11,6 +12,7 @@ import pandas as pd
 import requests
 
 from systematic_trading.datasets.raw import Raw
+from systematic_trading.helpers import retry_get
 
 
 class TimeseriesDaily(Raw):
@@ -39,7 +41,9 @@ class TimeseriesDaily(Raw):
         url = f"https://query1.finance.yahoo.com/v7/finance/download/{ticker}?period1={from_timestamp}&period2={to_timestamp}&interval=1d&events=history&includeAdjustedClose=true"
         for _ in range(retries):
             try:
-                df = pd.read_csv(url)
+                response = retry_get(url)
+                data = StringIO(response.text)
+                df = pd.read_csv(data)
                 df["Date"] = pd.to_datetime(df["Date"]).dt.date.apply(
                     lambda x: x.isoformat()
                 )
