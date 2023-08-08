@@ -62,7 +62,7 @@ class Stocks(KnowledgeGraph):
         return df
 
     def __download_sp500(self) -> pd.DataFrame:
-        dataset = load_dataset("edarchimbaud/index-constituents-sp500")
+        dataset = load_dataset("edarchimbaud/securities-sp500")
         df = dataset["train"].to_pandas()
         df = df[["symbol", "security", "gics_sector", "gics_sub_industry"]]
         df.loc[:, "country"] = "United States"

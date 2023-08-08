@@ -34,13 +34,13 @@ class Dataset:
         self.dataset_df = pd.concat([prev_data, self.dataset_df])
         self.dataset_df.drop_duplicates(inplace=True)
 
-    def check_file_exists(self, tag: Optional[str] = None) -> bool:
+    def check_file_exists(self, name: str = None, tag: Optional[str] = None) -> bool:
         """
         Check if file exists.
         """
         try:
             load_dataset(
-                f"{self.username}/{self.name}",
+                f"{self.username}/{name or self.name}",
                 revision=tag,
                 verification_mode="no_checks",
             )
@@ -55,8 +55,9 @@ class Dataset:
         raise NotImplementedError
 
     def get_scope_symbols(self) -> list:
-        if self.check_file_exists():
-            return load_dataset(f"{self.username}/{self.suffix}")["train"]["symbol"]
+        name = f"securities-{self.suffix}"
+        if self.check_file_exists(name=name):
+            return load_dataset(f"{self.username}/{name}")["train"]["symbol"]
         return []
 
     def symbol_to_ticker(self, symbol: str) -> str:

@@ -29,11 +29,11 @@ def main(mode: str, username: str):
     """
     Main function.
     """
-    if mode == "daily":
+    if mode == "daily" or mode == "daily-force":
         now = datetime.now()
         if now.hour > 21:
             tag_date = date.today()
-        elif now.hour < 10:
+        elif now.hour < 10 or mode == "daily-force":
             tag_date = date.today() - timedelta(days=1)
         else:
             raise ValueError("This script should be run between 21:00 and 10:00")
@@ -44,40 +44,41 @@ def main(mode: str, username: str):
             index_constituents.set_dataset_df()
             index_constituents.to_hf_datasets()
         print("Updating raw datasets...")
+        suffix = "sp500"
         raw_datasets = {
-            "earnings-stocks": Earnings(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"earnings-{suffix}": Earnings(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "earnings-estimate-stocks": EarningsEstimate(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"earnings-estimate-{suffix}": EarningsEstimate(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "earnings-forecast-stocks": EarningsForecast(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"earnings-forecast-{suffix}": EarningsForecast(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "earnings-surprise-stocks": EarningsSurprise(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"earnings-surprise-{suffix}": EarningsSurprise(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "extended-trading-stocks": ExtendedTrading(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"extended-trading-{suffix}": ExtendedTrading(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "eps-revisions-stocks": EPSRevisions(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"eps-revisions-{suffix}": EPSRevisions(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "eps-trend-stocks": EPSTrend(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"eps-trend-{suffix}": EPSTrend(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "news-stocks": News(suffix="stocks", tag_date=tag_date, username=username),
-            "revenue-estimate-stocks": RevenueEstimate(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"news-{suffix}": News(suffix=suffix, tag_date=tag_date, username=username),
+            f"revenue-estimate-{suffix}": RevenueEstimate(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "short-interest-stocks": ShortInterest(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"short-interest-{suffix}": ShortInterest(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "timeseries-daily-stocks": TimeseriesDaily(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"timeseries-daily-{suffix}": TimeseriesDaily(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
-            "timeseries-1mn-stocks": Timeseries1mn(
-                suffix="stocks", tag_date=tag_date, username=username
+            f"timeseries-1mn-{suffix}": Timeseries1mn(
+                suffix=suffix, tag_date=tag_date, username=username
             ),
         }
         dataset_names = [
