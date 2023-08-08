@@ -36,7 +36,11 @@ class Timeseries1mn(Raw):
     def append_frame(self, symbol: str):
         ticker = self.symbol_to_ticker(symbol)
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?region=US&lang=en-US&includePrePost=false&interval=1m&useYfid=true&range=1d&corsDomain=finance.yahoo.com&.tsrc=finance"
-        response = retry_get(url)
+        try:
+            response = retry_get(url)
+        except:
+            self.frames[symbol] = None
+            return
         json_data = response.json()
         result = json_data["chart"]["result"][0]
         if "timestamp" not in result:

@@ -37,7 +37,11 @@ class EarningsSurprise(Raw):
     def append_frame(self, symbol: str):
         ticker = self.symbol_to_ticker(symbol)
         url = f"https://api.nasdaq.com/api/company/{ticker}/earnings-surprise"
-        response = retry_get(url, headers=nasdaq_headers(), mode="curl")
+        try:
+            response = retry_get(url, headers=nasdaq_headers(), mode="curl")
+        except:
+            self.frames[symbol] = None
+            return
         json_data = response.json()
         if json_data["data"] is None:
             self.frames[symbol] = None

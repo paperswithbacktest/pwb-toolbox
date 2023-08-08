@@ -47,8 +47,9 @@ class TimeseriesDaily(Raw):
 
     def append_frame(self, symbol: str):
         ticker = self.symbol_to_ticker(symbol)
-        df = self.__get_timeseries_daily_with_retry(ticker)
-        if df is None:
+        try:
+            df = self.__get_timeseries_daily_with_retry(ticker)
+        except:
             self.frames[symbol] = None
             return
         df.rename(

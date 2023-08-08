@@ -36,7 +36,10 @@ class ExtendedTrading(Raw):
         data = []
         for n in range(1, 12):
             url = f"https://api.nasdaq.com/api/quote/{ticker}/extended-trading?markettype=pre&assetclass=stocks&time={n}"
-            response = retry_get(url, headers=nasdaq_headers(), mode="curl")
+            try:
+                response = retry_get(url, headers=nasdaq_headers(), mode="curl")
+            except:
+                continue
             json_data = response.json()
             if json_data["data"] is None:
                 continue
