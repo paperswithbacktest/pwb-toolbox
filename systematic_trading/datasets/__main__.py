@@ -98,7 +98,7 @@ def main(mode: str, username: str):
             raw_datasets[name].to_hf_datasets()
     elif mode == "on-demand":
         print("Updating list of stocks...")
-        stocks = Stocks(username=username)
+        stocks = Stocks(tag_date=date.today(), username=username)
         stocks.set_dataset_df()
         stocks.to_hf_datasets()
 

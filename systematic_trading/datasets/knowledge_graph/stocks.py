@@ -71,6 +71,7 @@ class Stocks(KnowledgeGraph):
     def __download(self) -> pd.DataFrame:
         path_tgt = os.path.join("data", "stocks.raw.csv")
         if os.path.exists(path_tgt):
+            self.__load(path=path_tgt)
             return
         self.dataset_df = pd.concat(
             [
@@ -107,10 +108,12 @@ class Stocks(KnowledgeGraph):
         path_src = os.path.join("data", "stocks.raw.csv")
         path_tgt = os.path.join("data", "stocks.title.csv")
         if os.path.exists(path_tgt):
+            self.__load(path=path_tgt)
             return
-        self.__load(path=path_src)
+        else:
+            self.__load(path=path_src)
+            self.dataset_df.loc[:, "wikipedia_title"] = ""
         self.dataset_df.fillna("", inplace=True)
-        self.dataset_df.loc[:, "wikipedia_title"] = ""
         # Match with Google search
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36"
@@ -118,13 +121,13 @@ class Stocks(KnowledgeGraph):
         options = Options()
         options.headless = False
         options.add_argument("user-agent=" + headers["User-Agent"])
-        driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+        driver = webdriver.Chrome(
+            ChromeDriverManager("114.0.5735.90").install(), options=options
+        )
         driver.get("https://www.google.com/")
         input("Cookies accepted?")
         path = os.path.join("data", "stocks.csv")
         for index, row in tqdm(self.dataset_df.iterrows(), total=len(self.dataset_df)):
-            if index < 6:
-                continue
             if row["wikipedia_title"]:
                 continue
             encoded_query = quote_plus(row["security"] + " company")
@@ -156,6 +159,7 @@ class Stocks(KnowledgeGraph):
         path_src = os.path.join("data", "stocks.title.csv")
         path_tgt = os.path.join("data", "stocks.page.pkl")
         if os.path.exists(path_tgt):
+            self.__load(path=path_tgt)
             return
         self.__load(path=path_src)
         titles = self.dataset_df.wikipedia_title.tolist()
@@ -176,6 +180,7 @@ class Stocks(KnowledgeGraph):
         path_src = os.path.join("data", "stocks.page.pkl")
         path_tgt = os.path.join("data", "stocks.csv")
         if os.path.exists(path_tgt):
+            self.__load(path=path_tgt)
             return
         self.__load(path=path_src)
         self.dataset_df.loc[:, "categories"] = ""
@@ -186,6 +191,7 @@ class Stocks(KnowledgeGraph):
                 continue
             categories = list(re.findall(pattern, text))
             self.dataset_df.loc[index, "categories"] = json.dumps(categories)
+        print(self.dataset_df)
         self.dataset_df = self.dataset_df[self.expected_columns]
         self.__save(path=path_tgt)
 
