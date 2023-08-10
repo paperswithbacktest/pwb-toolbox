@@ -25,6 +25,12 @@ source ~/myenv/bin/activate
 pip install -r requirements.txt
 ```
 
+To login to Huggingface Hub with Access Token
+
+```python
+python -c "from huggingface_hub.hf_api import HfFolder; HfFolder.save_token('MY_HUGGINGFACE_TOKEN_HERE')"
+```
+
 ## Usage
 
 The `systematic-trading` package offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:
@@ -32,7 +38,7 @@ The `systematic-trading` package offers a range of functionalities for systemati
 - Crawling Datasets:
 
 ```python
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/datasets \
+PYTHONPATH=$PYTHONPATH:. TWILIO_ACCOUNT_SID= TWILIO_AUTH_TOKEN= TWILIO_FROM= TWILIO_TO= python systematic_trading/datasets \
   --username [YOUR_HUGGINGFACE_USERNAME]
 ```
 

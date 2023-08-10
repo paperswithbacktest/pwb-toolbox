@@ -3,6 +3,7 @@ from typing import List
 
 import click
 from tqdm import tqdm
+from twilio.rest import Client
 
 from systematic_trading.datasets.dataset import Dataset
 from systematic_trading.datasets.index_constituents import IndexConstituents
@@ -44,7 +45,7 @@ def main(mode: str, username: str):
             index_constituents.set_dataset_df()
             index_constituents.to_hf_datasets()
         print("Updating raw datasets...")
-        suffix = "sp500"
+        suffix = "stocks"
         raw_datasets = {
             f"earnings-{suffix}": Earnings(
                 suffix=suffix, tag_date=tag_date, username=username
@@ -97,7 +98,7 @@ def main(mode: str, username: str):
         for name in dataset_names:
             raw_datasets[name].set_dataset_df()
             raw_datasets[name].to_hf_datasets()
-    elif mode == "on-demand":
+    elif mode == "weekly":
         print("Updating list of stocks...")
         stocks = Stocks(tag_date=date.today(), username=username)
         stocks.set_dataset_df()
@@ -105,4 +106,16 @@ def main(mode: str, username: str):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(e)
+        client = Client(
+            os.environ["TWILIO_ACCOUNT_SID"],
+            os.environ["TWILIO_AUTH_TOKEN"],
+        )
+        client.messages.create(
+            to=os.environ["TWILIO_TO"],
+            from_=os.environ["TWILIO_FROM"],
+            body=f"Error: {e}",
+        )

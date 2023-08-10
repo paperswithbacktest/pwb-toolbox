@@ -11,4 +11,5 @@ numba
 pandas
 selenium
 tqdm
+twilio
 webdriver_manager

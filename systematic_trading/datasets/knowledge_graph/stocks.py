@@ -29,7 +29,7 @@ from systematic_trading.datasets.knowledge_graph.wikipedia import Wikipedia
 class Stocks(KnowledgeGraph):
     def __init__(self, tag_date: date = None, username: str = None):
         super().__init__("stocks", tag_date, username)
-        self.name = f"stocks"
+        self.name = f"securities-stocks"
 
     def __download_nasdaq(self) -> pd.DataFrame:
         """
@@ -178,22 +178,16 @@ class Stocks(KnowledgeGraph):
         Add relationships to the DataFrame.
         """
         path_src = os.path.join("data", "stocks.page.pkl")
-        path_tgt = os.path.join("data", "stocks.csv")
-        if os.path.exists(path_tgt):
-            self.__load(path=path_tgt)
-            return
         self.__load(path=path_src)
         self.dataset_df.loc[:, "categories"] = ""
         pattern = r"\[\[Category:(.*?)\]\]"
-        for index, row in self.dataset_df.iterrows():
+        for index, row in tqdm(self.dataset_df.iterrows(), total=len(self.dataset_df)):
             text = row["wikipedia_page"]
             if text == "":
                 continue
             categories = list(re.findall(pattern, text))
             self.dataset_df.loc[index, "categories"] = json.dumps(categories)
-        print(self.dataset_df)
         self.dataset_df = self.dataset_df[self.expected_columns]
-        self.__save(path=path_tgt)
 
     def set_dataset_df(self):
         """
