@@ -46,12 +46,12 @@ class SP500(IndexConstituents):
                     "gics_sub_industry": td_tags[
                         header.index("GICS Sub-Industry")
                     ].text.strip(),
-                    "headquarters_location": td_tags[
-                        header.index("Headquarters Location")
-                    ].text.strip(),
-                    "date_added": td_tags[header.index("Date added")].text.strip(),
-                    "cik": td_tags[header.index("CIK")].text.strip(),
-                    "founded": td_tags[header.index("Founded")].text.strip(),
+                    # "headquarters_location": td_tags[
+                    #     header.index("Headquarters Location")
+                    # ].text.strip(),
+                    # "date_added": td_tags[header.index("Date added")].text.strip(),
+                    # "cik": td_tags[header.index("CIK")].text.strip(),
+                    # "founded": td_tags[header.index("Founded")].text.strip(),
                 }
             )
         self.dataset_df = pd.DataFrame(data=data)

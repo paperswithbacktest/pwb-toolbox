@@ -20,9 +20,5 @@ class IndexConstituents(Dataset):
             "security",
             "gics_sector",
             "gics_sub_industry",
-            "headquarters_location",
-            "date_added",
-            "cik",
-            "founded",
         ]
         self.dataset_df = pd.DataFrame(columns=self.expected_columns)

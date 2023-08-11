@@ -193,7 +193,7 @@ class Stocks(KnowledgeGraph):
         """
         Frames to dataset.
         """
-        self.dataset_df = self.__download()
+        self.__download()
         self.__add_wikipedia_title()
         self.__add_wikipedia_page()
         self.__add_relationships()

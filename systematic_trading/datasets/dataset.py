@@ -19,7 +19,6 @@ class Dataset:
         self.expected_columns = []
         self.dataset_df: pd.DataFrame = pd.DataFrame(columns=self.expected_columns)
         self.name: str = None
-        self.symbols = self.get_scope_symbols()
 
     def add_previous_data(self):
         """
@@ -54,7 +53,8 @@ class Dataset:
         """
         raise NotImplementedError
 
-    def get_scope_symbols(self) -> list:
+    @property
+    def symbols(self) -> list:
         name = f"securities-{self.suffix}"
         if self.check_file_exists(name=name):
             return load_dataset(f"{self.username}/{name}")["train"]["symbol"]
