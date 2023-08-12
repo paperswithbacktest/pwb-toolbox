@@ -64,13 +64,6 @@ def download_raw_datasets(raw_datasets: dict, tag_date: date, username: str):
         raw_datasets_to_update[name].to_hf_datasets()
 
 
-def download_raw_datasets_before_open(suffix: str, tag_date: date, username: str):
-    """
-    Download raw datasets before open.
-    """
-    pass
-
-
 def download_raw_datasets_after_open(suffix: str, tag_date: date, username: str):
     """
     Download raw datasets after open.
@@ -147,20 +140,19 @@ def download(slot: str):
         }
     )
     suffix = "stocks"
-    if nyc_time < us_market_open_time or slot == "before-open":
+    if (slot == "" and nyc_time < us_market_open_time) or slot == "before-open":
         print("Downloading before open")
         download_perimeters(tag_date=tag_date, username=username)
-        download_raw_datasets_before_open(
-            suffix=suffix, tag_date=tag_date, username=username
-        )
     elif (
-        nyc_time > us_market_open_time and nyc_time < us_market_close_time
+        slot == ""
+        and nyc_time > us_market_open_time
+        and nyc_time < us_market_close_time
     ) or slot == "after-open":
         print("Downloading after open")
         download_raw_datasets_after_open(
             suffix=suffix, tag_date=tag_date, username=username
         )
-    elif nyc_time > us_market_close_time or slot == "after-close":
+    elif (slot == "" and nyc_time > us_market_close_time) or slot == "after-close":
         print("Downloading after close")
         download_raw_datasets_after_close(
             suffix=suffix, tag_date=tag_date, username=username
