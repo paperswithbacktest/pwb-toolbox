@@ -18,6 +18,7 @@ class Stocks(Perimeter):
         """
         Returns a DataFrame of NASDAQ stocks
         """
+        url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&download=true"
         response = retry_get(url, headers=nasdaq_headers(), mode="curl")
         json_data = response.json()
         df = pd.DataFrame(data=json_data["data"]["rows"])
