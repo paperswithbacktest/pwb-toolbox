@@ -33,7 +33,7 @@ def download_perimeters(tag_date: date, username: str):
     """
     perimeters = {
         "sp500": SP500(tag_date=tag_date, username=username),
-        "stocks": Stocks(tag_date=tag_date, username=username),
+        # "stocks": Stocks(tag_date=tag_date, username=username),
     }
     for perimeter in perimeters.values():
         if not perimeter.check_file_exists(tag=tag_date.isoformat()):
