@@ -67,6 +67,8 @@ class Stocks(Perimeter):
         self.dataset_df = self.dataset_df.drop_duplicates(
             subset=["symbol"], keep="first"
         )
+        max_number_of_stocks = 1500
+        self.dataset_df = self.dataset_df.head(max_number_of_stocks)
         self.dataset_df.reset_index(drop=True, inplace=True)
 
     def set_dataset_df(self):
