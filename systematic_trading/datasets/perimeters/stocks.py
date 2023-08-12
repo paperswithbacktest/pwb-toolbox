@@ -5,7 +5,7 @@ from datasets import load_dataset
 import pandas as pd
 import requests
 
-from systematic_trading.helpers import nasdaq_headers
+from systematic_trading.helpers import nasdaq_headers, retry_get
 from systematic_trading.datasets.perimeters import Perimeter
 
 
@@ -18,10 +18,11 @@ class Stocks(Perimeter):
         """
         Returns a DataFrame of NASDAQ stocks
         """
-        url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&download=true"
-        response = requests.get(url, headers=nasdaq_headers())
+        response = retry_get(url, headers=nasdaq_headers(), mode="curl")
         json_data = response.json()
         df = pd.DataFrame(data=json_data["data"]["rows"])
+        has_market_cap = (df.marketCap != "") & (df.marketCap != "0.00")
+        df = df.loc[has_market_cap, :]
         df = df[["symbol", "name", "sector", "industry"]]
         # filter common stocks
         index = df.name.apply(lambda x: x.endswith("Common Stock"))

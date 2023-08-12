@@ -33,7 +33,7 @@ def download_perimeters(tag_date: date, username: str):
     """
     perimeters = {
         "sp500": SP500(tag_date=tag_date, username=username),
-        # "stocks": Stocks(tag_date=tag_date, username=username),
+        "stocks": Stocks(tag_date=tag_date, username=username),
     }
     for perimeter in perimeters.values():
         if not perimeter.check_file_exists(tag=tag_date.isoformat()):
@@ -52,7 +52,7 @@ def download_raw_datasets(raw_datasets: dict, tag_date: date, username: str):
     }
     for name in raw_datasets_to_update:
         raw_datasets_to_update[name].load_frames()
-    perimeter = SP500(tag_date=tag_date, username=username)
+    perimeter = Stocks(tag_date=tag_date, username=username)
     for symbol in tqdm(perimeter.symbols):
         for name in raw_datasets_to_update:
             if symbol in raw_datasets_to_update[name].frames:
