@@ -52,7 +52,7 @@ def download_raw_datasets(raw_datasets: dict, tag_date: date, username: str):
     }
     for name in raw_datasets_to_update:
         raw_datasets_to_update[name].load_frames()
-    perimeter = Stocks(tag_date=tag_date, username=username)
+    perimeter = SP500(tag_date=tag_date, username=username)
     for symbol in tqdm(perimeter.symbols):
         for name in raw_datasets_to_update:
             if symbol in raw_datasets_to_update[name].frames:
