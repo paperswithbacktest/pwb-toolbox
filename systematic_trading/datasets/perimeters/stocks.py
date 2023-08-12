@@ -26,7 +26,7 @@ class Stocks(Perimeter):
             (df.country != "") & (df.marketCap != "") & (df.marketCap != "0.00")
         )
         df = df.loc[has_market_cap, :]
-        self.dataset_df.sort_values(
+        df.sort_values(
             by=["marketCap"], inplace=True, ascending=False
         )  # sorted by crawling priority
         df = df[["symbol", "name", "sector", "industry"]]
