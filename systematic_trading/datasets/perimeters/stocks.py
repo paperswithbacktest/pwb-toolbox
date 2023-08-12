@@ -26,6 +26,9 @@ class Stocks(Perimeter):
             (df.country != "") & (df.marketCap != "") & (df.marketCap != "0.00")
         )
         df = df.loc[has_market_cap, :]
+        self.dataset_df.sort_values(
+            by=["marketCap"], inplace=True, ascending=False
+        )  # sorted by crawling priority
         df = df[["symbol", "name", "sector", "industry"]]
         # filter common stocks
         index = df.name.apply(lambda x: x.endswith("Common Stock"))
@@ -57,14 +60,13 @@ class Stocks(Perimeter):
     def __download(self) -> pd.DataFrame:
         self.dataset_df = pd.concat(
             [
-                self.__download_nasdaq(),
                 self.__download_sp500(),
+                self.__download_nasdaq(),
             ]
-        )
+        )  # sorted by crawling priority
         self.dataset_df = self.dataset_df.drop_duplicates(
             subset=["symbol"], keep="first"
         )
-        self.dataset_df.sort_values(by=["symbol"], inplace=True)
         self.dataset_df.reset_index(drop=True, inplace=True)
 
     def set_dataset_df(self):
