@@ -5,12 +5,12 @@ from datetime import date
 
 import pandas as pd
 
-from systematic_trading.datasets.dataset import Dataset
+from systematic_trading.datasets import Dataset
 
 
-class KnowledgeGraph(Dataset):
+class Perimeter(Dataset):
     """
-    Index constituents data.
+    Perimeter data.
     """
 
     def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
@@ -18,9 +18,7 @@ class KnowledgeGraph(Dataset):
         self.expected_columns = [
             "symbol",
             "security",
-            "country",
             "gics_sector",
             "gics_sub_industry",
-            "categories",
         ]
         self.dataset_df = pd.DataFrame(columns=self.expected_columns)

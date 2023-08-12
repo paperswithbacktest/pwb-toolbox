@@ -55,7 +55,7 @@ class Dataset:
 
     @property
     def symbols(self) -> list:
-        name = f"securities-{self.suffix}"
+        name = f"perimeter-{self.suffix}"
         if self.check_file_exists(name=name):
             return load_dataset(f"{self.username}/{name}")["train"]["symbol"]
         return []

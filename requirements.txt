@@ -9,6 +9,7 @@ langchain
 lxml
 numba
 pandas
+pytz
 selenium
 tqdm
 twilio

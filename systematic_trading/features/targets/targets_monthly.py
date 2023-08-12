@@ -4,7 +4,7 @@ from datasets import load_dataset
 import numpy as np
 import pandas as pd
 
-from systematic_trading.datasets.dataset import Dataset
+from systematic_trading.datasets import Dataset
 
 
 class TargetsMonthly(Dataset):

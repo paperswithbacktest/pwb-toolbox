@@ -6,13 +6,13 @@ import pandas as pd
 import requests
 
 from systematic_trading.helpers import nasdaq_headers
-from systematic_trading.datasets.index_constituents import IndexConstituents
+from systematic_trading.datasets.perimeters import Perimeter
 
 
-class Stocks(IndexConstituents):
+class Stocks(Perimeter):
     def __init__(self, tag_date: date = None, username: str = None):
         super().__init__("stocks", tag_date, username)
-        self.name = f"securities-stocks"
+        self.name = f"perimeter-stocks"
 
     def __download_nasdaq(self) -> pd.DataFrame:
         """
@@ -45,7 +45,7 @@ class Stocks(IndexConstituents):
         return df
 
     def __download_sp500(self) -> pd.DataFrame:
-        dataset = load_dataset("edarchimbaud/securities-sp500")
+        dataset = load_dataset("edarchimbaud/perimeter-sp500")
         df = dataset["train"].to_pandas()
         df = df[["symbol", "security", "gics_sector", "gics_sub_industry"]]
         return df

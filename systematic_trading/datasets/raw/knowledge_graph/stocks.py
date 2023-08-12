@@ -22,14 +22,14 @@ from tqdm import tqdm
 from webdriver_manager.chrome import ChromeDriverManager
 
 from systematic_trading.helpers import nasdaq_headers
-from systematic_trading.datasets.knowledge_graph import KnowledgeGraph
-from systematic_trading.datasets.knowledge_graph.wikipedia import Wikipedia
+from systematic_trading.datasets.raw.knowledge_graph import KnowledgeGraph
+from systematic_trading.datasets.raw.knowledge_graph.wikipedia import Wikipedia
 
 
 class Stocks(KnowledgeGraph):
     def __init__(self, tag_date: date = None, username: str = None):
         super().__init__("stocks", tag_date, username)
-        self.name = f"securities-stocks"
+        self.name = f"perimeter-stocks"
 
     def __download_nasdaq(self) -> pd.DataFrame:
         """
@@ -62,7 +62,7 @@ class Stocks(KnowledgeGraph):
         return df
 
     def __download_sp500(self) -> pd.DataFrame:
-        dataset = load_dataset("edarchimbaud/securities-sp500")
+        dataset = load_dataset("edarchimbaud/perimeter-sp500")
         df = dataset["train"].to_pandas()
         df = df[["symbol", "security", "gics_sector", "gics_sub_industry"]]
         df.loc[:, "country"] = "United States"

@@ -8,18 +8,18 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from systematic_trading.datasets.index_constituents import IndexConstituents
+from systematic_trading.datasets.perimeters import Perimeter
 from systematic_trading.helpers import retry_get
 
 
-class SP500(IndexConstituents):
+class SP500(Perimeter):
     """
     Index constituents S&P 500.
     """
 
     def __init__(self, tag_date: date = None, username: str = None):
         super().__init__("sp500", tag_date, username)
-        self.name = f"securities-sp500"
+        self.name = f"perimeter-sp500"
 
     def set_dataset_df(self):
         """

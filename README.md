@@ -38,7 +38,7 @@ The `systematic-trading` package offers a range of functionalities for systemati
 - Crawling Datasets:
 
 ```python
-PYTHONPATH=$PYTHONPATH:. TWILIO_ACCOUNT_SID= TWILIO_AUTH_TOKEN= TWILIO_FROM= TWILIO_TO= python systematic_trading/datasets \
+HF_USERNAME= PYTHONPATH=$PYTHONPATH:. TWILIO_ACCOUNT_SID= TWILIO_AUTH_TOKEN= TWILIO_FROM= TWILIO_TO= python systematic_trading/datasets \
   --username [YOUR_HUGGINGFACE_USERNAME]
 ```
 

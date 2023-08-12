@@ -2,7 +2,7 @@ from datetime import date
 import os
 import pickle
 
-from systematic_trading.datasets.dataset import Dataset
+from systematic_trading.datasets import Dataset
 
 
 class Raw(Dataset):

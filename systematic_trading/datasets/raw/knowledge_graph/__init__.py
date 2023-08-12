@@ -5,10 +5,10 @@ from datetime import date
 
 import pandas as pd
 
-from systematic_trading.datasets.dataset import Dataset
+from systematic_trading.datasets import Dataset
 
 
-class IndexConstituents(Dataset):
+class KnowledgeGraph(Dataset):
     """
     Index constituents data.
     """
@@ -18,7 +18,9 @@ class IndexConstituents(Dataset):
         self.expected_columns = [
             "symbol",
             "security",
+            "country",
             "gics_sector",
             "gics_sub_industry",
+            "categories",
         ]
         self.dataset_df = pd.DataFrame(columns=self.expected_columns)

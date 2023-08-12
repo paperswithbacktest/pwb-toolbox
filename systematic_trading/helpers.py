@@ -93,3 +93,17 @@ def retry_get(
             print(f"Connection error with {url}. Retrying in {delay} seconds...")
             time.sleep(delay)
     raise ConnectionError(f"Failed to connect to {url} after {retries} retries")
+
+
+def send_sms(message: str):
+    """
+    Send a SMS using Twilio.
+    """
+    account_sid = os.environ["TWILIO_ACCOUNT_SID"]
+    auth_token = os.environ["TWILIO_AUTH_TOKEN"]
+    client = Client(account_sid, auth_token)
+    client.messages.create(
+        to=os.environ["TWILIO_TO"],
+        from_=os.environ["TWILIO_FROM"],
+        body=message,
+    )
