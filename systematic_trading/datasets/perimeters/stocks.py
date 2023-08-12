@@ -22,7 +22,9 @@ class Stocks(Perimeter):
         response = retry_get(url, headers=nasdaq_headers(), mode="curl")
         json_data = response.json()
         df = pd.DataFrame(data=json_data["data"]["rows"])
-        has_market_cap = (df.marketCap != "") & (df.marketCap != "0.00")
+        has_market_cap = (
+            (df.country != "") & (df.marketCap != "") & (df.marketCap != "0.00")
+        )
         df = df.loc[has_market_cap, :]
         df = df[["symbol", "name", "sector", "industry"]]
         # filter common stocks
