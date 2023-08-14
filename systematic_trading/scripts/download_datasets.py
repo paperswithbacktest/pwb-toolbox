@@ -121,7 +121,7 @@ def download_raw_datasets_after_close(suffix: str, tag_date: date, username: str
     )
 
 
-def download(slot: str):
+def download(slot: str, timeoffset: int = 0):
     """
     Main function.
     """
@@ -130,12 +130,12 @@ def download(slot: str):
     nyc_time = now.astimezone(nyc_timezone)
     us_market_open_time = nyc_time.replace(hour=9, minute=30, second=0, microsecond=0)
     us_market_close_time = nyc_time.replace(hour=16, minute=0, second=0, microsecond=0)
-    tag_date = date.today()
+    tag_date = date.today() + timedelta(days=timeoffset)
     username = os.environ.get("HF_USERNAME")
     pprint(
         {
-            "nyc_time": nyc_time,
-            "tag_date": tag_date,
+            "nyc_time": nyc_time.isoformat(),
+            "tag_date": tag_date.isoformat(),
             "username": username,
         }
     )
@@ -164,12 +164,13 @@ def download(slot: str):
 @click.command()
 @click.option("--mode", default="debug", help="debug, production")
 @click.option("--slot", default="", help="before-open, after-open, after-close")
-def main(mode: str, slot: str):
+@click.option("--timeoffset", default=0, help="time offset")
+def main(mode: str, slot: str, timeoffset: int):
     if mode == "debug":
-        download(slot=slot)
+        download(slot=slot, timeoffset=timeoffset)
     elif mode == "production":
         try:
-            download(slot=slot)
+            download(slot=slot, timeoffset=timeoffset)
         except Exception as e:
             print(e)
             send_sms(f"Error: {e}")
