@@ -101,7 +101,7 @@ def main():
     if os.path.exists(path):
         df = pickle.load(open(path, "rb"))
     else:
-        dataset = load_dataset("edarchimbaud/timeseries-daily-sp500", split="train")
+        dataset = load_dataset("edarchimbaud/timeseries-1d-sp500", split="train")
         df = pd.DataFrame(dataset)
         pickle.dump(df, open(path, "wb"))
 

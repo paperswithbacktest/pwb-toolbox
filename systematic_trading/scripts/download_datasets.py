@@ -107,10 +107,10 @@ def download_raw_datasets_after_open(suffix: str, tag_date: date, username: str)
 def download_raw_datasets_after_close(suffix: str, tag_date: date, username: str):
     raw_datasets = {
         f"news-{suffix}": News(suffix=suffix, tag_date=tag_date, username=username),
-        f"timeseries-daily-{suffix}": TimeseriesDaily(
+        f"timeseries-1d-{suffix}": TimeseriesDaily(
             suffix=suffix, tag_date=tag_date, username=username
         ),
-        f"timeseries-1mn-{suffix}": Timeseries1mn(
+        f"timeseries-1m-{suffix}": Timeseries1mn(
             suffix=suffix, tag_date=tag_date, username=username
         ),
     }

@@ -22,7 +22,7 @@ class TimeseriesDaily(Raw):
 
     def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
         super().__init__(suffix, tag_date, username)
-        self.name = f"timeseries-daily-{suffix}"
+        self.name = f"timeseries-1d-{suffix}"
         self.expected_columns = [
             "symbol",
             "date",

@@ -36,7 +36,7 @@ class TargetsMonthly(Dataset):
         """
         timeseries_daily_df = pd.DataFrame(
             load_dataset(
-                f"{self.username}/timeseries-daily-{self.suffix}",
+                f"{self.username}/timeseries-1d-{self.suffix}",
                 revision=self.tag_date.isoformat(),
                 split="train",
             ),

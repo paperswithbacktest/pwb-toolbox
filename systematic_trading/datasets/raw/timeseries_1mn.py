@@ -21,7 +21,7 @@ class Timeseries1mn(Raw):
 
     def __init__(self, suffix: str = None, tag_date: date = None, username: str = None):
         super().__init__(suffix, tag_date, username)
-        self.name = f"timeseries-1mn-{suffix}"
+        self.name = f"timeseries-1m-{suffix}"
         self.expected_columns = [
             "symbol",
             "datetime",
