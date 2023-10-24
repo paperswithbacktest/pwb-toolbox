@@ -27,7 +27,7 @@ def main(
     target_folder: str,
 ):
     """
-    Main entrypoint.
+    Main entrypoint of strategy_ideas.
     """
     if mode == "abstract":
         SsrnAbstractCrawler(kili_project_id=kili_project_id).from_jel_code(
