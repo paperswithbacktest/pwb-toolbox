@@ -52,7 +52,7 @@ class Stocks(Perimeter):
         return df
 
     def __download_sp500(self) -> pd.DataFrame:
-        dataset = load_dataset("edarchimbaud/perimeter-sp500")
+        dataset = load_dataset("paperswithbacktest/perimeter-sp500")
         df = dataset["train"].to_pandas()
         df = df[["symbol", "security", "gics_sector", "gics_sub_industry"]]
         return df

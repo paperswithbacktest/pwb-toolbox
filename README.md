@@ -3,7 +3,7 @@
   <h1>Toolbox</h1>
 </div>
 
-The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms. For detailed instructions on how to use this package effectively, please refer to the associated Substack publication by visiting: https://edarchimbaud.substack.com/.
+The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms. For detailed instructions on how to use this package effectively, please refer to the associated Substack publication by visiting: https://blog.paperswithbacktest.com/.
 
 
 ## Installation
@@ -14,7 +14,7 @@ To install the pwb-toolbox package, follow these steps:
 # Install python and its dependencies
 sudo apt install python3 python3-pip python3-venv
 # Clone the repository or download the package from the official source
-git clone https://github.com/edarchimbaud/pwb-toolbox.git
+git clone https://github.com/paperswithbacktest/pwb-toolbox.git
 # Navigate to the package directory
 cd pwb-toolbox/
 # Create a virtual environment

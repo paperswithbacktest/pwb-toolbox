@@ -25,10 +25,10 @@ def train_test_split_v2(X, y, dt=None):
 )
 def main(test_start_date: str):
     predictors_df = pd.DataFrame(
-        load_dataset("edarchimbaud/signals-monthly-sp500", split="train")
+        load_dataset("paperswithbacktest/signals-monthly-sp500", split="train")
     )
     targets_df = pd.DataFrame(
-        load_dataset("edarchimbaud/targets-monthly-sp500", split="train")
+        load_dataset("paperswithbacktest/targets-monthly-sp500", split="train")
     )
     print(predictors_df.iloc[0, :])
     print(targets_df.iloc[0, :])

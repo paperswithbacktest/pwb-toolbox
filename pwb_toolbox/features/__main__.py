@@ -7,7 +7,7 @@ from systematic_trading.features.targets.targets_monthly import TargetsMonthly
 
 
 @click.command()
-@click.option("--username", default="edarchimbaud", help="Username to use")
+@click.option("--username", default="paperswithbacktest", help="Username to use")
 def main(suffix: str, username: str):
     tag_date = date.today() - timedelta(days=3)
     print("Updating feature and target datasets...")

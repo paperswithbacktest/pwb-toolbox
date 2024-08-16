@@ -79,6 +79,6 @@ class Dataset:
             raise ValueError("self.dataset_df must be set")
         tag = self.tag_date.isoformat()
         dataset = HFDataset.from_pandas(self.dataset_df)
-        repo_id: str = f"edarchimbaud/{self.name}"
+        repo_id: str = f"paperswithbacktest/{self.name}"
         dataset.push_to_hub(repo_id, private=False)
         huggingface_hub.create_tag(repo_id, tag=tag, repo_type="dataset")
