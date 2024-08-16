@@ -38,7 +38,7 @@ The `pwb-toolbox` package offers a range of functionalities for systematic tradi
 - Crawling Datasets:
 
 ```python
-HF_USERNAME= PYTHONPATH=$PYTHONPATH:. TWILIO_ACCOUNT_SID= TWILIO_AUTH_TOKEN= TWILIO_FROM= TWILIO_TO= python systematic_trading/datasets \
+HF_USERNAME= PYTHONPATH=$PYTHONPATH:. TWILIO_ACCOUNT_SID= TWILIO_AUTH_TOKEN= TWILIO_FROM= TWILIO_TO= python pwb_toolbox/datasets \
   --username [YOUR_HUGGINGFACE_USERNAME]
 ```
 
@@ -46,7 +46,7 @@ HF_USERNAME= PYTHONPATH=$PYTHONPATH:. TWILIO_ACCOUNT_SID= TWILIO_AUTH_TOKEN= TWI
 
 ```python
 # Download SSRN paper abtract to a Kili project of id YOUR_KILI_PROJECT_ID
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas \
+PYTHONPATH=$PYTHONPATH:. python pwb_toolbox/strategy_ideas \
   --mode abstract \
   --jel-code G14 \
   --from-page 1 \
@@ -54,13 +54,13 @@ PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas \
 
 # Use the abtracts labeled in YOUR_SOURCE_KILI_PROJECT_ID to download SSRN paper PDF
 # into another Kili project YOUR_TARGET_KILI_PROJECT_ID
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas \
+PYTHONPATH=$PYTHONPATH:. python pwb_toolbox/strategy_ideas \
   --mode paper \
   --src-kili-project-id [YOUR_SOURCE_KILI_PROJECT_ID] \
   --tgt-kili-project-id [YOUR_TARGET_KILI_PROJECT_ID]
 
 # Transform the annotations of YOUR_KILI_PROJECT_ID into markdown strategy ID cards
-PYTHONPATH=$PYTHONPATH:. python systematic_trading/strategy_ideas \
+PYTHONPATH=$PYTHONPATH:. python pwb_toolbox/strategy_ideas \
   --mode summary \
   --kili-project-id [YOUR_KILI_PROJECT_ID] \
   --tgt-folder [YOUR_TARGET_FOLDER]
