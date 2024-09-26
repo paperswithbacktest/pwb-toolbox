@@ -1,0 +1,13 @@
+{
+    "editor.formatOnSave": true,
+    "python.linting.lintOnSave": true,
+    "python.linting.pylintArgs": [
+        "--disable=relative-beyond-top-level"
+    ],
+    "python.linting.pylintEnabled": true,
+    "python.formatting.provider": "black",
+    "python.defaultInterpreterPath": "${env:HOME}/miniconda3/bin/python",
+    "yaml.schemas": {
+        "https://squidfunk.github.io/mkdocs-material/schema.json": "mkdocs.yml"
+    }
+}

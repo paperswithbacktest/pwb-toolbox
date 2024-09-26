@@ -3,4 +3,4 @@
 __pycache__
 ssrn-abstract-classifier
 wandb
-systematic_trading/datasets/logfile.log
+pwb_toolbox/datasets/logfile.log

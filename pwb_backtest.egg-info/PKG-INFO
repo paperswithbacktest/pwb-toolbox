@@ -1,3 +1,20 @@
+Metadata-Version: 2.1
+Name: pwb-backtest
+Version: 0.1.0
+Summary: A toolbox library for quant traders
+Home-page: https://github.com/paperswithbacktest/pwb-backtest
+Author: Your Name
+Author-email: hello@paperswithbacktest.com
+License: MIT
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+Requires-Dist: datasets
+Requires-Dist: pandas
+
 <div align="center">
   <img src="static/images/systematic-trading.jpeg" height=200 alt=""/>
   <h1>Papers With Backtest Toolbox</h1>
@@ -109,17 +126,11 @@ Please note that all contributions are subject to review and approval by the mai
 
 ## Build the Package
 
-To build the package, run:
+To build your package, run:
 
 ```bash
 python -m pip install --upgrade build
 python -m build
-```
-
-To upload the package to PyPI, run:
-
-```bash
-twine upload dist/*
 ```
 
 ## License
