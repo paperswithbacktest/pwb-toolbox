@@ -4,3 +4,6 @@ __pycache__
 ssrn-abstract-classifier
 wandb
 pwb_toolbox/datasets/logfile.log
+*.egg-info
+*.whl
+*.tar.gz
