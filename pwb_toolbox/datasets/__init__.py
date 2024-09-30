@@ -770,13 +770,34 @@ def __extend_etfs(df_etfs):
     mapping = {
         "AGG": ["Bonds-Daily-Price", "US10Y"],
         "EPP": ["Indices-Daily-Price", "HSI"],
+        "EWA": ["Indices-Daily-Price", "AS30"],  # Australia
+        "EWO": ["Indices-Daily-Price", "ATX"],  # Austria
+        "EWK": ["Indices-Daily-Price", "BEL20"],  # Belgium
+        "EWZ": ["Indices-Daily-Price", "IBOV"],  # Brazil
+        "EWC": ["Indices-Daily-Price", "SPTSX"],  # Canada
+        "FXI": ["Indices-Daily-Price", "SSE50"],  # China
+        "EWQ": ["Indices-Daily-Price", "CAC"],  # France
+        "EWG": ["Indices-Daily-Price", "DAX"],  # Germany
+        "EWH": ["Indices-Daily-Price", "HSI"],  # Hong Kong
+        "EWI": ["Indices-Daily-Price", "FTSEMIB"],  # Italy
         "EWJ": ["Indices-Daily-Price", "NKY"],
+        "EWM": ["Indices-Daily-Price", "FBMKLCI"],  # Malaysia
+        "EWW": ["Indices-Daily-Price", "MEXBOL"],  # Mexico
+        "EWN": ["Indices-Daily-Price", "AEX"],  # Netherlands
+        "EWS": ["Indices-Daily-Price", "FSSTI"],  # Singapore
+        "EZA": ["Indices-Daily-Price", "TOP40"],  # South Africa
+        "EWP": ["Indices-Daily-Price", "IBEX"],  # Spain
+        "EWD": ["Indices-Daily-Price", "OMX"],  # Sweden
+        "EWL": ["Indices-Daily-Price", "SMI"],  # Switzerland
+        "EWT": ["Indices-Daily-Price", "TWSE"],  # Taiwan
+        "EWU": ["Indices-Daily-Price", "UKX"],  # United Kingdom
         "GLD": ["Commodities-Daily-Price", "GC1"],
         "IEF": ["Bonds-Daily-Price", "US10Y"],
         "IEV": ["Indices-Daily-Price", "SX5E"],
         "IWB": ["Indices-Daily-Price", "SPX"],
         "SHY": ["Bonds-Daily-Price", "US1Y"],
         "SPY": ["Indices-Daily-Price", "SPX"],
+        "THD": ["Indices-Daily-Price", "SET50"],  # Thailand
     }
     symbols = df_etfs.symbol.unique()
     mapping = {k: v for k, v in mapping.items() if k in symbols}
