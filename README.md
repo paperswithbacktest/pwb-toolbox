@@ -113,6 +113,7 @@ To build the package, run:
 
 ```bash
 python -m pip install --upgrade build
+rm -r dist
 python -m build
 ```
 
