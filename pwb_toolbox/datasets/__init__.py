@@ -852,6 +852,9 @@ def __extend_etfs(df_etfs):
         combined_data = pd.concat([index_data_before_common, etf_data])
         frames.append(combined_data)
 
+    symbols_not_in_mapping = set(symbols) - set(mapping.keys())
+    frames.append(df_etfs[df_etfs["symbol"].isin(symbols_not_in_mapping)])
+
     # Concatenate all frames to form the final dataframe
     df = pd.concat(frames).sort_values(by=["date", "symbol"]).reset_index(drop=True)
     return df
