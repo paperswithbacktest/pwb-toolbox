@@ -57,7 +57,7 @@ class ExtendedTrading(Raw):
             },
             inplace=True,
         )
-        df["price"] = df["price"].replace("\$", "", regex=True).astype(float)
+        df["price"] = df["price"].replace("$", "", regex=True).astype(float)
         df["symbol"] = symbol
         df["date"] = self.tag_date.isoformat()
         df = df.reindex(columns=self.expected_columns)

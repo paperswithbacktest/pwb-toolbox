@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import date
 import os
 import re
 
@@ -858,3 +859,38 @@ def __extend_etfs(df_etfs):
     # Concatenate all frames to form the final dataframe
     df = pd.concat(frames).sort_values(by=["date", "symbol"]).reset_index(drop=True)
     return df
+
+
+def get_pricing(
+    symbol_list,
+    fields=["close"],
+    start_date="1980-01-01",
+    end_date=date.today().isoformat(),
+):
+    """
+    Get pricing data for a list of symbols
+    """
+    if isinstance(symbol_list, str):
+        symbol_list = [symbol_list]
+    if len(fields) != 1:
+        raise ValueError("Only one field is allowed")
+    if fields[0] not in ["open", "high", "low", "close"]:
+        raise ValueError("Invalid field")
+    df = pd.concat(
+        [
+            load_dataset("Stocks-Daily-Price", symbol_list),
+            load_dataset("ETFs-Daily-Price", symbol_list),
+            load_dataset("Cryptocurrencies-Daily-Price", symbol_list),
+            load_dataset("Bonds-Daily-Price", symbol_list),
+            load_dataset("Commodities-Daily-Price", symbol_list),
+        ]
+    )
+    df["date"] = pd.to_datetime(df["date"])
+    df.set_index("date", inplace=True)
+    df.sort_index(inplace=True)
+    df_filtered = df.loc[start_date:end_date]
+    prices_df = df_filtered.pivot_table(
+        values="close", index=df_filtered.index, columns="symbol"
+    )
+    prices_df.columns = list(prices_df.columns)
+    return prices_df

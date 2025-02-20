@@ -29,13 +29,15 @@ The `pwb-toolbox` package offers a range of functionalities for systematic tradi
 ```python
 import pwb_toolbox.datasets as pwb_ds
 
-df = ds.load_dataset("Bonds-Daily-Price")
-df = ds.load_dataset("Commodities-Daily-Price")
-df = ds.load_dataset("Cryptocurrencies-Daily-Price")
-df = ds.load_dataset("ETFs-Daily-Price")
-df = ds.load_dataset("Forex-Daily-Price")
-df = ds.load_dataset("Indices-Daily-Price")
-df = ds.load_dataset("Stocks-Daily-Price")
+df = pwb_ds.get_pricing(["AAPL", "MSFT", "GOOGL"])
+df = pwb_ds.load_dataset("Bonds-Daily-Price")
+df = pwb_ds.load_dataset("Commodities-Daily-Price")
+df = pwb_ds.load_dataset("Cryptocurrencies-Daily-Price")
+df = pwb_ds.load_dataset("ETFs-Daily-Price")
+df = pwb_ds.load_dataset("Forex-Daily-Price")
+df = pwb_ds.load_dataset("Indices-Daily-Price")
+df = pwb_ds.load_dataset("Stocks-Daily-Price")
+
 ```
 
 - Load daily stock price data for specific symbols using the load_dataset function. The first call retrieves data for Apple and Microsoft. The second call retrieves the same stocks but without price adjustments (`adjust=False`). The third call loads daily price data for the S&P 500 index:
