@@ -861,36 +861,82 @@ def __extend_etfs(df_etfs):
     return df
 
 
+ALLOWED_FIELDS = {"open", "high", "low", "close"}
+
+
 def get_pricing(
     symbol_list,
-    fields=["close"],
+    fields=None,  # ← default set below
     start_date="1980-01-01",
     end_date=date.today().isoformat(),
+    extend=False,
+    keep_single_level=True,  # backward-compat flag
 ):
     """
-    Get pricing data for a list of symbols
+    Fetch OHLC pricing for the requested symbols.
+
+    Parameters
+    ----------
+    symbol_list : str | list[str]
+        One ticker or a list of tickers.
+    fields : list[str] | None
+        Any subset of ["open", "high", "low", "close"].
+        Defaults to ["close"] for backward compatibility.
+    start_date, end_date : str (YYYY-MM-DD)
+        Slice the date index (inclusive).
+    extend : bool
+        Pass-through to `load_dataset(..., extend=extend)`.
+    keep_single_level : bool
+        If `True` and only one field is requested, flatten the columns so the
+        output matches the old behaviour (columns = symbols).  If `False`
+        you always get a two-level MultiIndex `(symbol, field)`.
+
+    Returns
+    -------
+    pd.DataFrame
+        * MultiIndex columns (symbol, field) when `len(fields) > 1`
+        * Single-level columns     (symbol)      when one field & keep_single_level=True
     """
+    # ------------------------------------------------------------------ sanity
+    if fields is None:
+        fields = ["close"]
     if isinstance(symbol_list, str):
         symbol_list = [symbol_list]
-    if len(fields) != 1:
-        raise ValueError("Only one field is allowed")
-    if fields[0] not in ["open", "high", "low", "close"]:
-        raise ValueError("Invalid field")
+
+    fields = [f.lower() for f in fields]
+    bad = [f for f in fields if f not in ALLOWED_FIELDS]
+    if bad:
+        raise ValueError(f"Invalid field(s): {bad}. Allowed: {sorted(ALLOWED_FIELDS)}")
+
+    # --------------------------------------------------------------- download
     df = pd.concat(
         [
-            load_dataset("Stocks-Daily-Price", symbol_list),
-            load_dataset("ETFs-Daily-Price", symbol_list),
-            load_dataset("Cryptocurrencies-Daily-Price", symbol_list),
-            load_dataset("Bonds-Daily-Price", symbol_list),
-            load_dataset("Commodities-Daily-Price", symbol_list),
-        ]
+            load_dataset("Stocks-Daily-Price", symbol_list, extend=extend),
+            load_dataset("ETFs-Daily-Price", symbol_list, extend=extend),
+            load_dataset("Cryptocurrencies-Daily-Price", symbol_list, extend=extend),
+            load_dataset("Bonds-Daily-Price", symbol_list, extend=extend),
+            load_dataset("Commodities-Daily-Price", symbol_list, extend=extend),
+        ],
+        ignore_index=True,
     )
+
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
     df.sort_index(inplace=True)
-    df_filtered = df.loc[start_date:end_date]
-    prices_df = df_filtered.pivot_table(
-        values="close", index=df_filtered.index, columns="symbol"
-    )
-    prices_df.columns = list(prices_df.columns)
-    return prices_df
+    df = df.loc[start_date:end_date]
+
+    # ------------------------------------------------------------- reshape
+    # Pivot can accept a list of values: returns columns = (field, symbol)
+    prices = df.pivot_table(values=fields, index=df.index, columns="symbol")
+
+    # Make outer level = symbol, inner = field  →  pivot_df[sym] gives OHLC block
+    prices = prices.swaplevel(axis=1).sort_index(axis=1)
+
+    # Optional: flatten back to the legacy layout if only one field requested
+    if keep_single_level and len(fields) == 1:
+        field = fields[0]
+        prices.columns = prices.columns.droplevel(1)  # keep only the symbol names
+        # optional: rename index level for clarity
+        prices.name = field
+
+    return prices
