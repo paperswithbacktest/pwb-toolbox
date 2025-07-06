@@ -627,7 +627,9 @@ def load_dataset(
     return df
 
 
-def __convert_indices_to_usd(df_indices, df_forex):
+def __convert_indices_to_usd(
+    df_indices: pd.DataFrame, df_forex: pd.DataFrame
+) -> pd.DataFrame:
     mapping = {
         "ADSMI": "AED",  # United Arab Emirates
         "AEX": "EUR",  # Netherlands
@@ -727,32 +729,40 @@ def __convert_indices_to_usd(df_indices, df_forex):
         "SX5E": "EUR",  # Europe
         "TA125": "ILS",  # Israel
     }
-    symbols = df_indices.symbol.unique()
-    mapping = {k: v for k, v in mapping.items() if k in symbols}
     frames = []
-    for symbol, currency in mapping.items():
-        df_index = df_indices[df_indices["symbol"] == symbol].copy()
-        if currency == "USD":
-            frames.append(df_index)
+
+    # iterate over the symbols that actually exist in df_indices
+    for symbol in df_indices["symbol"].unique():
+        df_idx = df_indices[df_indices["symbol"] == symbol].copy()
+
+        # 1) Figure out what currency the index is quoted in.
+        ccy = mapping.get(symbol)  # None if not mapped
+        if ccy is None or ccy == "USD":
+            # Unknown or already USD – just keep the original rows
+            frames.append(df_idx)
             continue
-        df_forex_currency = df_forex[df_forex["symbol"] == currency + "USD"].copy()
-        if df_index.empty or df_forex_currency.empty:
+
+        # 2) Find the matching FX rate (home-ccy → USD)
+        pair = ccy + "USD"
+        df_fx = df_forex[df_forex["symbol"] == pair].copy()
+
+        if df_idx.empty or df_fx.empty:
+            # No FX data – keep raw index levels instead of dropping them
+            frames.append(df_idx)
             continue
-        # Merge dataframes on the date column
-        merged_df = pd.merge(
-            df_index, df_forex_currency, on="date", suffixes=("", "_forex")
-        )
 
-        # Multiply the index prices by the corresponding forex rates
-        merged_df["open"] = merged_df["open"] * merged_df["open_forex"]
-        merged_df["high"] = merged_df["high"] * merged_df["high_forex"]
-        merged_df["low"] = merged_df["low"] * merged_df["low_forex"]
-        merged_df["close"] = merged_df["close"] * merged_df["close_forex"]
+        # 3) Merge on date and convert OHLC
+        merged = pd.merge(df_idx, df_fx, on="date", suffixes=("", "_fx"))
+        for col in ("open", "high", "low", "close"):
+            merged[col] = merged[col] * merged[f"{col}_fx"]
 
-        frames.append(merged_df[["symbol", "date", "open", "high", "low", "close"]])
+        frames.append(merged[["symbol", "date", "open", "high", "low", "close"]])
 
-    df = pd.concat(frames, ignore_index=True)
-    return df
+    if not frames:
+        return pd.DataFrame(columns=df_indices.columns)
+
+    # Combine everything back into one DataFrame
+    return pd.concat(frames, ignore_index=True)
 
 
 def __extract_years_to_maturity(bond_symbol):
@@ -909,16 +919,24 @@ def get_pricing(
         raise ValueError(f"Invalid field(s): {bad}. Allowed: {sorted(ALLOWED_FIELDS)}")
 
     # --------------------------------------------------------------- download
-    df = pd.concat(
-        [
-            load_dataset("Stocks-Daily-Price", symbol_list, extend=extend),
-            load_dataset("ETFs-Daily-Price", symbol_list, extend=extend),
-            load_dataset("Cryptocurrencies-Daily-Price", symbol_list, extend=extend),
-            load_dataset("Bonds-Daily-Price", symbol_list, extend=extend),
-            load_dataset("Commodities-Daily-Price", symbol_list, extend=extend),
-        ],
-        ignore_index=True,
-    )
+    DATASETS = [
+        ("Stocks-Daily-Price", extend),
+        ("ETFs-Daily-Price", extend),
+        ("Cryptocurrencies-Daily-Price", extend),
+        ("Bonds-Daily-Price", extend),
+        ("Commodities-Daily-Price", extend),
+        ("Indices-Daily-Price", False),  # indices generally have no proxy data
+    ]
+    remaining = set(symbol_list)  # symbols still to fetch
+    frames = []
+    for dataset_name, ext_flag in DATASETS:
+        if not remaining:  # all symbols resolved → stop early
+            break
+        df_part = load_dataset(dataset_name, list(remaining), extend=ext_flag)
+        if not df_part.empty:
+            frames.append(df_part)
+            remaining -= set(df_part["symbol"].unique())
+    df = pd.concat(frames, ignore_index=True)
 
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
