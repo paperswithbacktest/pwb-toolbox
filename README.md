@@ -105,7 +105,8 @@ Backtrader simulations. Alpha models generate `Insight` objects which are turned
 into portfolio weights and executed via Backtrader orders.
 
 ```python
-from pwb_toolbox.backtest import GoldenCrossAlpha, EqualWeightPortfolio, run_backtest
+from pwb_toolbox.backtest.examples import GoldenCrossAlpha, EqualWeightPortfolio
+from pwb_toolbox.backtest import run_backtest
 
 run_backtest(["SPY", "QQQ"], GoldenCrossAlpha(), EqualWeightPortfolio(), start="2015-01-01")
 ```

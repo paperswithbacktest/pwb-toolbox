@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable, List
 
-from ..datasets import SP500_SYMBOLS
+from ...datasets import SP500_SYMBOLS
 
 
 class Universe:
