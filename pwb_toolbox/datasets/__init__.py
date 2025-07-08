@@ -813,62 +813,68 @@ def __extend_etfs(df_etfs):
     symbols = df_etfs.symbol.unique()
     mapping = {k: v for k, v in mapping.items() if k in symbols}
 
-    grouped_path_symbols = defaultdict(list)
-    for value in mapping.values():
-        grouped_path_symbols[value[0]].append(value[1])
-    grouped_path_symbols = dict(grouped_path_symbols)
-    df_others = pd.concat(
-        [
-            load_dataset(path, symbols, to_usd=True)
-            for path, symbols in grouped_path_symbols.items()
-        ]
-    )
+    # Nothing to extend → just return the input
+    if not mapping:
+        return df_etfs.copy()
 
+    # ------------------------------------------------------------------ step 2
+    grouped = defaultdict(list)  # {path: [proxy1, proxy2, ...]}
+    for _, (path, proxy) in mapping.items():
+        grouped[path].append(proxy)
+
+    # Load each dataset only if there's at least one proxy symbol
+    other_frames = []
+    for path, proxies in grouped.items():
+        if proxies:  # skip empty lists
+            other_frames.append(load_dataset(path, proxies, to_usd=True))
+
+    # If no proxy data could be loaded, fall back to raw ETF data
+    if not other_frames:
+        return df_etfs.copy()
+
+    df_others = pd.concat(other_frames, ignore_index=True)
+
+    # ------------------------------------------------------------------ step 3
     frames = []
-    for etf, other in mapping.items():
-        other_symbol = other[1]
-        # Get the ETF & Index data
+    for etf, (__, proxy) in mapping.items():
         etf_data = df_etfs[df_etfs["symbol"] == etf]
-        if etf_data.empty:
-            continue
-        other_data = df_others[df_others["symbol"] == other_symbol]
-        if other_data.empty:
-            continue
+        proxy_data = df_others[df_others["symbol"] == proxy]
 
-        # Find the first overlapping date
-        common_dates = etf_data["date"].isin(other_data["date"])
-        first_common_date = etf_data.loc[common_dates, "date"].min()
-
-        if pd.isnull(first_common_date):
-            print(f"No common date found for {etf} and {other_symbol}")
+        if etf_data.empty or proxy_data.empty:
+            frames.append(etf_data)  # keep raw ETF if proxy missing
             continue
 
-        etf_first_common = etf_data[etf_data["date"] == first_common_date]
-        other_first_common = other_data[other_data["date"] == first_common_date]
+        # Find first overlapping date
+        first_common = etf_data.loc[
+            etf_data["date"].isin(proxy_data["date"]), "date"
+        ].min()
+        if pd.isna(first_common):
+            frames.append(etf_data)  # no overlap → keep raw ETF
+            continue
 
-        # Compute the adjustment factor (using closing prices for simplicity)
-        adjustment_factor = (
-            etf_first_common["close"].values[0] / other_first_common["close"].values[0]
+        # Compute adjustment factor on that date
+        k = (
+            etf_data.loc[etf_data["date"] == first_common, "close"].iloc[0]
+            / proxy_data.loc[proxy_data["date"] == first_common, "close"].iloc[0]
         )
 
-        # Adjust index data before the first common date
-        index_data_before_common = other_data[
-            other_data["date"] < first_common_date
-        ].copy()
-        for column in ["open", "high", "low", "close"]:
-            index_data_before_common.loc[:, column] *= adjustment_factor
-        index_data_before_common.loc[:, "symbol"] = etf
+        # Scale proxy history before the overlap
+        hist = proxy_data[proxy_data["date"] < first_common].copy()
+        hist[["open", "high", "low", "close"]] *= k
+        hist["symbol"] = etf
 
-        # Combine adjusted index data with ETF data
-        combined_data = pd.concat([index_data_before_common, etf_data])
-        frames.append(combined_data)
+        # Combine proxy history + actual ETF data
+        frames.append(pd.concat([hist, etf_data]))
 
-    symbols_not_in_mapping = set(symbols) - set(mapping.keys())
-    frames.append(df_etfs[df_etfs["symbol"].isin(symbols_not_in_mapping)])
+    # Add ETFs that were never in the mapping
+    untouched = set(symbols) - set(mapping)
+    frames.append(df_etfs[df_etfs["symbol"].isin(untouched)])
 
-    # Concatenate all frames to form the final dataframe
-    df = pd.concat(frames).sort_values(by=["date", "symbol"]).reset_index(drop=True)
-    return df
+    return (
+        pd.concat(frames, ignore_index=True)
+        .sort_values(["date", "symbol"])
+        .reset_index(drop=True)
+    )
 
 
 ALLOWED_FIELDS = {"open", "high", "low", "close"}
@@ -925,6 +931,7 @@ def get_pricing(
         ("Cryptocurrencies-Daily-Price", extend),
         ("Bonds-Daily-Price", extend),
         ("Commodities-Daily-Price", extend),
+        ("Forex-Daily-Price", extend),
         ("Indices-Daily-Price", False),  # indices generally have no proxy data
     ]
     remaining = set(symbol_list)  # symbols still to fetch
