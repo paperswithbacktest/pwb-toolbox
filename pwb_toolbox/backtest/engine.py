@@ -7,9 +7,9 @@ import backtrader as bt
 import pandas as pd
 
 from ..datasets import get_pricing
-from .alpha import AlphaModel
-from .portfolio import PortfolioConstructionModel
-from .execution import rebalance
+from .examples.alpha import AlphaModel
+from .examples.portfolio import PortfolioConstructionModel
+from .examples.execution import rebalance
 
 
 class ToolboxStrategy(bt.Strategy):

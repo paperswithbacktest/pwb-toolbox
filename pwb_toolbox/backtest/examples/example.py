@@ -2,7 +2,7 @@
 
 from .alpha import GoldenCrossAlpha
 from .portfolio import EqualWeightPortfolio
-from .engine import run_backtest
+from ..engine import run_backtest
 from .universe import StaticUniverse
 
 
