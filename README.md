@@ -98,6 +98,18 @@ df = pwb_ds.load_dataset(
 )
 ```
 
+## Backtest engine
+
+The `pwb_toolbox.backtest` module offers simple building blocks for running
+Backtrader simulations. Alpha models generate `Insight` objects which are turned
+into portfolio weights and executed via Backtrader orders.
+
+```python
+from pwb_toolbox.backtest import GoldenCrossAlpha, EqualWeightPortfolio, run_backtest
+
+run_backtest(["SPY", "QQQ"], GoldenCrossAlpha(), EqualWeightPortfolio(), start="2015-01-01")
+```
+
 ## Contributing
 
 Contributions to the `pwb-toolbox` package are welcome! If you have any improvements, new datasets, or strategy ideas to share, please follow these guidelines:
