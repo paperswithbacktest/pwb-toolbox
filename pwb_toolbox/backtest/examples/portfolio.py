@@ -4,14 +4,7 @@ from typing import Dict, Iterable
 import pandas as pd
 
 from .shared import Insight, Direction
-
-
-class PortfolioConstructionModel:
-    """Map insights to target weights."""
-
-    def weights(self, insights: Iterable[Insight]) -> Dict[str, float]:
-        raise NotImplementedError
-
+from ..portfolio_models import PortfolioConstructionModel
 
 class EqualWeightPortfolio(PortfolioConstructionModel):
     """Allocate equal weight to all bullish/bearish insights."""
