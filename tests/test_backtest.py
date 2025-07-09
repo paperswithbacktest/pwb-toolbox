@@ -1,6 +1,11 @@
 import sys
 import types
-import pandas as pd
+import pytest
+
+try:
+    import pandas as pd
+except ModuleNotFoundError:  # pragma: no cover - optional dep
+    pytest.skip("pandas not installed", allow_module_level=True)
 
 
 def stub_modules():
