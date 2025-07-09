@@ -13,6 +13,7 @@ To install the pwb-toolbox package:
 ```bash
 pip install pwb-toolbox
 ```
+This package requires Python 3.10 or higher.
 
 To login to Huggingface Hub with Access Token
 
@@ -145,5 +146,4 @@ The `pwb-toolbox` package is released under the MIT license. See the LICENSE fil
 ## Contact
 
 For any questions, issues, or suggestions regarding the `pwb-toolbox` package, please contact the maintainers or create an issue on the repository. We appreciate your feedback and involvement in improving the package.
-
 Happy trading!
