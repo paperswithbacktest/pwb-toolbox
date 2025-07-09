@@ -1,6 +1,6 @@
 from datetime import datetime
-import os
 import datasets as ds
+from pwb_toolbox.datasets import _get_hf_token
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,9 +10,9 @@ import scipy.stats as stats
 class TransactionCost:
 
     def __init__(self):
-        HF_ACCESS_TOKEN = os.getenv("HF_ACCESS_TOKEN")
         dataset = ds.load_dataset(
-            "paperswithbacktest/Stocks-Daily-Price", token=HF_ACCESS_TOKEN
+            "paperswithbacktest/Stocks-Daily-Price",
+            token=_get_hf_token(),
         )
         self._df = dataset["train"].to_pandas()
     

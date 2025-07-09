@@ -6,9 +6,12 @@ import re
 import datasets as ds
 import pandas as pd
 
-HF_ACCESS_TOKEN = os.environ["HF_ACCESS_TOKEN"]
-if not HF_ACCESS_TOKEN:
-    raise ValueError("Hugging Face access token not found in environment variables")
+
+def _get_hf_token() -> str:
+    token = os.getenv("HF_ACCESS_TOKEN")
+    if not token:
+        raise ValueError("HF_ACCESS_TOKEN not set")
+    return token
 
 
 DAILY_PRICE_DATASETS = [
@@ -552,7 +555,7 @@ def load_dataset(
     to_usd=True,
     rate_to_price=True,
 ):
-    dataset = ds.load_dataset(f"paperswithbacktest/{path}", token=HF_ACCESS_TOKEN)
+    dataset = ds.load_dataset(f"paperswithbacktest/{path}", token=_get_hf_token())
     df = dataset["train"].to_pandas()
 
     if path in DAILY_PRICE_DATASETS or path in DAILY_FINANCIAL_DATASETS:
