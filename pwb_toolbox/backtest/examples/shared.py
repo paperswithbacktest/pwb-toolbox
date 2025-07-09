@@ -18,3 +18,4 @@ class Insight:
     symbol: str
     direction: Direction
     timestamp: datetime
+    weight: float = 1.0
