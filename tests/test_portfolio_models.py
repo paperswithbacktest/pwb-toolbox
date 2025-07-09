@@ -1,5 +1,7 @@
-import pandas as pd
+from tests.stubs import pd, stub_environment
 from datetime import datetime
+
+stub_environment()
 
 from pwb_toolbox.backtest.examples.shared import Insight, Direction
 from pwb_toolbox.backtest.portfolio_models import (
