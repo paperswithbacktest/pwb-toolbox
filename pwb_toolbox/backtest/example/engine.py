@@ -6,10 +6,10 @@ from typing import Iterable
 import backtrader as bt
 import pandas as pd
 
-from ..datasets import get_pricing
-from .examples.alpha import AlphaModel
-from .examples.portfolio import PortfolioConstructionModel
-from .examples.execution import rebalance
+from ...datasets import get_pricing
+from .alpha import AlphaModel
+from .portfolio import PortfolioConstructionModel
+from .execution import rebalance
 
 
 class ToolboxStrategy(bt.Strategy):
@@ -42,12 +42,16 @@ def run_backtest(
 ):
     """Convenience function to run a Backtrader backtest."""
     end = end or date.today().isoformat()
-    prices = get_pricing(symbols, fields=["open", "high", "low", "close"], start_date=start, end_date=end)
+    prices = get_pricing(
+        symbols, fields=["open", "high", "low", "close"], start_date=start, end_date=end
+    )
     cerebro = bt.Cerebro()
     cerebro.broker.setcash(cash)
     for symbol in symbols:
         df = prices[symbol].copy()
         data = bt.feeds.PandasData(dataname=df)
         cerebro.adddata(data, name=symbol)
-    cerebro.addstrategy(ToolboxStrategy, prices=prices, alpha=alpha, portfolio=portfolio)
+    cerebro.addstrategy(
+        ToolboxStrategy, prices=prices, alpha=alpha, portfolio=portfolio
+    )
     return cerebro.run()

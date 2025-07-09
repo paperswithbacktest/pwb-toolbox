@@ -877,7 +877,7 @@ def __extend_etfs(df_etfs):
     )
 
 
-ALLOWED_FIELDS = {"open", "high", "low", "close"}
+ALLOWED_FIELDS = {"open", "high", "low", "close", "volume"}
 
 
 def get_pricing(

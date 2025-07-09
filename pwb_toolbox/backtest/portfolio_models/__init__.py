@@ -5,7 +5,7 @@ from typing import Dict, Iterable
 import numpy as np
 import pandas as pd
 
-from ..examples.shared import Insight, Direction
+from .. import Insight, Direction
 
 
 class PortfolioConstructionModel(ABC):
@@ -33,10 +33,7 @@ class EqualWeightingPortfolioConstructionModel(PortfolioConstructionModel):
         if not active:
             return {}
         w = 1.0 / len(active)
-        return {
-            i.symbol: (w if i.direction == Direction.UP else -w)
-            for i in active
-        }
+        return {i.symbol: (w if i.direction == Direction.UP else -w) for i in active}
 
 
 class InsightWeightingPortfolioConstructionModel(PortfolioConstructionModel):
@@ -82,15 +79,18 @@ class RiskParityPortfolioConstructionModel(PortfolioConstructionModel):
             )
             if len(prices) < self.lookback:
                 return {}
-            vols[ins.symbol] = (
-                prices.pct_change().rolling(self.lookback).std().iloc[-1]
-            )
+            vols[ins.symbol] = prices.pct_change().rolling(self.lookback).std().iloc[-1]
         inv_vol = {s: 1.0 / v for s, v in vols.items() if v > 0}
         total = sum(inv_vol.values())
         if total == 0:
             return {}
         return {
-            s: (inv_vol[s] / total) * (1 if next(i for i in active if i.symbol == s).direction == Direction.UP else -1)
+            s: (inv_vol[s] / total)
+            * (
+                1
+                if next(i for i in active if i.symbol == s).direction == Direction.UP
+                else -1
+            )
             for s in inv_vol
         }
 
@@ -119,10 +119,18 @@ class MeanVarianceOptimizationPortfolioConstructionModel(PortfolioConstructionMo
         mu = rets.mean()
         cov = rets.cov()
         inv_cov = np.linalg.pinv(cov.values)
-        exp = np.array([
-            mu[s] * (1 if next(i for i in active if i.symbol == s).direction == Direction.UP else -1)
-            for s in mu.index
-        ])
+        exp = np.array(
+            [
+                mu[s]
+                * (
+                    1
+                    if next(i for i in active if i.symbol == s).direction
+                    == Direction.UP
+                    else -1
+                )
+                for s in mu.index
+            ]
+        )
         raw = inv_cov.dot(exp)
         total = np.sum(np.abs(raw))
         if total == 0:
@@ -155,15 +163,25 @@ class UnconstrainedMeanVariancePortfolioConstructionModel(PortfolioConstructionM
         mu = rets.mean()
         cov = rets.cov()
         inv_cov = np.linalg.pinv(cov.values)
-        exp = np.array([
-            mu[s] * (1 if next(i for i in active if i.symbol == s).direction == Direction.UP else -1)
-            for s in mu.index
-        ])
+        exp = np.array(
+            [
+                mu[s]
+                * (
+                    1
+                    if next(i for i in active if i.symbol == s).direction
+                    == Direction.UP
+                    else -1
+                )
+                for s in mu.index
+            ]
+        )
         raw = inv_cov.dot(exp)
         return {s: float(raw[i]) for i, s in enumerate(mu.index)}
 
 
-class BlackLittermanOptimizationPortfolioConstructionModel(MeanVarianceOptimizationPortfolioConstructionModel):
+class BlackLittermanOptimizationPortfolioConstructionModel(
+    MeanVarianceOptimizationPortfolioConstructionModel
+):
     """Simplified Black-Litterman model using a blend of market and view returns."""
 
     def __init__(self, lookback: int = 60, view_weight: float = 0.5):
@@ -186,9 +204,9 @@ class BlackLittermanOptimizationPortfolioConstructionModel(MeanVarianceOptimizat
             return {}
         rets = df.pct_change().dropna()
         market_mu = rets.mean()
-        view_mu = pd.Series({
-            i.symbol: (1 if i.direction == Direction.UP else -1) for i in active
-        })
+        view_mu = pd.Series(
+            {i.symbol: (1 if i.direction == Direction.UP else -1) for i in active}
+        )
         mu = (1 - self.view_weight) * market_mu + self.view_weight * view_mu
         cov = rets.cov()
         inv_cov = np.linalg.pinv(cov.values)
@@ -212,9 +230,14 @@ class TargetPercentagePortfolioConstructionModel(PortfolioConstructionModel):
         insights: Iterable[Insight],
         price_data: pd.DataFrame | None = None,
     ) -> Dict[str, float]:
-        active_symbols = {i.symbol: i for i in insights if i.direction != Direction.FLAT}
+        active_symbols = {
+            i.symbol: i for i in insights if i.direction != Direction.FLAT
+        }
         return {
-            s: (self.targets.get(s, 0.0) * (1 if active_symbols[s].direction == Direction.UP else -1))
+            s: (
+                self.targets.get(s, 0.0)
+                * (1 if active_symbols[s].direction == Direction.UP else -1)
+            )
             for s in active_symbols
             if s in self.targets
         }
