@@ -1,6 +1,6 @@
 from collections import Counter
 from datetime import datetime
-from typing import Mapping, Sequence, Tuple, Any, Dict
+from typing import Mapping, Sequence, Tuple, Any, Dict, List
 
 
 def hit_rate(trades: Sequence[Mapping[str, Any]]) -> float:
@@ -64,3 +64,75 @@ def turnover(trades: Sequence[Mapping[str, Any]]) -> float:
     if period <= 0:
         return float(len(trades))
     return len(trades) / period
+
+
+def trade_implementation_shortfall(trade: Mapping[str, Any]) -> float:
+    """Implementation shortfall for a single trade.
+
+    Calculated as the difference between the modelled return and the
+    realised return of the trade.  If either value is missing the result
+    is ``0.0``.
+    """
+
+    model_ret = trade.get("model_return")
+    actual_ret = trade.get("return")
+    if model_ret is None or actual_ret is None:
+        return 0.0
+    return model_ret - actual_ret
+
+
+def cumulative_implementation_shortfall(trades: Sequence[Mapping[str, Any]]) -> float:
+    """Total implementation shortfall over a collection of trades."""
+
+    return sum(trade_implementation_shortfall(t) for t in trades)
+
+
+def slippage_stats(trades: Sequence[Mapping[str, Any]]) -> Dict[str, float]:
+    """Average entry and exit slippage for a set of trades.
+
+    Slippage is measured relative to the model prices.  Positive values
+    indicate worse execution than the modelled price.
+    """
+
+    entry_slip: List[float] = []
+    exit_slip: List[float] = []
+
+    for t in trades:
+        direction = 1 if t.get("direction") == "long" else -1
+
+        if "entry_price" in t and "model_entry_price" in t and t["model_entry_price"]:
+            entry_slip.append(
+                direction
+                * (t["entry_price"] - t["model_entry_price"]) / t["model_entry_price"]
+            )
+
+        if "exit_price" in t and "model_exit_price" in t and t["model_exit_price"]:
+            exit_slip.append(
+                direction
+                * (t["model_exit_price"] - t["exit_price"]) / t["model_exit_price"]
+            )
+
+    avg_entry = sum(entry_slip) / len(entry_slip) if entry_slip else 0.0
+    avg_exit = sum(exit_slip) / len(exit_slip) if exit_slip else 0.0
+    return {"avg_entry_slippage": avg_entry, "avg_exit_slippage": avg_exit}
+
+
+def latency_stats(trades: Sequence[Mapping[str, Any]]) -> Dict[str, float]:
+    """Basic latency metrics in seconds between signal and execution."""
+
+    latencies = []
+    for t in trades:
+        signal_time = t.get("signal_time")
+        entry_time = t.get("entry")
+        if signal_time is None or entry_time is None:
+            continue
+        delta = entry_time - signal_time
+        secs = delta.total_seconds() if hasattr(delta, "total_seconds") else float(delta)
+        latencies.append(secs)
+
+    if not latencies:
+        return {"avg_latency_sec": 0.0, "max_latency_sec": 0.0}
+
+    avg_lat = sum(latencies) / len(latencies)
+    max_lat = max(latencies)
+    return {"avg_latency_sec": avg_lat, "max_latency_sec": max_lat}
