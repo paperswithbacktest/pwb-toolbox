@@ -4,6 +4,7 @@ stub_environment()
 
 
 def test_manual_universe():
+    stub_environment()
     from pwb_toolbox.backtest.universe_models import ManualUniverseSelectionModel
 
     model = ManualUniverseSelectionModel(["A", "B"])
@@ -11,6 +12,7 @@ def test_manual_universe():
 
 
 def test_etf_constituents_universe():
+    stub_environment()
     from pwb_toolbox.backtest.universe_models import ETFConstituentsUniverseSelectionModel
 
     model = ETFConstituentsUniverseSelectionModel("SPY")
@@ -18,6 +20,7 @@ def test_etf_constituents_universe():
 
 
 def test_crypto_universe():
+    stub_environment()
     from pwb_toolbox.backtest.universe_models import CryptoUniverseSelectionModel
 
     model = CryptoUniverseSelectionModel(top_n=1)
@@ -25,6 +28,7 @@ def test_crypto_universe():
 
 
 def test_universe_chain():
+    stub_environment()
     from pwb_toolbox.backtest.universe_models import (
         ManualUniverseSelectionModel,
         UniverseSelectionModelChain,
@@ -37,6 +41,7 @@ def test_universe_chain():
 
 
 def test_scheduled_universe():
+    stub_environment()
     from pwb_toolbox.backtest.universe_models import ScheduledUniverseSelectionModel
 
     sched = {
