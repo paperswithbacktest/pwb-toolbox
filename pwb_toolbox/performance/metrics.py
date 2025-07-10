@@ -381,3 +381,85 @@ def cumulative_excess_return(prices: Sequence[float], benchmark: Sequence[float]
     s = pd.Series(cum)
     s.index = index
     return s
+
+
+def skewness(prices: Sequence[float]) -> float:
+    """Skewness of returns of a price series."""
+    p = _to_list(prices)
+    if len(p) < 3:
+        return 0.0
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / len(rets)
+    if var == 0:
+        return 0.0
+    std = sqrt(var)
+    m3 = sum((r - mean) ** 3 for r in rets) / len(rets)
+    return m3 / (std ** 3)
+
+
+def kurtosis(prices: Sequence[float]) -> float:
+    """Kurtosis of returns of a price series."""
+    p = _to_list(prices)
+    if len(p) < 3:
+        return 0.0
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / len(rets)
+    if var == 0:
+        return 0.0
+    m4 = sum((r - mean) ** 4 for r in rets) / len(rets)
+    return m4 / (var ** 2)
+
+
+def variance_ratio(prices: Sequence[float], lag: int = 2) -> float:
+    """Lo-MacKinlay variance ratio test statistic."""
+    p = _to_list(prices)
+    if len(p) <= lag:
+        return 0.0
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / len(rets)
+    if var == 0:
+        return 0.0
+    agg = [sum(rets[i - j] for j in range(1, lag + 1)) for i in range(lag, len(rets))]
+    var_lag = sum((a - lag * mean) ** 2 for a in agg) / len(agg)
+    return var_lag / (var * lag)
+
+
+def acf(prices: Sequence[float], lags: Sequence[int]) -> list[float]:
+    """Autocorrelation of returns for specified lags."""
+    p = _to_list(prices)
+    if len(p) < 2:
+        return [0.0 for _ in lags]
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / len(rets)
+    if var == 0:
+        return [0.0 for _ in lags]
+    out = []
+    for lag in lags:
+        if lag <= 0 or lag >= len(rets):
+            out.append(0.0)
+        else:
+            cov = sum((rets[i] - mean) * (rets[i - lag] - mean) for i in range(lag, len(rets))) / (len(rets) - lag)
+            out.append(cov / var)
+    return out
+
+
+def pacf(prices: Sequence[float], lags: Sequence[int]) -> list[float]:
+    """Partial autocorrelation of returns for specified lags."""
+    p = _to_list(prices)
+    if len(p) < 2:
+        return [0.0 for _ in lags]
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
+    out = []
+    for k in lags:
+        if k <= 0 or k >= len(rets):
+            out.append(0.0)
+            continue
+        y = [rets[i] for i in range(k, len(rets))]
+        X = [[1.0] + [rets[i - j - 1] for j in range(k)] for i in range(k, len(rets))]
+        beta = _ols(y, X)
+        out.append(beta[-1] if beta else 0.0)
+    return out

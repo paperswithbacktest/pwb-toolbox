@@ -16,6 +16,11 @@ from .metrics import (
     omega_ratio,
     information_ratio,
     capm_alpha_beta,
+    skewness,
+    kurtosis,
+    variance_ratio,
+    acf,
+    pacf,
     fama_french_3factor,
     fama_french_5factor,
     cumulative_excess_return,
@@ -52,6 +57,11 @@ __all__ = [
     "omega_ratio",
     "information_ratio",
     "capm_alpha_beta",
+    "skewness",
+    "kurtosis",
+    "variance_ratio",
+    "acf",
+    "pacf",
     "fama_french_3factor",
     "fama_french_5factor",
     "cumulative_excess_return",
@@ -84,6 +94,9 @@ try:  # pragma: no cover - optional plotting deps
         plot_exposure_ts,
         plot_cumulative_shortfall,
         plot_alpha_vs_return,
+        plot_qq_returns,
+        plot_rolling_skewness,
+        plot_rolling_kurtosis,
     )
 
     __all__ += [
@@ -102,6 +115,9 @@ try:  # pragma: no cover - optional plotting deps
         "plot_exposure_ts",
         "plot_cumulative_shortfall",
         "plot_alpha_vs_return",
+        "plot_qq_returns",
+        "plot_rolling_skewness",
+        "plot_rolling_kurtosis",
     ]
 except Exception:  # pragma: no cover - matplotlib may be missing
     pass
