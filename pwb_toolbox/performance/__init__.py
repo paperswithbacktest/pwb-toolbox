@@ -28,6 +28,10 @@ from .trade_stats import (
     profit_factor,
     trade_duration_distribution,
     turnover,
+    trade_implementation_shortfall,
+    cumulative_implementation_shortfall,
+    slippage_stats,
+    latency_stats,
 )
 
 __all__ = [
@@ -57,6 +61,10 @@ __all__ = [
     "profit_factor",
     "trade_duration_distribution",
     "turnover",
+    "trade_implementation_shortfall",
+    "cumulative_implementation_shortfall",
+    "slippage_stats",
+    "latency_stats",
 ]
 
 try:  # pragma: no cover - optional plotting deps
@@ -74,6 +82,8 @@ try:  # pragma: no cover - optional plotting deps
         plot_trade_return_hist,
         plot_return_by_holding_period,
         plot_exposure_ts,
+        plot_cumulative_shortfall,
+        plot_alpha_vs_return,
     )
 
     __all__ += [
@@ -90,6 +100,8 @@ try:  # pragma: no cover - optional plotting deps
         "plot_trade_return_hist",
         "plot_return_by_holding_period",
         "plot_exposure_ts",
+        "plot_cumulative_shortfall",
+        "plot_alpha_vs_return",
     ]
 except Exception:  # pragma: no cover - matplotlib may be missing
     pass

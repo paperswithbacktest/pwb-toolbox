@@ -304,3 +304,44 @@ def plot_exposure_ts(trades, ax=None):
     ax.set_xlabel("Date")
     ax.legend()
     return ax
+
+
+def plot_cumulative_shortfall(trades, ax=None):
+    """Plot cumulative implementation shortfall over time."""
+    if pd is None:
+        raise ImportError("pandas is required for plot_cumulative_shortfall")
+
+    from .trade_stats import trade_implementation_shortfall
+
+    dates = []
+    cum = []
+    total = 0.0
+    for t in trades:
+        date = t.get("exit") or t.get("entry")
+        total += trade_implementation_shortfall(t)
+        dates.append(date)
+        cum.append(total)
+
+    ser = pd.Series(cum, index=dates)
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.plot(ser.index, ser)
+    ax.set_ylabel("Cumulative Shortfall")
+    ax.set_xlabel("Date")
+    return ax
+
+
+def plot_alpha_vs_return(trades, ax=None):
+    """Scatter plot of forecasted alpha versus realised trade return."""
+    if pd is None:
+        raise ImportError("pandas is required for plot_alpha_vs_return")
+
+    alphas = [t.get("forecast_alpha") for t in trades if t.get("forecast_alpha") is not None]
+    rets = [t.get("return") for t in trades if t.get("forecast_alpha") is not None]
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.scatter(alphas, rets, s=10)
+    ax.set_xlabel("Forecast Alpha")
+    ax.set_ylabel("Realized Return")
+    return ax
