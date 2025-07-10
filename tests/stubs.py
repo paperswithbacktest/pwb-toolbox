@@ -1,5 +1,8 @@
 import sys
 import types
+import importlib
+from importlib import abc, machinery
+import os
 
 # Minimal pandas replacement used across tests
 pd = types.ModuleType("pandas")
@@ -381,9 +384,58 @@ def _pinv(x):
 np.linalg = types.SimpleNamespace(pinv=_pinv)
 sys.modules.setdefault("numpy", np)
 
+# minimal tqdm stub
+tqdm_mod = types.ModuleType("tqdm")
+
+def tqdm(*args, **kwargs):
+    return types.SimpleNamespace(update=lambda n=1: None, close=lambda: None)
+
+tqdm_mod.tqdm = tqdm
+sys.modules.setdefault("tqdm", tqdm_mod)
+
+# minimal datasets stub
+datasets_mod = types.ModuleType("datasets")
+
+class _Loader(abc.Loader):
+    def create_module(self, spec):
+        return datasets_mod
+
+    def exec_module(self, module):
+        pass
+
+datasets_mod.__loader__ = _Loader()
+datasets_mod.__spec__ = machinery.ModuleSpec("datasets", datasets_mod.__loader__)
+
+class _HFData:
+    def __init__(self, df):
+        self.train = types.SimpleNamespace(to_pandas=lambda: df)
+
+def _load_dataset(name, token=None):
+    if "ETF-Constituents" in name:
+        df = pd.DataFrame(
+            {"etf": ["SPY", "SPY", "QQQ"], "symbol": ["AAPL", "MSFT", "AAPL"]}
+        )
+        return _HFData(df)
+    if "Cryptocurrencies-Daily-Price" in name:
+        df = pd.DataFrame({"symbol": ["BTCUSD", "ETHUSD"]})
+        return _HFData(df)
+    return _HFData(pd.DataFrame())
+
+def _get_hf_token() -> str:
+    token = os.environ.get("HF_ACCESS_TOKEN")
+    if not token:
+        raise ValueError("HF_ACCESS_TOKEN not set")
+    return token
+
+datasets_mod.load_dataset = _load_dataset
+datasets_mod._get_hf_token = _get_hf_token
+sys.modules["datasets"] = datasets_mod
+
 
 def stub_environment():
     """Install stubs for external packages used in the toolbox."""
+    # ensure datasets stub is active
+    sys.modules["datasets"] = datasets_mod
     # backtrader
     bt = types.ModuleType("backtrader")
 
@@ -425,12 +477,53 @@ def stub_environment():
             def __init__(self, dataname):
                 self.dataname = dataname
 
+        class IBData:
+            def __init__(self, store=None, dataname=None, **kwargs):
+                self.store = store
+                self.dataname = dataname
+                self.kwargs = kwargs
+
+    class Stores:
+        class IBStore:
+            def __init__(self, host="127.0.0.1", port=7497, clientId=1, **kwargs):
+                self.host = host
+                self.port = port
+                self.clientId = clientId
+
+            def getbroker(self):
+                return types.SimpleNamespace()
+
     bt.Strategy = Strategy
     bt.Cerebro = Cerebro
     bt.feeds = Feeds
+    bt.stores = Stores
     bt.Order = Order
     bt.num2date = lambda num: pd.Timestamp("2020-01-01")
     sys.modules["backtrader"] = bt
+
+    # atreyu / ib_insync stubs
+    class FakeIB:
+        def __init__(self):
+            self.connected = False
+
+        def connect(self, host="127.0.0.1", port=7497, clientId=1):
+            self.connected = True
+            self.host = host
+            self.port = port
+            self.clientId = clientId
+
+        def disconnect(self):
+            self.connected = False
+
+    ib_module = types.ModuleType("ib_insync")
+    ib_module.IB = FakeIB
+    sys.modules.setdefault("ib_insync", ib_module)
+
+    atreyu = types.ModuleType("atreyu_backtrader_api")
+    atreyu.IBStore = Stores.IBStore
+    atreyu.IBData = Feeds.IBData
+    atreyu.IB = FakeIB
+    sys.modules["atreyu_backtrader_api"] = atreyu
 
     # datasets stub
     ds = types.ModuleType("pwb_toolbox.datasets")
@@ -455,22 +548,15 @@ def stub_environment():
     ds.get_pricing = get_pricing
     ds.load_dataset = load_dataset
     sys.modules["pwb_toolbox.datasets"] = ds
+    if "pwb_toolbox" in sys.modules:
+        setattr(sys.modules["pwb_toolbox"], "datasets", ds)
 
     # backtest examples package stub
     examples_pkg = types.ModuleType("pwb_toolbox.backtest.examples")
     examples_pkg.__path__ = []
 
     shared = types.ModuleType("pwb_toolbox.backtest.examples.shared")
-    class Direction:
-        UP = 1
-        DOWN = 2
-        FLAT = 3
-    class Insight:
-        def __init__(self, symbol, direction, timestamp=None, weight=1.0):
-            self.symbol = symbol
-            self.direction = direction
-            self.timestamp = timestamp
-            self.weight = weight
+    from pwb_toolbox.backtest.insight import Direction, Insight
     shared.Direction = Direction
     shared.Insight = Insight
     sys.modules["pwb_toolbox.backtest.examples.shared"] = shared
