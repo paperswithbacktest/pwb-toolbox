@@ -14,3 +14,5 @@ selenium
 tqdm
 twilio
 webdriver_manager
+ibapi
+ib_insync
