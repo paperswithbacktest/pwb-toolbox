@@ -10,6 +10,7 @@ from ...datasets import get_pricing
 from .alpha import AlphaModel
 from .portfolio import PortfolioConstructionModel
 from .execution import rebalance
+from ..ib_connector import run_ib_strategy
 
 
 class ToolboxStrategy(bt.Strategy):
@@ -30,6 +31,17 @@ class ToolboxStrategy(bt.Strategy):
         insights = self.alpha.generate(history)
         weights = self.portfolio.weights(insights, price_data=history)
         rebalance(self, weights)
+
+
+class SimpleIBStrategy(bt.Strategy):
+    """Example strategy for use with :func:`run_ib_strategy`."""
+
+    def next(self):
+        for data in self.datas:
+            if data.close[0] > data.close[-1]:
+                self.buy(data=data)
+            elif data.close[0] < data.close[-1]:
+                self.sell(data=data)
 
 
 def run_backtest(
@@ -55,3 +67,9 @@ def run_backtest(
         ToolboxStrategy, prices=prices, alpha=alpha, portfolio=portfolio
     )
     return cerebro.run()
+
+
+def run_ib_backtest(symbols: Iterable[str], **ib_kwargs):
+    """Run :class:`SimpleIBStrategy` using Interactive Brokers data."""
+    data_config = [{"dataname": s, "name": s} for s in symbols]
+    return run_ib_strategy(SimpleIBStrategy, data_config, **ib_kwargs)

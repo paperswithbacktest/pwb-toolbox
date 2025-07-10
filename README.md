@@ -112,6 +112,17 @@ from pwb_toolbox.backtest import run_backtest
 run_backtest(["SPY", "QQQ"], GoldenCrossAlpha(), EqualWeightPortfolio(), start="2015-01-01")
 ```
 
+For live or historical Interactive Brokers data, use `IBConnector` and
+`run_ib_strategy`:
+
+```python
+from pwb_toolbox.backtest import IBConnector, run_ib_strategy
+from pwb_toolbox.backtest.example.engine import SimpleIBStrategy
+
+data_cfg = [{"dataname": "AAPL", "name": "AAPL"}]
+run_ib_strategy(SimpleIBStrategy, data_cfg, host="127.0.0.1", port=7497)
+```
+
 ## Contributing
 
 Contributions to the `pwb-toolbox` package are welcome! If you have any improvements, new datasets, or strategy ideas to share, please follow these guidelines:
