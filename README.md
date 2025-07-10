@@ -112,6 +112,32 @@ from pwb_toolbox.backtest import run_backtest
 run_backtest(["SPY", "QQQ"], GoldenCrossAlpha(), EqualWeightPortfolio(), start="2015-01-01")
 ```
 
+## Performance Analysis
+
+After running a backtest you can analyze the returned equity series using the
+`pwb_toolbox.performance` module.
+
+```python
+from pwb_toolbox.backtest.examples import GoldenCrossAlpha, EqualWeightPortfolio
+from pwb_toolbox.backtest import run_backtest
+from pwb_toolbox.performance import total_return, cagr
+from pwb_toolbox.performance.plots import plot_equity_curve
+
+result, equity = run_backtest(
+    ["SPY", "QQQ"],
+    GoldenCrossAlpha(),
+    EqualWeightPortfolio(),
+    start="2015-01-01",
+)
+
+print("Total return:", total_return(equity))
+print("CAGR:", cagr(equity))
+
+plot_equity_curve(equity)
+```
+
+Plotting utilities require `matplotlib`; some metrics also need `pandas`.
+
 ## Live trading with Interactive Brokers
 
 `run_ib_strategy` streams Interactive Brokers data and orders. Install `ibapi` and either `atreyu-backtrader-api` or `ib_insync`.
