@@ -21,6 +21,15 @@ from .metrics import (
     cumulative_excess_return,
 )
 
+from .trade_stats import (
+    hit_rate,
+    average_win_loss,
+    expectancy,
+    profit_factor,
+    trade_duration_distribution,
+    turnover,
+)
+
 __all__ = [
     "total_return",
     "cagr",
@@ -42,6 +51,12 @@ __all__ = [
     "fama_french_3factor",
     "fama_french_5factor",
     "cumulative_excess_return",
+    "hit_rate",
+    "average_win_loss",
+    "expectancy",
+    "profit_factor",
+    "trade_duration_distribution",
+    "turnover",
 ]
 
 try:  # pragma: no cover - optional plotting deps
@@ -56,6 +71,9 @@ try:  # pragma: no cover - optional plotting deps
         plot_return_scatter,
         plot_cumulative_excess_return,
         plot_factor_exposures,
+        plot_trade_return_hist,
+        plot_return_by_holding_period,
+        plot_exposure_ts,
     )
 
     __all__ += [
@@ -69,6 +87,9 @@ try:  # pragma: no cover - optional plotting deps
         "plot_return_scatter",
         "plot_cumulative_excess_return",
         "plot_factor_exposures",
+        "plot_trade_return_hist",
+        "plot_return_by_holding_period",
+        "plot_exposure_ts",
     ]
 except Exception:  # pragma: no cover - matplotlib may be missing
     pass
