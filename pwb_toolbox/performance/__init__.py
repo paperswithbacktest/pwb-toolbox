@@ -15,6 +15,10 @@ from .metrics import (
     calmar_ratio,
     omega_ratio,
     information_ratio,
+    capm_alpha_beta,
+    fama_french_3factor,
+    fama_french_5factor,
+    cumulative_excess_return,
 )
 
 __all__ = [
@@ -34,6 +38,10 @@ __all__ = [
     "calmar_ratio",
     "omega_ratio",
     "information_ratio",
+    "capm_alpha_beta",
+    "fama_french_3factor",
+    "fama_french_5factor",
+    "cumulative_excess_return",
 ]
 
 try:  # pragma: no cover - optional plotting deps
@@ -46,6 +54,8 @@ try:  # pragma: no cover - optional plotting deps
         plot_rolling_sharpe,
         plot_rolling_sortino,
         plot_return_scatter,
+        plot_cumulative_excess_return,
+        plot_factor_exposures,
     )
 
     __all__ += [
@@ -57,6 +67,8 @@ try:  # pragma: no cover - optional plotting deps
         "plot_rolling_sharpe",
         "plot_rolling_sortino",
         "plot_return_scatter",
+        "plot_cumulative_excess_return",
+        "plot_factor_exposures",
     ]
 except Exception:  # pragma: no cover - matplotlib may be missing
     pass

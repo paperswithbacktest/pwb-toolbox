@@ -12,6 +12,8 @@ from .metrics import (
     parametric_var,
     sharpe_ratio,
     sortino_ratio,
+    cumulative_excess_return,
+    fama_french_3factor,
 )
 
 
@@ -196,4 +198,33 @@ def plot_return_scatter(prices, benchmark_prices, ax=None):
     ax.set_xlabel('Benchmark Return')
     ax.set_ylabel('Strategy Return')
     ax.legend()
+    return ax
+
+
+def plot_cumulative_excess_return(prices, benchmark_prices, ax=None):
+    """Plot cumulative excess return versus benchmark."""
+    if pd is None:
+        raise ImportError("pandas is required for plot_cumulative_excess_return")
+    ser = cumulative_excess_return(prices, benchmark_prices)
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.plot(ser.index, ser)
+    ax.set_ylabel("Cumulative Excess Return")
+    ax.set_xlabel("Date")
+    return ax
+
+
+def plot_factor_exposures(prices, factors, ax=None):
+    """Bar chart of Fama-French 3 factor exposures."""
+    if pd is None:
+        raise ImportError("pandas is required for plot_factor_exposures")
+    exp = fama_french_3factor(prices, factors)
+    names = [n for n in exp.index if n != "alpha"]
+    vals = [exp[n] for n in names]
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.bar(range(len(vals)), vals)
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels(names, rotation=45)
+    ax.set_ylabel("Exposure")
     return ax
