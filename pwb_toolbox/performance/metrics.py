@@ -267,3 +267,117 @@ def information_ratio(
     if var == 0:
         return 0.0
     return mean / sqrt(var) * sqrt(periods_per_year)
+
+
+def capm_alpha_beta(prices: Sequence[float], benchmark: Sequence[float]) -> Tuple[float, float]:
+    """CAPM alpha and beta relative to a benchmark."""
+    p = _to_list(prices)
+    b = _to_list(benchmark)
+    n = min(len(p), len(b))
+    if n < 2:
+        return 0.0, 0.0
+    strat = [p[i] / p[i - 1] - 1 for i in range(1, n)]
+    bench = [b[i] / b[i - 1] - 1 for i in range(1, n)]
+    mean_x = sum(bench) / len(bench)
+    mean_y = sum(strat) / len(strat)
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(bench, strat)) / len(bench)
+    var_x = sum((x - mean_x) ** 2 for x in bench) / len(bench)
+    beta = cov / var_x if var_x else 0.0
+    alpha = mean_y - beta * mean_x
+    return alpha, beta
+
+
+def _invert_matrix(matrix: Sequence[Sequence[float]]) -> Sequence[Sequence[float]] | None:
+    size = len(matrix)
+    aug = [list(row) + [1 if i == j else 0 for j in range(size)] for i, row in enumerate(matrix)]
+    for i in range(size):
+        pivot = aug[i][i]
+        if abs(pivot) < 1e-12:
+            swap = next((j for j in range(i + 1, size) if abs(aug[j][i]) > 1e-12), None)
+            if swap is None:
+                return None
+            aug[i], aug[swap] = aug[swap], aug[i]
+            pivot = aug[i][i]
+        inv_p = 1 / pivot
+        for j in range(2 * size):
+            aug[i][j] *= inv_p
+        for k in range(size):
+            if k != i:
+                factor = aug[k][i]
+                for j in range(2 * size):
+                    aug[k][j] -= factor * aug[i][j]
+    return [row[size:] for row in aug]
+
+
+def _ols(y: Sequence[float], X: Sequence[Sequence[float]]) -> Sequence[float]:
+    n = len(y)
+    k = len(X[0]) if X else 0
+    xtx = [[0.0 for _ in range(k)] for _ in range(k)]
+    xty = [0.0 for _ in range(k)]
+    for i in range(n):
+        for p in range(k):
+            xty[p] += X[i][p] * y[i]
+            for q in range(k):
+                xtx[p][q] += X[i][p] * X[i][q]
+    inv = _invert_matrix(xtx)
+    if inv is None:
+        return [0.0 for _ in range(k)]
+    beta = [sum(inv[i][j] * xty[j] for j in range(k)) for i in range(k)]
+    return beta
+
+
+def fama_french_regression(prices: Sequence[float], factors: 'pd.DataFrame', factor_cols: Sequence[str]) -> 'pd.Series':  # type: ignore
+    """Run regression of excess returns on Fama-French factors."""
+    if pd is None:
+        raise ImportError("pandas is required for fama_french_regression")
+
+    p = _to_list(prices)
+    n = min(len(p), len(factors))
+    if n < 2:
+        data = [0.0] * (len(factor_cols) + 1)
+        s = pd.Series(data)
+        s.index = ["alpha"] + list(factor_cols)
+        return s
+
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, n)]
+    rf = _to_list(factors["RF"]) if "RF" in factors.columns else [0.0] * n
+    y = [rets[i - 1] - rf[i] for i in range(1, n)]
+    x = [[1.0] + [_to_list(factors[c])[i] for c in factor_cols] for i in range(1, n)]
+    beta = _ols(y, x)
+    s = pd.Series(beta)
+    s.index = ["alpha"] + list(factor_cols)
+    return s
+
+
+def fama_french_3factor(prices: Sequence[float], factors: 'pd.DataFrame') -> 'pd.Series':  # type: ignore
+    cols = [c for c in ["Mkt-RF", "SMB", "HML"] if c in getattr(factors, "columns", [])]
+    return fama_french_regression(prices, factors, cols)
+
+
+def fama_french_5factor(prices: Sequence[float], factors: 'pd.DataFrame') -> 'pd.Series':  # type: ignore
+    cols = [c for c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA"] if c in getattr(factors, "columns", [])]
+    return fama_french_regression(prices, factors, cols)
+
+
+def cumulative_excess_return(prices: Sequence[float], benchmark: Sequence[float]) -> 'pd.Series':  # type: ignore
+    """Cumulative excess return of strategy versus a benchmark."""
+    if pd is None:
+        raise ImportError("pandas is required for cumulative_excess_return")
+
+    p = _to_list(prices)
+    b = _to_list(benchmark)
+    n = min(len(p), len(b))
+    index = list(getattr(prices, 'index', range(len(p))))[:n]
+    cum = []
+    total = 1.0
+    for i in range(n):
+        if i == 0:
+            cum.append(0.0)
+        else:
+            strat_ret = p[i] / p[i - 1] - 1
+            bench_ret = b[i] / b[i - 1] - 1
+            total *= 1 + (strat_ret - bench_ret)
+            cum.append(total - 1)
+    s = pd.Series(cum)
+    s.index = index
+    return s
