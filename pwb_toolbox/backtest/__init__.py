@@ -14,6 +14,8 @@ from .portfolio_models import (
     DollarCostAveragingPortfolioConstructionModel,
     InsightRatioPortfolioConstructionModel,
 )
+from .ib_connector import IBConnector, run_ib_strategy
+from .example.engine import run_backtest, run_ib_backtest
 
 __all__ = [
     "Direction",
@@ -37,6 +39,10 @@ __all__ = [
     "SectorExposureRiskManagementModel",
     "MaximumOrderQuantityPercentPerSecurity",
     "CompositeRiskManagementModel",
+    "IBConnector",
+    "run_ib_strategy",
+    "run_backtest",
+    "run_ib_backtest",
 ]
 from .risk_models import (
     RiskManagementModel,
