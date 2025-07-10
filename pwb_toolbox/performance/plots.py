@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from statistics import NormalDist
 
 try:
     import pandas as pd  # type: ignore
@@ -12,6 +13,8 @@ from .metrics import (
     parametric_var,
     sharpe_ratio,
     sortino_ratio,
+    skewness,
+    kurtosis,
     cumulative_excess_return,
     fama_french_3factor,
 )
@@ -344,4 +347,69 @@ def plot_alpha_vs_return(trades, ax=None):
     ax.scatter(alphas, rets, s=10)
     ax.set_xlabel("Forecast Alpha")
     ax.set_ylabel("Realized Return")
+    return ax
+
+
+def plot_qq_returns(prices, ax=None):
+    """QQ-plot of returns versus normal distribution."""
+    if ax is None:
+        fig, ax = plt.subplots()
+    p = _to_list(prices)
+    if len(p) < 2:
+        return ax
+    rets = sorted(p[i] / p[i - 1] - 1 for i in range(1, len(p)))
+    n = len(rets)
+    mean = sum(rets) / n
+    var = sum((r - mean) ** 2 for r in rets) / n
+    std = var ** 0.5
+    dist = NormalDist(mean, std)
+    qs = [(i + 0.5) / n for i in range(n)]
+    theo = [dist.inv_cdf(q) for q in qs]
+    ax.scatter(theo, rets, s=10)
+    ax.set_xlabel("Theoretical Quantiles")
+    ax.set_ylabel("Empirical Quantiles")
+    return ax
+
+
+def plot_rolling_skewness(prices, window: int = 63, ax=None):
+    """Plot rolling skewness of returns."""
+    if pd is None:
+        raise ImportError("pandas is required for plot_rolling_skewness")
+    p = _to_list(prices)
+    index = list(getattr(prices, 'index', range(len(p))))
+    vals = []
+    for i in range(len(p)):
+        if i < window:
+            vals.append(None)
+        else:
+            vals.append(skewness(p[i - window : i + 1]))
+    s = pd.Series(vals)
+    s.index = index
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.plot(s.index, s)
+    ax.set_ylabel("Skewness")
+    ax.set_xlabel("Date")
+    return ax
+
+
+def plot_rolling_kurtosis(prices, window: int = 63, ax=None):
+    """Plot rolling kurtosis of returns."""
+    if pd is None:
+        raise ImportError("pandas is required for plot_rolling_kurtosis")
+    p = _to_list(prices)
+    index = list(getattr(prices, 'index', range(len(p))))
+    vals = []
+    for i in range(len(p)):
+        if i < window:
+            vals.append(None)
+        else:
+            vals.append(kurtosis(p[i - window : i + 1]))
+    s = pd.Series(vals)
+    s.index = index
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.plot(s.index, s)
+    ax.set_ylabel("Kurtosis")
+    ax.set_xlabel("Date")
     return ax
