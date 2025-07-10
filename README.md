@@ -112,16 +112,25 @@ from pwb_toolbox.backtest import run_backtest
 run_backtest(["SPY", "QQQ"], GoldenCrossAlpha(), EqualWeightPortfolio(), start="2015-01-01")
 ```
 
-For live or historical Interactive Brokers data, use `IBConnector` and
-`run_ib_strategy`:
+## Live trading with Interactive Brokers
+
+`run_ib_strategy` streams Interactive Brokers data and orders. Install `ibapi` and either `atreyu-backtrader-api` or `ib_insync`.
 
 ```python
 from pwb_toolbox.backtest import IBConnector, run_ib_strategy
 from pwb_toolbox.backtest.example.engine import SimpleIBStrategy
 
 data_cfg = [{"dataname": "AAPL", "name": "AAPL"}]
-run_ib_strategy(SimpleIBStrategy, data_cfg, host="127.0.0.1", port=7497)
+run_ib_strategy(
+    SimpleIBStrategy,
+    data_cfg,
+    host="127.0.0.1",
+    port=7497,
+    client_id=1,
+)
 ```
+
+Configure `host`, `port`, and `client_id` to match your TWS or Gateway settings. Test with an Interactive Brokers paper account before trading live.
 
 ## Contributing
 
