@@ -228,3 +228,79 @@ def plot_factor_exposures(prices, factors, ax=None):
     ax.set_xticklabels(names, rotation=45)
     ax.set_ylabel("Exposure")
     return ax
+
+
+def plot_trade_return_hist(trades, ax=None, bins=20):
+    """Histogram of trade returns for long and short trades."""
+    if ax is None:
+        fig, ax = plt.subplots()
+    longs = [t.get("return", 0) for t in trades if t.get("direction") == "long"]
+    shorts = [t.get("return", 0) for t in trades if t.get("direction") == "short"]
+    if longs:
+        ax.hist(longs, bins=bins, alpha=0.5, label="Long")
+    if shorts:
+        ax.hist(shorts, bins=bins, alpha=0.5, label="Short")
+    ax.set_xlabel("Trade Return")
+    ax.set_ylabel("Frequency")
+    if longs or shorts:
+        ax.legend()
+    return ax
+
+
+def plot_return_by_holding_period(trades, ax=None):
+    """Box plot of trade return grouped by holding period."""
+    if ax is None:
+        fig, ax = plt.subplots()
+    groups = {}
+    for t in trades:
+        entry = t.get("entry")
+        exit_ = t.get("exit")
+        if entry is None or exit_ is None:
+            continue
+        dur = (exit_ - entry).days if hasattr(exit_ - entry, "days") else int(exit_ - entry)
+        groups.setdefault(dur, []).append(t.get("return", 0))
+    if not groups:
+        return ax
+    durations = sorted(groups)
+    data = [groups[d] for d in durations]
+    ax.boxplot(data, positions=range(len(data)))
+    ax.set_xticks(range(len(data)))
+    ax.set_xticklabels([str(d) for d in durations])
+    ax.set_xlabel("Holding Period (days)")
+    ax.set_ylabel("Return")
+    return ax
+
+
+def plot_exposure_ts(trades, ax=None):
+    """Time series of gross and net exposure based on open trades."""
+    if pd is None:
+        raise ImportError("pandas is required for plot_exposure_ts")
+    entries = [t.get("entry") for t in trades if t.get("entry") is not None]
+    exits = [t.get("exit") for t in trades if t.get("exit") is not None]
+    if not entries or not exits:
+        if ax is None:
+            fig, ax = plt.subplots()
+        return ax
+    start = min(entries)
+    end = max(exits)
+    idx = pd.date_range(start, end)
+    gross = [0.0 for _ in idx]
+    net = [0.0 for _ in idx]
+    for t in trades:
+        entry = t.get("entry")
+        exit_ = t.get("exit")
+        size = t.get("size", 0.0)
+        if entry is None or exit_ is None:
+            continue
+        for i, date in enumerate(idx):
+            if entry <= date <= exit_:
+                gross[i] += abs(size)
+                net[i] += size
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.plot(idx, gross, label="Gross")
+    ax.plot(idx, net, label="Net")
+    ax.set_ylabel("Exposure")
+    ax.set_xlabel("Date")
+    ax.legend()
+    return ax
