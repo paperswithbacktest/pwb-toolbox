@@ -183,3 +183,87 @@ def tail_ratio(prices: Sequence[float]) -> float:
     if q05 == 0:
         return 0.0
     return abs(q95) / abs(q05)
+
+
+def sharpe_ratio(
+    prices: Sequence[float],
+    risk_free_rate: float = 0.0,
+    periods_per_year: int = 252,
+) -> float:
+    """Annualized Sharpe ratio of a price series."""
+    p = _to_list(prices)
+    if len(p) < 2:
+        return 0.0
+    rf_per = risk_free_rate / periods_per_year
+    rets = [p[i] / p[i - 1] - 1 - rf_per for i in range(1, len(p))]
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / len(rets)
+    if var == 0:
+        return 0.0
+    return mean / sqrt(var) * sqrt(periods_per_year)
+
+
+def sortino_ratio(
+    prices: Sequence[float],
+    risk_free_rate: float = 0.0,
+    periods_per_year: int = 252,
+) -> float:
+    """Annualized Sortino ratio of a price series."""
+    p = _to_list(prices)
+    if len(p) < 2:
+        return 0.0
+    rf_per = risk_free_rate / periods_per_year
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
+    mean_excess = sum(r - rf_per for r in rets) / len(rets)
+    downside = [min(0.0, r - rf_per) for r in rets]
+    var = sum(d ** 2 for d in downside) / len(rets)
+    if var == 0:
+        return 0.0
+    return mean_excess / sqrt(var) * sqrt(periods_per_year)
+
+
+def calmar_ratio(prices: Sequence[float], periods_per_year: int = 252) -> float:
+    """Calmar ratio of a price series."""
+    mdd, _duration = max_drawdown(prices)
+    if mdd == 0:
+        return 0.0
+    return cagr(prices, periods_per_year) / abs(mdd)
+
+
+def omega_ratio(
+    prices: Sequence[float],
+    threshold: float = 0.0,
+    periods_per_year: int = 252,
+) -> float:
+    """Omega ratio of returns relative to a threshold."""
+    p = _to_list(prices)
+    if len(p) < 2:
+        return 0.0
+    thr = threshold / periods_per_year
+    rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
+    gains = sum(max(r - thr, 0.0) for r in rets)
+    losses = sum(max(thr - r, 0.0) for r in rets)
+    if losses == 0:
+        return 0.0
+    return gains / losses
+
+
+def information_ratio(
+    prices: Sequence[float],
+    benchmark: Sequence[float],
+    periods_per_year: int = 252,
+) -> float:
+    """Information ratio of strategy vs. benchmark prices."""
+    p = _to_list(prices)
+    b = _to_list(benchmark)
+    n = min(len(p), len(b))
+    if n < 2:
+        return 0.0
+    strat_rets = [p[i] / p[i - 1] - 1 for i in range(1, n)]
+    bench_rets = [b[i] / b[i - 1] - 1 for i in range(1, n)]
+    active = [r - br for r, br in zip(strat_rets, bench_rets)]
+    mean = sum(active) / len(active)
+    var = sum((a - mean) ** 2 for a in active) / len(active)
+    if var == 0:
+        return 0.0
+    return mean / sqrt(var) * sqrt(periods_per_year)

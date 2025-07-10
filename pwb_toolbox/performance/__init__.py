@@ -10,6 +10,11 @@ from .metrics import (
     parametric_var,
     parametric_expected_shortfall,
     tail_ratio,
+    sharpe_ratio,
+    sortino_ratio,
+    calmar_ratio,
+    omega_ratio,
+    information_ratio,
 )
 
 __all__ = [
@@ -24,6 +29,11 @@ __all__ = [
     "parametric_var",
     "parametric_expected_shortfall",
     "tail_ratio",
+    "sharpe_ratio",
+    "sortino_ratio",
+    "calmar_ratio",
+    "omega_ratio",
+    "information_ratio",
 ]
 
 try:  # pragma: no cover - optional plotting deps
@@ -33,6 +43,9 @@ try:  # pragma: no cover - optional plotting deps
         plot_underwater,
         plot_rolling_volatility,
         plot_rolling_var,
+        plot_rolling_sharpe,
+        plot_rolling_sortino,
+        plot_return_scatter,
     )
 
     __all__ += [
@@ -41,6 +54,9 @@ try:  # pragma: no cover - optional plotting deps
         "plot_underwater",
         "plot_rolling_volatility",
         "plot_rolling_var",
+        "plot_rolling_sharpe",
+        "plot_rolling_sortino",
+        "plot_return_scatter",
     ]
 except Exception:  # pragma: no cover - matplotlib may be missing
     pass
