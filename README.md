@@ -108,8 +108,18 @@ into portfolio weights and executed via Backtrader orders.
 ```python
 from pwb_toolbox.backtest.examples import GoldenCrossAlpha, EqualWeightPortfolio
 from pwb_toolbox.backtest import run_backtest
+from pwb_toolbox.backtest.execution_models import ImmediateExecutionModel
+from pwb_toolbox.backtest.risk_models import MaximumTotalPortfolioExposure
+from pwb_toolbox.backtest.universe_models import ManualUniverseSelectionModel
 
-run_backtest(["SPY", "QQQ"], GoldenCrossAlpha(), EqualWeightPortfolio(), start="2015-01-01")
+run_backtest(
+    ManualUniverseSelectionModel(["SPY", "QQQ"]),
+    GoldenCrossAlpha(),
+    EqualWeightPortfolio(),
+    execution=ImmediateExecutionModel(),
+    risk=MaximumTotalPortfolioExposure(max_exposure=1.0),
+    start="2015-01-01",
+)
 ```
 
 ## Performance Analysis
@@ -120,13 +130,15 @@ After running a backtest you can analyze the returned equity series using the
 ```python
 from pwb_toolbox.backtest.examples import GoldenCrossAlpha, EqualWeightPortfolio
 from pwb_toolbox.backtest import run_backtest
+from pwb_toolbox.backtest.execution_models import ImmediateExecutionModel
 from pwb_toolbox.performance import total_return, cagr
 from pwb_toolbox.performance.plots import plot_equity_curve
 
 result, equity = run_backtest(
-    ["SPY", "QQQ"],
+    ManualUniverseSelectionModel(["SPY", "QQQ"]),
     GoldenCrossAlpha(),
     EqualWeightPortfolio(),
+    execution=ImmediateExecutionModel(),
     start="2015-01-01",
 )
 
