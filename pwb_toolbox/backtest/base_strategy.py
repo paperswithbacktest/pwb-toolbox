@@ -18,7 +18,7 @@ class BaseStrategy(bt.Strategy):
             return False
         return data.close[0] != data.close[-2]
 
-    def __next__(self):
+    def next(self):
         """Update progress bar and log current value."""
         self.pbar.update(1)
         self.log_data.append(
