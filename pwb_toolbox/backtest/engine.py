@@ -18,7 +18,7 @@ def run_strategy(signal, signal_kwargs, portfolio, symbols, start_date, leverage
     pivot_df.ffill(inplace=True)  # forward-fill holidays
     pivot_df.bfill(inplace=True)  # back-fill leading IPO gaps
     cerebro = bt.Cerebro()
-    for symbol in symbols:
+    for symbol in pivot_df.columns.levels[0]:
         data = bt.feeds.PandasData(dataname=pivot_df[symbol].copy())
         cerebro.adddata(data, name=symbol)
     cerebro.addstrategy(
