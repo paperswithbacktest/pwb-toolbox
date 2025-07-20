@@ -3,7 +3,16 @@ import pandas as pd
 import pwb_toolbox.datasets as pwb_ds
 
 
-def run_strategy(signal, signal_kwargs, portfolio, symbols, start_date, leverage, cash):
+def run_strategy(
+    signal,
+    signal_kwargs,
+    portfolio,
+    portfolio_kwargs,
+    symbols,
+    start_date,
+    leverage,
+    cash,
+):
     """Run a tactical asset allocation strategy with Backtrader."""
     # Load the data from https://paperswithbacktest.com/datasets
     pivot_df = pwb_ds.get_pricing(
@@ -27,6 +36,7 @@ def run_strategy(signal, signal_kwargs, portfolio, symbols, start_date, leverage
         leverage=0.9,
         signal_cls=signal,
         signal_kwargs=signal_kwargs,
+        **portfolio_kwargs,
     )
     cerebro.broker.set_cash(cash)
     strategy = cerebro.run()[0]

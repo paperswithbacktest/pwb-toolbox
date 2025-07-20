@@ -921,6 +921,9 @@ def get_pricing(
         fields = ["close"]
     if isinstance(symbol_list, str):
         symbol_list = [symbol_list]
+    if isinstance(symbol_list, list) and "sp500" in symbol_list:
+        symbol_list.remove("sp500")
+        symbol_list += SP500_SYMBOLS
 
     fields = [f.lower() for f in fields]
     bad = [f for f in fields if f not in ALLOWED_FIELDS]
@@ -939,9 +942,11 @@ def get_pricing(
     remaining = []
     for sym in symbol_list:
         repo_id = mapping.get(sym)
+        repo_id = repo_id.split("/")[1] if isinstance(repo_id, str) else None
         if repo_id:
             grouped[repo_id].append(sym)
         else:
+            print(f"Warning: No dataset found for symbol '{sym}'")
             remaining.append(sym)
 
     frames = []
@@ -950,25 +955,6 @@ def get_pricing(
         df_part = load_dataset(repo_id, syms, extend=ext_flag)
         if not df_part.empty:
             frames.append(df_part)
-
-    if remaining:
-        fallback = [
-            ("Stocks-Daily-Price", extend),
-            ("ETFs-Daily-Price", extend),
-            ("Cryptocurrencies-Daily-Price", extend),
-            ("Bonds-Daily-Price", extend),
-            ("Commodities-Daily-Price", extend),
-            ("Forex-Daily-Price", extend),
-            ("Indices-Daily-Price", False),
-        ]
-        unresolved = set(remaining)
-        for dataset_name, ext_flag in fallback:
-            if not unresolved:
-                break
-            df_part = load_dataset(dataset_name, list(unresolved), extend=ext_flag)
-            if not df_part.empty:
-                frames.append(df_part)
-                unresolved -= set(df_part["symbol"].unique())
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
