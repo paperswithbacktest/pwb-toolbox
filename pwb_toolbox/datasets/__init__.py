@@ -928,25 +928,49 @@ def get_pricing(
         raise ValueError(f"Invalid field(s): {bad}. Allowed: {sorted(ALLOWED_FIELDS)}")
 
     # --------------------------------------------------------------- download
-    DATASETS = [
-        ("Stocks-Daily-Price", extend),
-        ("ETFs-Daily-Price", extend),
-        ("Cryptocurrencies-Daily-Price", extend),
-        ("Bonds-Daily-Price", extend),
-        ("Commodities-Daily-Price", extend),
-        ("Forex-Daily-Price", extend),
-        ("Indices-Daily-Price", False),  # indices generally have no proxy data
-    ]
-    remaining = set(symbol_list)  # symbols still to fetch
+    universe = ds.load_dataset(
+        "paperswithbacktest/Universe-Daily-Price",
+        token=_get_hf_token(),
+    )
+    mapping = universe["train"].to_pandas()
+    mapping = mapping.set_index("symbol")["repo_id"].to_dict()
+
+    grouped = defaultdict(list)
+    remaining = []
+    for sym in symbol_list:
+        repo_id = mapping.get(sym)
+        if repo_id:
+            grouped[repo_id].append(sym)
+        else:
+            remaining.append(sym)
+
     frames = []
-    for dataset_name, ext_flag in DATASETS:
-        if not remaining:  # all symbols resolved → stop early
-            break
-        df_part = load_dataset(dataset_name, list(remaining), extend=ext_flag)
+    for repo_id, syms in grouped.items():
+        ext_flag = extend if repo_id != "Indices-Daily-Price" else False
+        df_part = load_dataset(repo_id, syms, extend=ext_flag)
         if not df_part.empty:
             frames.append(df_part)
-            remaining -= set(df_part["symbol"].unique())
-    df = pd.concat(frames, ignore_index=True)
+
+    if remaining:
+        fallback = [
+            ("Stocks-Daily-Price", extend),
+            ("ETFs-Daily-Price", extend),
+            ("Cryptocurrencies-Daily-Price", extend),
+            ("Bonds-Daily-Price", extend),
+            ("Commodities-Daily-Price", extend),
+            ("Forex-Daily-Price", extend),
+            ("Indices-Daily-Price", False),
+        ]
+        unresolved = set(remaining)
+        for dataset_name, ext_flag in fallback:
+            if not unresolved:
+                break
+            df_part = load_dataset(dataset_name, list(unresolved), extend=ext_flag)
+            if not df_part.empty:
+                frames.append(df_part)
+                unresolved -= set(df_part["symbol"].unique())
+
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
