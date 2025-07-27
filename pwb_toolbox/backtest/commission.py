@@ -74,7 +74,7 @@ def get_commissions(symbols, start_date="2020-01-01"):
     for symbol in df.columns.levels[0]:
         price_changes = np.log(df[symbol].close).diff().dropna().values
         c_estimate, _ = _gibbs_sampler(price_changes)
-        commissions[symbol] = c_estimate
+        commissions[symbol] = c_estimate / 10
     return commissions
 
 

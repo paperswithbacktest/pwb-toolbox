@@ -1,5 +1,7 @@
 import backtrader as bt
 import pandas as pd
+import numpy as np
+import pwb_toolbox.backtest as pwb_bt
 import pwb_toolbox.datasets as pwb_ds
 
 
@@ -73,6 +75,10 @@ def run_strategy(
     )
     # Broker
     cerebro.broker.set_cash(cash)
+    if "commission" not in broker_kwargs:
+        commission = np.mean(list(pwb_bt.get_commissions(symbols).values()))
+        print(f"Estimated commission: {commission:.6f}")
+        broker_kwargs["commission"] = commission
     _apply_broker_kwargs(cerebro.broker, broker_kwargs)
     # Run the strategy
     strategy = cerebro.run()[0]

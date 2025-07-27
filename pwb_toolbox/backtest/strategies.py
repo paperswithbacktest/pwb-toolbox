@@ -13,14 +13,15 @@ class DailyEqualWeightPortfolio(BaseStrategy):
 
     params = (
         ("leverage", 0.9),
-        ("signal_cls", None),
-        ("signal_kwargs", {}),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),
     )
 
     def __init__(self):
         super().__init__()
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
 
     def next(self):
@@ -43,15 +44,16 @@ class DailyLeveragePortfolio(BaseStrategy):
 
     params = (
         ("leverage", 0.9),
-        ("signal_cls", None),
-        ("signal_kwargs", {}),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),
     )
 
     def __init__(self):
         super().__init__()
         # One signal instance per data stream
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
         # Match legacy behaviour – fill at today's close
         self.broker.set_coc(True)
@@ -73,15 +75,16 @@ class EqualWeightEntryExitPortfolio(BaseStrategy):
 
     params = dict(
         leverage=0.90,
-        signal_cls=None,  # will be injected by run_strategy
-        signal_kwargs={},
+        indicator_cls=None,  # will be injected by run_strategy
+        indicator_kwargs={},
     )
 
     def __init__(self):
         super().__init__()
         # One signal instance per data feed
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
 
     def next(self):
@@ -126,22 +129,23 @@ class DynamicEqualWeightPortfolio(BaseStrategy):
     trigger_on_any_change : bool
         False → rebalance only when the **set** of longs changes
         True  → rebalance whenever *any* asset's signal changes
-    signal_cls : type     – class that yields the signal (must indexable)
-    signal_kwargs : dict  – forwarded to `signal_cls`
+    indicator_cls : type     – class that yields the signal (must indexable)
+    indicator_kwargs : dict  – forwarded to `indicator_cls`
     """
 
     params = dict(
         leverage=0.9,
         trigger_on_any_change=False,
-        signal_cls=None,
-        signal_kwargs={},
+        indicator_cls=None,
+        indicator_kwargs={},
     )
 
     # ------------------------------------------------------------------ #
     def __init__(self):
         super().__init__()
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
         self._prev_longs: set[str] = set()
         self._prev_raw: dict[str, int | None] = {d._name: None for d in self.datas}
@@ -199,14 +203,14 @@ class MonthlyLongShortPortfolio(BaseStrategy):
 
     params = (
         ("leverage", 0.9),
-        ("signal_cls", None),
-        ("signal_kwargs", {}),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),
     )
 
     def __init__(self):
         super().__init__()
         # Instantiate the universe‑aware signal
-        self.sig = self.p.signal_cls(self.datas, **self.p.signal_kwargs)
+        self.sig = self.p.indicator_cls(self.datas, **self.p.indicator_kwargs)
         self._last_month = -1
 
     # ------------------------------------------------------------------
@@ -250,18 +254,18 @@ class MonthlyLongShortPortfolio(BaseStrategy):
 class MonthlyLongShortQuantilePortfolio(BaseStrategy):
     params = (
         ("leverage", 0.9),
-        ("signal_cls", None),
-        ("signal_kwargs", {}),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),
     )
 
     def __init__(self):
         super().__init__()
         # One signal per asset – all share the same universe
         self.sig = {
-            d._name: self.p.signal_cls(
+            d._name: self.p.indicator_cls(
                 d,
                 universe=self.datas,
-                **self.p.signal_kwargs,
+                **self.p.indicator_kwargs,
             )
             for d in self.datas
         }
@@ -336,7 +340,7 @@ class MonthlyRankedEqualWeightPortfolio(BaseStrategy):
     rank_attr : {'value', 'score'}
         'value' → use `signal[0]`
         'score' → use `signal.score[0]`  (as in MonthlyTopNEqualWeightPortfolio)
-    signal_cls , signal_kwargs : see BaseStrategy
+    indicator_cls , indicator_kwargs : see BaseStrategy
     """
 
     params = dict(
@@ -345,15 +349,16 @@ class MonthlyRankedEqualWeightPortfolio(BaseStrategy):
         reweight_existing=True,
         filter_nonpositive=False,
         rank_attr="value",  # 'value' or 'score'
-        signal_cls=None,
-        signal_kwargs={},
+        indicator_cls=None,
+        indicator_kwargs={},
     )
 
     # ------------------------------------------------------------------ #
     def __init__(self):
         super().__init__()
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
         self._last_month = -1
 
@@ -411,8 +416,8 @@ class MonthlyRankedEqualWeightPortfolio(BaseStrategy):
 class QuarterlyTopMomentumPortfolio(BaseStrategy):
     params = (
         ("leverage", 0.90),
-        ("signal_cls", None),  # will be Momentum90dSignal
-        ("signal_kwargs", {}),  # {"lookback": 90}
+        ("indicator_cls", None),  # will be Momentum90dSignal
+        ("indicator_kwargs", {}),  # {"lookback": 90}
     )
 
     def __init__(self):
@@ -420,7 +425,8 @@ class QuarterlyTopMomentumPortfolio(BaseStrategy):
 
         # Attach one signal per data feed
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
 
         self._last_rebalance_ym: tuple[int, int] | None = None
@@ -489,15 +495,16 @@ class RollingSemesterLongShortPortfolio(BaseStrategy):
 
     params = (
         ("leverage", 0.9),
-        ("signal_cls", None),  # <-- will be supplied when strategy is added
-        ("signal_kwargs", {}),  # <-- additional parameters for the signal
+        ("indicator_cls", None),  # <-- will be supplied when strategy is added
+        ("indicator_kwargs", {}),  # <-- additional parameters for the signal
     )
 
     def __init__(self):
         super().__init__()
-        assert self.p.signal_cls is not None, "signal_cls must be provided"
+        assert self.p.indicator_cls is not None, "indicator_cls must be provided"
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
         self.hist = {d._name: [0] * 6 for d in self.datas}
         self.add_timer(when=bt.Timer.SESSION_START, monthdays=[1], monthcarry=True)
@@ -540,8 +547,8 @@ class WeeklyLongShortDecilePortfolio(BaseStrategy):
 
     params = (
         ("leverage", 0.9),
-        ("signal_cls", None),  # e.g. ROC5Signal
-        ("signal_kwargs", {}),  # extra args for the signal
+        ("indicator_cls", None),  # e.g. ROC5Signal
+        ("indicator_kwargs", {}),  # extra args for the signal
         ("rebalance_weekday", 0),  # 0 = Monday
         ("decile_fraction", 0.10),  # 10 % ⇒ classic “decile” rule
     )
@@ -551,7 +558,8 @@ class WeeklyLongShortDecilePortfolio(BaseStrategy):
 
         # Attach one signal instance per data feed
         self.sig = {
-            d._name: self.p.signal_cls(d, **self.p.signal_kwargs) for d in self.datas
+            d._name: self.p.indicator_cls(d, **self.p.indicator_kwargs)
+            for d in self.datas
         }
 
         # Ensure Close‑on‑Close execution so fills match the original back‑test
@@ -623,14 +631,14 @@ class WeightedAllocationPortfolio(BaseStrategy):
 
     params = (
         ("leverage", 0.9),
-        ("signal_cls", None),
-        ("signal_kwargs", {}),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),
     )
 
     def __init__(self):
         super().__init__()
         # Single signal instance that sees *all* data feeds.
-        self.sig = self.p.signal_cls(*self.datas, **self.p.signal_kwargs)
+        self.sig = self.p.indicator_cls(*self.datas, **self.p.indicator_kwargs)
         self.last_month = -1
 
     def next(self):
