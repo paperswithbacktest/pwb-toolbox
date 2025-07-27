@@ -1,7 +1,8 @@
 from .base_strategy import BaseStrategy
+from .commission import get_commissions
 from .engine import run_strategy
 from .ib_connector import IBConnector, run_ib_strategy
-from .portfolio import (
+from .strategies import (
     DailyEqualWeightPortfolio,
     DailyLeveragePortfolio,
     EqualWeightEntryExitPortfolio,

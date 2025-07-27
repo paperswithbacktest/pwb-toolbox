@@ -31,13 +31,12 @@ def _apply_broker_kwargs(broker: bt.BrokerBase, kwargs: dict) -> None:
 
 
 def run_strategy(
-    signal,
-    signal_kwargs,
-    portfolio,
-    portfolio_kwargs,
+    indicator_cls,
+    indicator_kwargs,
+    strategy_cls,
+    strategy_kwargs,
     symbols,
     start_date,
-    leverage,
     cash,
     cerebro_kwargs=None,
     broker_kwargs=None,
@@ -66,12 +65,11 @@ def run_strategy(
         cerebro.adddata(data, name=symbol)
     # Strategy
     cerebro.addstrategy(
-        portfolio,
+        strategy_cls,
         total_days=len(trading_days),
-        leverage=0.9,
-        signal_cls=signal,
-        signal_kwargs=signal_kwargs,
-        **portfolio_kwargs,
+        indicator_cls=indicator_cls,
+        indicator_kwargs=indicator_kwargs,
+        **strategy_kwargs,
     )
     # Broker
     cerebro.broker.set_cash(cash)
