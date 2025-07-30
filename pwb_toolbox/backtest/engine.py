@@ -83,3 +83,38 @@ def run_strategy(
     # Run the strategy
     strategy = cerebro.run()[0]
     return strategy
+
+
+def optimize_strategy(
+    indicator_cls,
+    indicator_kwargs,
+    strategy_cls,
+    strategy_kwargs,
+    symbols,
+    start_date,
+    cash,
+    cerebro_kwargs=None,
+    broker_kwargs=None,
+):
+    sharpe_ratios = []
+    for _indicator_kwargs in indicator_kwargs:
+        # Run the strategy with the current indicator_kwargs
+        strategy = run_strategy(
+            indicator_cls=indicator_cls,
+            indicator_kwargs=_indicator_kwargs,
+            strategy_cls=strategy_cls,
+            strategy_kwargs=strategy_kwargs,
+            symbols=symbols,
+            start_date=start_date,
+            cash=cash,
+            cerebro_kwargs=cerebro_kwargs,
+            broker_kwargs=broker_kwargs,
+        )
+        # Print the results
+        nav = [item["value"] for item in strategy.log_data]
+        returns = np.diff(nav) / nav[:-1]
+        shape_ratio = np.mean(returns) / np.std(returns) * np.sqrt(252)
+        sharpe_ratios.append(shape_ratio)
+        print(f"Strategy with params {_indicator_kwargs} completed.")
+        print(f"Sharpe Ratio: {shape_ratio:.3f}")
+    return indicator_kwargs[np.argmax(sharpe_ratios)], max(sharpe_ratios)

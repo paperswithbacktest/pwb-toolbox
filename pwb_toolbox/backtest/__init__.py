@@ -1,7 +1,7 @@
 from .base_strategy import BaseStrategy
 from .commission import get_commissions
-from .engine import run_strategy
-from .ib_connector import IBConnector, run_ib_strategy
+from .engine import run_strategy, optimize_strategy
+from .indicators import SigmoidLongCompositeIndicator
 from .strategies import (
     DailyEqualWeightPortfolio,
     DailyLeveragePortfolio,
