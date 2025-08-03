@@ -1,10 +1,7 @@
 import matplotlib.pyplot as plt
+import pandas as pd
 from statistics import NormalDist
 
-try:
-    import pandas as pd  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    pd = None  # type: ignore
 
 from .metrics import (
     _to_list,
@@ -26,30 +23,35 @@ def plot_equity_curve(prices, logy: bool = True, ax=None):
         fig, ax = plt.subplots()
     p = _to_list(prices)
     cum = [v / p[0] for v in p]
-    ax.plot(getattr(prices, 'index', range(len(p))), cum)
+    ax.plot(getattr(prices, "index", range(len(p))), cum)
     if logy:
-        ax.set_yscale('log')
-    ax.set_xlabel('Date')
-    ax.set_ylabel('Cumulative Return')
+        ax.set_yscale("log")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Cumulative Return")
     return ax
 
 
 def plot_return_heatmap(prices, ax=None):
     """Plot calendar heatmap of returns from price series."""
-    if pd is None:
-        raise ImportError("pandas is required for plot_return_heatmap")
     tbl = returns_table(prices)
+    months = [c for c in tbl.columns if c != "Year"]
+    data = tbl[months].to_numpy()
+    xtick_labels = months
+    ytick_labels = tbl.index
     if ax is None:
         fig, ax = plt.subplots()
-    data = [tbl[m].values for m in tbl.columns if m != 'Year']
-    im = ax.imshow(data, aspect='auto', interpolation='none',
-                   cmap='RdYlGn',
-                   vmin=min((min(filter(None, row)) for row in data if any(row))),
-                   vmax=max((max(filter(None, row)) for row in data if any(row))))
+    im = ax.imshow(
+        data,
+        aspect="auto",
+        interpolation="none",
+        cmap="RdYlGn",
+        vmin=min((min(filter(None, row)) for row in data if any(row))),
+        vmax=max((max(filter(None, row)) for row in data if any(row))),
+    )
     ax.set_yticks(range(len(tbl.index)))
     ax.set_yticklabels(tbl.index)
-    ax.set_xticks(range(len(tbl.columns)-1))
-    ax.set_xticklabels([c for c in tbl.columns if c != 'Year'])
+    ax.set_xticks(range(len(tbl.columns) - 1))
+    ax.set_xticklabels([c for c in tbl.columns if c != "Year"])
     plt.colorbar(im, ax=ax)
     return ax
 
@@ -65,31 +67,33 @@ def plot_underwater(prices, ax=None):
         if price > peak:
             peak = price
         dd.append(price / peak - 1)
-    ax.plot(getattr(prices, 'index', range(len(p))), dd)
-    ax.set_ylabel('Drawdown')
-    ax.set_xlabel('Date')
+    ax.plot(getattr(prices, "index", range(len(p))), dd)
+    ax.set_ylabel("Drawdown")
+    ax.set_xlabel("Date")
     return ax
 
 
-def plot_rolling_volatility(prices, window: int = 63, periods_per_year: int = 252, ax=None):
+def plot_rolling_volatility(
+    prices, window: int = 63, periods_per_year: int = 252, ax=None
+):
     """Plot rolling annualized volatility."""
     if pd is None:
         raise ImportError("pandas is required for plot_rolling_volatility")
     p = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(p))))
+    index = list(getattr(prices, "index", range(len(p))))
     vols = []
     for i in range(len(p)):
         if i < window:
             vols.append(None)
         else:
-            vols.append(annualized_volatility(p[i - window:i + 1], periods_per_year))
+            vols.append(annualized_volatility(p[i - window : i + 1], periods_per_year))
     s = pd.Series(vols)
     s.index = index
     if ax is None:
         fig, ax = plt.subplots()
     ax.plot(s.index, s)
-    ax.set_ylabel('Volatility')
-    ax.set_xlabel('Date')
+    ax.set_ylabel("Volatility")
+    ax.set_xlabel("Date")
     return ax
 
 
@@ -98,20 +102,20 @@ def plot_rolling_var(prices, window: int = 63, level: float = 0.05, ax=None):
     if pd is None:
         raise ImportError("pandas is required for plot_rolling_var")
     p = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(p))))
+    index = list(getattr(prices, "index", range(len(p))))
     vars_ = []
     for i in range(len(p)):
         if i < window:
             vars_.append(None)
         else:
-            vars_.append(parametric_var(p[i - window:i + 1], level))
+            vars_.append(parametric_var(p[i - window : i + 1], level))
     s = pd.Series(vars_)
     s.index = index
     if ax is None:
         fig, ax = plt.subplots()
     ax.plot(s.index, s)
-    ax.set_ylabel('VaR')
-    ax.set_xlabel('Date')
+    ax.set_ylabel("VaR")
+    ax.set_xlabel("Date")
     return ax
 
 
@@ -126,7 +130,7 @@ def plot_rolling_sharpe(
     if pd is None:
         raise ImportError("pandas is required for plot_rolling_sharpe")
     p = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(p))))
+    index = list(getattr(prices, "index", range(len(p))))
     vals = []
     for i in range(len(p)):
         if i < window:
@@ -140,8 +144,8 @@ def plot_rolling_sharpe(
     if ax is None:
         fig, ax = plt.subplots()
     ax.plot(s.index, s)
-    ax.set_ylabel('Sharpe')
-    ax.set_xlabel('Date')
+    ax.set_ylabel("Sharpe")
+    ax.set_xlabel("Date")
     return ax
 
 
@@ -156,7 +160,7 @@ def plot_rolling_sortino(
     if pd is None:
         raise ImportError("pandas is required for plot_rolling_sortino")
     p = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(p))))
+    index = list(getattr(prices, "index", range(len(p))))
     vals = []
     for i in range(len(p)):
         if i < window:
@@ -170,8 +174,8 @@ def plot_rolling_sortino(
     if ax is None:
         fig, ax = plt.subplots()
     ax.plot(s.index, s)
-    ax.set_ylabel('Sortino')
-    ax.set_xlabel('Date')
+    ax.set_ylabel("Sortino")
+    ax.set_xlabel("Date")
     return ax
 
 
@@ -197,9 +201,9 @@ def plot_return_scatter(prices, benchmark_prices, ax=None):
     ax.scatter(bench, strat, s=10)
     xs = [min(bench), max(bench)]
     ys = [alpha + beta * x for x in xs]
-    ax.plot(xs, ys, color='red', label=f"alpha={alpha:.2f}, beta={beta:.2f}")
-    ax.set_xlabel('Benchmark Return')
-    ax.set_ylabel('Strategy Return')
+    ax.plot(xs, ys, color="red", label=f"alpha={alpha:.2f}, beta={beta:.2f}")
+    ax.set_xlabel("Benchmark Return")
+    ax.set_ylabel("Strategy Return")
     ax.legend()
     return ax
 
@@ -260,7 +264,11 @@ def plot_return_by_holding_period(trades, ax=None):
         exit_ = t.get("exit")
         if entry is None or exit_ is None:
             continue
-        dur = (exit_ - entry).days if hasattr(exit_ - entry, "days") else int(exit_ - entry)
+        dur = (
+            (exit_ - entry).days
+            if hasattr(exit_ - entry, "days")
+            else int(exit_ - entry)
+        )
         groups.setdefault(dur, []).append(t.get("return", 0))
     if not groups:
         return ax
@@ -339,7 +347,9 @@ def plot_alpha_vs_return(trades, ax=None):
     if pd is None:
         raise ImportError("pandas is required for plot_alpha_vs_return")
 
-    alphas = [t.get("forecast_alpha") for t in trades if t.get("forecast_alpha") is not None]
+    alphas = [
+        t.get("forecast_alpha") for t in trades if t.get("forecast_alpha") is not None
+    ]
     rets = [t.get("return") for t in trades if t.get("forecast_alpha") is not None]
 
     if ax is None:
@@ -361,7 +371,7 @@ def plot_qq_returns(prices, ax=None):
     n = len(rets)
     mean = sum(rets) / n
     var = sum((r - mean) ** 2 for r in rets) / n
-    std = var ** 0.5
+    std = var**0.5
     dist = NormalDist(mean, std)
     qs = [(i + 0.5) / n for i in range(n)]
     theo = [dist.inv_cdf(q) for q in qs]
@@ -376,7 +386,7 @@ def plot_rolling_skewness(prices, window: int = 63, ax=None):
     if pd is None:
         raise ImportError("pandas is required for plot_rolling_skewness")
     p = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(p))))
+    index = list(getattr(prices, "index", range(len(p))))
     vals = []
     for i in range(len(p)):
         if i < window:
@@ -398,7 +408,7 @@ def plot_rolling_kurtosis(prices, window: int = 63, ax=None):
     if pd is None:
         raise ImportError("pandas is required for plot_rolling_kurtosis")
     p = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(p))))
+    index = list(getattr(prices, "index", range(len(p))))
     vals = []
     for i in range(len(p)):
         if i < window:

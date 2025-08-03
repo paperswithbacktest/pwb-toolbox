@@ -2,6 +2,7 @@ backtrader
 beautifulsoup4
 click
 datasets
+deap
 ffn
 huggingface_hub
 kili

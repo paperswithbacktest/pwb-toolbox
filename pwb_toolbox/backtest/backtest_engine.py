@@ -1,4 +1,6 @@
+import copy
 import backtrader as bt
+import itertools
 import pandas as pd
 import numpy as np
 import pwb_toolbox.backtest as pwb_bt
@@ -85,36 +87,52 @@ def run_strategy(
     return strategy
 
 
-def optimize_strategy(
-    indicator_cls,
-    indicator_kwargs,
-    strategy_cls,
-    strategy_kwargs,
-    symbols,
-    start_date,
-    cash,
-    cerebro_kwargs=None,
-    broker_kwargs=None,
+def _perturb_parameter(base_kwargs: dict, param_path: tuple[str, ...], new_value):
+    kw = copy.deepcopy(base_kwargs)
+    target = kw
+    for key in param_path[:-1]:
+        target = target[key]
+    last_key = param_path[-1]
+    target[last_key] = new_value
+    return kw
+
+
+def generate_sensitivity_results(
+    base_kwargs: dict,
+    run_strategy_once: callable,
+    compute_perf_metric: callable,
+    scale_factors=None,
 ):
-    sharpe_ratios = []
-    for _indicator_kwargs in indicator_kwargs:
-        # Run the strategy with the current indicator_kwargs
-        strategy = run_strategy(
-            indicator_cls=indicator_cls,
-            indicator_kwargs=_indicator_kwargs,
-            strategy_cls=strategy_cls,
-            strategy_kwargs=strategy_kwargs,
-            symbols=symbols,
-            start_date=start_date,
-            cash=cash,
-            cerebro_kwargs=cerebro_kwargs,
-            broker_kwargs=broker_kwargs,
-        )
-        # Print the results
-        nav = [item["value"] for item in strategy.log_data]
-        returns = np.diff(nav) / nav[:-1]
-        shape_ratio = np.mean(returns) / np.std(returns) * np.sqrt(252)
-        sharpe_ratios.append(shape_ratio)
-        print(f"Strategy with params {_indicator_kwargs} completed.")
-        print(f"Sharpe Ratio: {shape_ratio:.3f}")
-    return indicator_kwargs[np.argmax(sharpe_ratios)], max(sharpe_ratios)
+    if scale_factors is None:
+        scale_factors = [0.5, 0.8, 1.0, 1.2, 1.5]
+
+    results = {}
+    for key, value in base_kwargs.items():
+        if isinstance(value, (int, float)):
+            label = key
+            base_val = float(value)
+            vals, metrics = [], []
+            for sf in scale_factors:
+                new_val = base_val * sf
+                nav = run_strategy_once(
+                    _perturb_parameter(base_kwargs, (key,), new_val)
+                )
+                vals.append(new_val)
+                metrics.append(compute_perf_metric(nav))
+            results[label] = (vals, metrics)
+        elif isinstance(value, list):
+            for idx, elem in enumerate(value):
+                if not isinstance(elem, (int, float)):
+                    continue
+                label = f"{key}[{idx}]"
+                base_val = float(elem)
+                vals, metrics = [], []
+                for sf in scale_factors:
+                    new_val = base_val * sf
+                    nav = run_strategy_once(
+                        _perturb_parameter(base_kwargs, (key, idx), new_val)
+                    )
+                    vals.append(new_val)
+                    metrics.append(compute_perf_metric(nav))
+                results[label] = (vals, metrics)
+    return results

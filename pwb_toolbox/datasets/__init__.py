@@ -809,6 +809,7 @@ def __extend_etfs(df_etfs):
         "IEF": ["Bonds-Daily-Price", "US10Y"],
         "IEV": ["Indices-Daily-Price", "SX5E"],
         "IWB": ["Indices-Daily-Price", "SPX"],
+        "QQQ": ["Indices-Daily-Price", "NDX"],
         "SHY": ["Bonds-Daily-Price", "US1Y"],
         "SPY": ["Indices-Daily-Price", "SPX"],
         "THD": ["Indices-Daily-Price", "SET50"],  # Thailand
@@ -889,7 +890,7 @@ def get_pricing(
     start_date="1980-01-01",
     end_date=date.today().isoformat(),
     extend=False,
-    keep_single_level=True,  # backward-compat flag
+    keep_single_level=False,  # backward-compat flag
 ):
     """
     Fetch OHLC pricing for the requested symbols.
@@ -971,10 +972,10 @@ def get_pricing(
     prices = prices.swaplevel(axis=1).sort_index(axis=1)
 
     # Optional: flatten back to the legacy layout if only one field requested
-    if keep_single_level and len(fields) == 1:
-        field = fields[0]
-        prices.columns = prices.columns.droplevel(1)  # keep only the symbol names
-        # optional: rename index level for clarity
-        prices.name = field
+    if keep_single_level:
+        if isinstance(prices.columns, pd.MultiIndex):
+            prices.columns = [
+                col if not isinstance(col, tuple) else col[-1] for col in prices.columns
+            ]
 
     return prices

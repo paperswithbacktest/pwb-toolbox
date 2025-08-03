@@ -3,10 +3,7 @@ from typing import Sequence, Tuple
 from math import sqrt
 from statistics import NormalDist
 
-try:
-    import pandas as pd  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
-    pd = None  # type: ignore
+import pandas as pd
 
 
 def _to_list(data: Sequence[float]) -> list:
@@ -35,13 +32,13 @@ def cagr(prices: Sequence[float], periods_per_year: int = 252) -> float:
     return (p[-1] / p[0]) ** (1 / years) - 1
 
 
-def returns_table(prices: 'pd.Series') -> 'pd.DataFrame':  # type: ignore
+def returns_table(prices: "pd.Series") -> "pd.DataFrame":  # type: ignore
     """Return monthly and yearly percentage returns from a daily price series."""
     if pd is None:
         raise ImportError("pandas is required for returns_table")
 
     price_list = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(price_list))))
+    index = list(getattr(prices, "index", range(len(price_list))))
 
     years = sorted({dt.year for dt in index})
     months = list(range(1, 13))
@@ -72,13 +69,13 @@ def returns_table(prices: 'pd.Series') -> 'pd.DataFrame':  # type: ignore
     return pd.DataFrame(data, index=years)
 
 
-def rolling_cumulative_return(prices: 'pd.Series', window: int) -> 'pd.Series':  # type: ignore
+def rolling_cumulative_return(prices: "pd.Series", window: int) -> "pd.Series":  # type: ignore
     """Rolling cumulative return over a specified window."""
     if pd is None:
         raise ImportError("pandas is required for rolling_cumulative_return")
 
     p = _to_list(prices)
-    index = list(getattr(prices, 'index', range(len(p))))
+    index = list(getattr(prices, "index", range(len(p))))
     out = []
     for i in range(len(p)):
         if i < window:
@@ -90,7 +87,9 @@ def rolling_cumulative_return(prices: 'pd.Series', window: int) -> 'pd.Series': 
     return s
 
 
-def annualized_volatility(prices: Sequence[float], periods_per_year: int = 252) -> float:
+def annualized_volatility(
+    prices: Sequence[float], periods_per_year: int = 252
+) -> float:
     """Annualized volatility from a price series."""
     p = _to_list(prices)
     if len(p) < 2:
@@ -135,11 +134,13 @@ def ulcer_index(prices: Sequence[float]) -> float:
         if price > peak:
             peak = price
         dd = max(0.0, (peak - price) / peak)
-        sum_sq += dd ** 2
+        sum_sq += dd**2
     return sqrt(sum_sq / len(p))
 
 
-def ulcer_performance_index(prices: Sequence[float], risk_free_rate: float = 0.0, periods_per_year: int = 252) -> float:
+def ulcer_performance_index(
+    prices: Sequence[float], risk_free_rate: float = 0.0, periods_per_year: int = 252
+) -> float:
     """Ulcer Performance Index."""
     ui = ulcer_index(prices)
     if ui == 0:
@@ -164,7 +165,9 @@ def parametric_var(prices: Sequence[float], level: float = 0.05) -> float:
     return -(mu + sigma * z)
 
 
-def parametric_expected_shortfall(prices: Sequence[float], level: float = 0.05) -> float:
+def parametric_expected_shortfall(
+    prices: Sequence[float], level: float = 0.05
+) -> float:
     """Parametric (normal) Expected Shortfall."""
     mu, sigma = _parametric_stats(prices)
     z = NormalDist().inv_cdf(level)
@@ -195,7 +198,7 @@ def sharpe_ratio(
     if len(p) < 2:
         return 0.0
     rf_per = risk_free_rate / periods_per_year
-    rets = [p[i] / p[i - 1] - 1 - rf_per for i in range(1, len(p))]
+    rets = [p[i] / p[i - 1] - 1 - rf_per for i in range(1, len(p)) if p[i - 1] > 0]
     mean = sum(rets) / len(rets)
     var = sum((r - mean) ** 2 for r in rets) / len(rets)
     if var == 0:
@@ -216,7 +219,7 @@ def sortino_ratio(
     rets = [p[i] / p[i - 1] - 1 for i in range(1, len(p))]
     mean_excess = sum(r - rf_per for r in rets) / len(rets)
     downside = [min(0.0, r - rf_per) for r in rets]
-    var = sum(d ** 2 for d in downside) / len(rets)
+    var = sum(d**2 for d in downside) / len(rets)
     if var == 0:
         return 0.0
     return mean_excess / sqrt(var) * sqrt(periods_per_year)
@@ -269,7 +272,9 @@ def information_ratio(
     return mean / sqrt(var) * sqrt(periods_per_year)
 
 
-def capm_alpha_beta(prices: Sequence[float], benchmark: Sequence[float]) -> Tuple[float, float]:
+def capm_alpha_beta(
+    prices: Sequence[float], benchmark: Sequence[float]
+) -> Tuple[float, float]:
     """CAPM alpha and beta relative to a benchmark."""
     p = _to_list(prices)
     b = _to_list(benchmark)
@@ -287,9 +292,14 @@ def capm_alpha_beta(prices: Sequence[float], benchmark: Sequence[float]) -> Tupl
     return alpha, beta
 
 
-def _invert_matrix(matrix: Sequence[Sequence[float]]) -> Sequence[Sequence[float]] | None:
+def _invert_matrix(
+    matrix: Sequence[Sequence[float]],
+) -> Sequence[Sequence[float]] | None:
     size = len(matrix)
-    aug = [list(row) + [1 if i == j else 0 for j in range(size)] for i, row in enumerate(matrix)]
+    aug = [
+        list(row) + [1 if i == j else 0 for j in range(size)]
+        for i, row in enumerate(matrix)
+    ]
     for i in range(size):
         pivot = aug[i][i]
         if abs(pivot) < 1e-12:
@@ -326,7 +336,7 @@ def _ols(y: Sequence[float], X: Sequence[Sequence[float]]) -> Sequence[float]:
     return beta
 
 
-def fama_french_regression(prices: Sequence[float], factors: 'pd.DataFrame', factor_cols: Sequence[str]) -> 'pd.Series':  # type: ignore
+def fama_french_regression(prices: Sequence[float], factors: "pd.DataFrame", factor_cols: Sequence[str]) -> "pd.Series":  # type: ignore
     """Run regression of excess returns on Fama-French factors."""
     if pd is None:
         raise ImportError("pandas is required for fama_french_regression")
@@ -349,17 +359,21 @@ def fama_french_regression(prices: Sequence[float], factors: 'pd.DataFrame', fac
     return s
 
 
-def fama_french_3factor(prices: Sequence[float], factors: 'pd.DataFrame') -> 'pd.Series':  # type: ignore
+def fama_french_3factor(prices: Sequence[float], factors: "pd.DataFrame") -> "pd.Series":  # type: ignore
     cols = [c for c in ["Mkt-RF", "SMB", "HML"] if c in getattr(factors, "columns", [])]
     return fama_french_regression(prices, factors, cols)
 
 
-def fama_french_5factor(prices: Sequence[float], factors: 'pd.DataFrame') -> 'pd.Series':  # type: ignore
-    cols = [c for c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA"] if c in getattr(factors, "columns", [])]
+def fama_french_5factor(prices: Sequence[float], factors: "pd.DataFrame") -> "pd.Series":  # type: ignore
+    cols = [
+        c
+        for c in ["Mkt-RF", "SMB", "HML", "RMW", "CMA"]
+        if c in getattr(factors, "columns", [])
+    ]
     return fama_french_regression(prices, factors, cols)
 
 
-def cumulative_excess_return(prices: Sequence[float], benchmark: Sequence[float]) -> 'pd.Series':  # type: ignore
+def cumulative_excess_return(prices: Sequence[float], benchmark: Sequence[float]) -> "pd.Series":  # type: ignore
     """Cumulative excess return of strategy versus a benchmark."""
     if pd is None:
         raise ImportError("pandas is required for cumulative_excess_return")
@@ -367,7 +381,7 @@ def cumulative_excess_return(prices: Sequence[float], benchmark: Sequence[float]
     p = _to_list(prices)
     b = _to_list(benchmark)
     n = min(len(p), len(b))
-    index = list(getattr(prices, 'index', range(len(p))))[:n]
+    index = list(getattr(prices, "index", range(len(p))))[:n]
     cum = []
     total = 1.0
     for i in range(n):
@@ -395,7 +409,7 @@ def skewness(prices: Sequence[float]) -> float:
         return 0.0
     std = sqrt(var)
     m3 = sum((r - mean) ** 3 for r in rets) / len(rets)
-    return m3 / (std ** 3)
+    return m3 / (std**3)
 
 
 def kurtosis(prices: Sequence[float]) -> float:
@@ -409,7 +423,7 @@ def kurtosis(prices: Sequence[float]) -> float:
     if var == 0:
         return 0.0
     m4 = sum((r - mean) ** 4 for r in rets) / len(rets)
-    return m4 / (var ** 2)
+    return m4 / (var**2)
 
 
 def variance_ratio(prices: Sequence[float], lag: int = 2) -> float:
@@ -442,7 +456,9 @@ def acf(prices: Sequence[float], lags: Sequence[int]) -> list[float]:
         if lag <= 0 or lag >= len(rets):
             out.append(0.0)
         else:
-            cov = sum((rets[i] - mean) * (rets[i - lag] - mean) for i in range(lag, len(rets))) / (len(rets) - lag)
+            cov = sum(
+                (rets[i] - mean) * (rets[i - lag] - mean) for i in range(lag, len(rets))
+            ) / (len(rets) - lag)
             out.append(cov / var)
     return out
 

@@ -1,6 +1,7 @@
 from .base_strategy import BaseStrategy
 from .commission import get_commissions
-from .engine import run_strategy, optimize_strategy
+from .backtest_engine import run_strategy, generate_sensitivity_results
+from .optimization_engine import optimize_strategy_ga
 from .indicators import SigmoidLongCompositeIndicator
 from .strategies import (
     DailyEqualWeightPortfolio,
