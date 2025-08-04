@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import math
 import time
 from typing import Dict, List, Optional
 
@@ -301,8 +302,14 @@ class IBConnector:
                         quantity=remaining_qty,
                         time_in_seconds=remaining_time,
                     )
-                    price = mid_price - quote if action == "BUY" else mid_price + quote
-                    order = LimitOrder(action, remaining_qty, price)
+                    price = (
+                        mid_price - quote if action == "BUY" else mid_price + quote
+                    )
+                    if not (math.isfinite(quote) and math.isfinite(price)):
+                        order = MarketOrder(action, remaining_qty)
+                        price = None
+                    else:
+                        order = LimitOrder(action, remaining_qty, price)
 
                 trade = self.ib.placeOrder(contract, order)
                 placed_orders[symbol] = (trade, price, order)

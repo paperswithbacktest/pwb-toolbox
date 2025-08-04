@@ -85,7 +85,10 @@ def get_optimal_quote(symbol, quantity, time_in_seconds, is_plot=False):
         b=parameters["b"],
         is_plot=is_plot,
     )
-    return quote * parameters["tick_size"]
+    quote = quote * parameters["tick_size"]
+    if not math.isfinite(quote):
+        return 0.0
+    return quote
 
 
 if __name__ == "__main__":
