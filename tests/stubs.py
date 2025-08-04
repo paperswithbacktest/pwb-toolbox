@@ -498,8 +498,29 @@ def stub_environment():
     bt.feeds = Feeds
     bt.stores = Stores
     bt.Order = Order
+    bt.BrokerBase = object
     bt.num2date = lambda num: pd.Timestamp("2020-01-01")
     sys.modules["backtrader"] = bt
+
+    # numpy / matplotlib stubs
+    class _DummyWarning(Warning):
+        pass
+
+    np_mod = types.ModuleType("numpy")
+    np_mod.exceptions = types.SimpleNamespace(VisibleDeprecationWarning=_DummyWarning)
+    np_mod.VisibleDeprecationWarning = _DummyWarning
+    np_mod.__version__ = "0"
+    sys.modules.setdefault("numpy", np_mod)
+
+    mpl = types.ModuleType("matplotlib")
+    mpl.pyplot = types.SimpleNamespace()
+    sys.modules.setdefault("matplotlib", mpl)
+    sys.modules.setdefault("matplotlib.pyplot", mpl.pyplot)
+
+    sci = types.ModuleType("scipy")
+    sci.stats = types.ModuleType("scipy.stats")
+    sys.modules.setdefault("scipy", sci)
+    sys.modules.setdefault("scipy.stats", sci.stats)
 
     # atreyu / ib_insync stubs
     class FakeIB:
@@ -547,6 +568,7 @@ def stub_environment():
 
     ds.get_pricing = get_pricing
     ds.load_dataset = load_dataset
+    ds._get_hf_token = lambda: "token"
     sys.modules["pwb_toolbox.datasets"] = ds
     if "pwb_toolbox" in sys.modules:
         setattr(sys.modules["pwb_toolbox"], "datasets", ds)
