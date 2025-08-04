@@ -138,6 +138,30 @@ class IBConnector:
     # ------------------------------------------------------------------
     # Order placement
     # ------------------------------------------------------------------
+    def _ensure_connection(self) -> None:
+        """Ensure that the IB client is connected.
+
+        Attempts to reconnect using the stored parameters when disconnected.
+        Raises ``ConnectionError`` if reconnection fails.
+        """
+
+        if not self.ib.isConnected():
+            try:
+                self.connect()
+            except Exception as exc:  # pragma: no cover - network failure
+                raise ConnectionError("Unable to reconnect to IB") from exc
+
+    def _place_order_with_reconnect(self, contract, order):
+        """Place an order, reconnecting once on ``ConnectionError``."""
+
+        self._ensure_connection()
+        try:
+            return self.ib.placeOrder(contract, order)
+        except ConnectionError as exc:
+            logging.warning("Connection error while placing order: %s", exc)
+            self._ensure_connection()
+            return self.ib.placeOrder(contract, order)
+
     def place_orders(
         self, orders: Dict[str, float], order_type: str = "LMT"
     ) -> List[TradeRecord]:
@@ -185,7 +209,7 @@ class IBConnector:
                     logging.error("Error fetching market data for %s: %s", symbol, exc)
                     order = MarketOrder(action, quantity)
 
-            trade = self.ib.placeOrder(contract, order)
+            trade = self._place_order_with_reconnect(contract, order)
             self.ib.sleep(1)
             ib_timestamp = trade.log[-1].time.isoformat() if trade.log else None
 
@@ -311,7 +335,7 @@ class IBConnector:
                     else:
                         order = LimitOrder(action, remaining_qty, price)
 
-                trade = self.ib.placeOrder(contract, order)
+                trade = self._place_order_with_reconnect(contract, order)
                 placed_orders[symbol] = (trade, price, order)
 
             # Allow orders to work for the specified time step
@@ -361,7 +385,7 @@ class IBConnector:
             contract = info["contract"]
             action = str(info["action"])
             order = MarketOrder(action, remaining_qty)
-            trade = self.ib.placeOrder(contract, order)
+            trade = self._place_order_with_reconnect(contract, order)
             self.ib.sleep(1)
             ib_timestamp = trade.log[-1].time.isoformat() if trade.log else None
             trade_records.append(
