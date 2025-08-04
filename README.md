@@ -101,16 +101,16 @@ df = pwb_ds.load_dataset(
 
 ## Backtest engine
 
-The `pwb_toolbox.backtest` module offers simple building blocks for running
+The `pwb_toolbox.backtesting` module offers simple building blocks for running
 Backtrader simulations. Alpha models generate `Insight` objects which are turned
 into portfolio weights and executed via Backtrader orders.
 
 ```python
-from pwb_toolbox.backtest.examples import GoldenCrossAlpha, EqualWeightPortfolio
-from pwb_toolbox.backtest import run_backtest
-from pwb_toolbox.backtest.execution_models import ImmediateExecutionModel
-from pwb_toolbox.backtest.risk_models import MaximumTotalPortfolioExposure
-from pwb_toolbox.backtest.universe_models import ManualUniverseSelectionModel
+from pwb_toolbox.backtesting.examples import GoldenCrossAlpha, EqualWeightPortfolio
+from pwb_toolbox.backtesting import run_backtest
+from pwb_toolbox.backtesting.execution_models import ImmediateExecutionModel
+from pwb_toolbox.backtesting.risk_models import MaximumTotalPortfolioExposure
+from pwb_toolbox.backtesting.universe_models import ManualUniverseSelectionModel
 
 run_backtest(
     ManualUniverseSelectionModel(["SPY", "QQQ"]),
@@ -128,9 +128,9 @@ After running a backtest you can analyze the returned equity series using the
 `pwb_toolbox.performance` module.
 
 ```python
-from pwb_toolbox.backtest.examples import GoldenCrossAlpha, EqualWeightPortfolio
-from pwb_toolbox.backtest import run_backtest
-from pwb_toolbox.backtest.execution_models import ImmediateExecutionModel
+from pwb_toolbox.backtesting.examples import GoldenCrossAlpha, EqualWeightPortfolio
+from pwb_toolbox.backtesting import run_backtest
+from pwb_toolbox.backtesting.execution_models import ImmediateExecutionModel
 from pwb_toolbox.performance import total_return, cagr
 from pwb_toolbox.performance.plots import plot_equity_curve
 
@@ -155,8 +155,8 @@ Plotting utilities require `matplotlib`; some metrics also need `pandas`.
 `run_ib_strategy` streams Interactive Brokers data and orders. Install `ibapi` and either `atreyu-backtrader-api` or `ib_insync`.
 
 ```python
-from pwb_toolbox.backtest import IBConnector, run_ib_strategy
-from pwb_toolbox.backtest.example.engine import SimpleIBStrategy
+from pwb_toolbox.backtesting import IBConnector, run_ib_strategy
+from pwb_toolbox.backtesting.example.engine import SimpleIBStrategy
 
 data_cfg = [{"dataname": "AAPL", "name": "AAPL"}]
 run_ib_strategy(

@@ -3,7 +3,7 @@ import backtrader as bt
 import itertools
 import pandas as pd
 import numpy as np
-import pwb_toolbox.backtest as pwb_bt
+import pwb_toolbox.backtesting as pwb_bt
 import pwb_toolbox.datasets as pwb_ds
 
 
