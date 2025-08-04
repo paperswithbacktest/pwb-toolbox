@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 from statistics import NormalDist
 
 
@@ -35,7 +36,7 @@ def plot_return_heatmap(prices, ax=None):
     """Plot calendar heatmap of returns from price series."""
     tbl = returns_table(prices)
     months = [c for c in tbl.columns if c != "Year"]
-    data = tbl[months].to_numpy()
+    data = tbl[months].astype(float).to_numpy()
     xtick_labels = months
     ytick_labels = tbl.index
     if ax is None:
@@ -45,8 +46,8 @@ def plot_return_heatmap(prices, ax=None):
         aspect="auto",
         interpolation="none",
         cmap="RdYlGn",
-        vmin=min((min(filter(None, row)) for row in data if any(row))),
-        vmax=max((max(filter(None, row)) for row in data if any(row))),
+        vmin=float(np.nanmin(data)),
+        vmax=float(np.nanmax(data)),
     )
     ax.set_yticks(range(len(tbl.index)))
     ax.set_yticklabels(tbl.index)

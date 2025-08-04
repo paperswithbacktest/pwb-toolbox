@@ -98,7 +98,10 @@ def slippage_stats(trades: Sequence[Mapping[str, Any]]) -> Dict[str, float]:
     exit_slip: List[float] = []
 
     for t in trades:
-        direction = 1 if t.get("direction") == "long" else -1
+        # Default to a long direction when the field is missing.  Real trading logs
+        # are expected to include a ``direction`` column with values like
+        # ``"long"`` or ``"short"`` (case insensitive).
+        direction = 1 if str(t.get("direction", "long")).lower() == "long" else -1
 
         if "entry_price" in t and "model_entry_price" in t and t["model_entry_price"]:
             entry_slip.append(
