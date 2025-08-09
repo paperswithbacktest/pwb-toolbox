@@ -26,6 +26,29 @@ from .metrics import (
     cumulative_excess_return,
 )
 
+from .plots import (
+    plot_equity_curve,
+    plot_return_heatmap,
+    plot_underwater,
+    plot_rolling_volatility,
+    plot_rolling_var,
+    plot_rolling_sharpe,
+    plot_rolling_sortino,
+    plot_return_scatter,
+    plot_cumulative_excess_return,
+    plot_factor_exposures,
+    plot_trade_return_hist,
+    plot_return_by_holding_period,
+    plot_exposure_ts,
+    plot_cumulative_shortfall,
+    plot_alpha_vs_return,
+    plot_qq_returns,
+    plot_rolling_skewness,
+    plot_rolling_kurtosis,
+)
+
+from .reports import generate_monitoring_report
+
 from .trade_stats import (
     hit_rate,
     average_win_loss,
@@ -75,49 +98,22 @@ __all__ = [
     "cumulative_implementation_shortfall",
     "slippage_stats",
     "latency_stats",
+    "plot_equity_curve",
+    "plot_return_heatmap",
+    "plot_underwater",
+    "plot_rolling_volatility",
+    "plot_rolling_var",
+    "plot_rolling_sharpe",
+    "plot_rolling_sortino",
+    "plot_return_scatter",
+    "plot_cumulative_excess_return",
+    "plot_factor_exposures",
+    "plot_trade_return_hist",
+    "plot_return_by_holding_period",
+    "plot_exposure_ts",
+    "plot_cumulative_shortfall",
+    "plot_alpha_vs_return",
+    "plot_qq_returns",
+    "plot_rolling_skewness",
+    "plot_rolling_kurtosis",
 ]
-
-try:  # pragma: no cover - optional plotting deps
-    from .plots import (
-        plot_equity_curve,
-        plot_return_heatmap,
-        plot_underwater,
-        plot_rolling_volatility,
-        plot_rolling_var,
-        plot_rolling_sharpe,
-        plot_rolling_sortino,
-        plot_return_scatter,
-        plot_cumulative_excess_return,
-        plot_factor_exposures,
-        plot_trade_return_hist,
-        plot_return_by_holding_period,
-        plot_exposure_ts,
-        plot_cumulative_shortfall,
-        plot_alpha_vs_return,
-        plot_qq_returns,
-        plot_rolling_skewness,
-        plot_rolling_kurtosis,
-    )
-
-    __all__ += [
-        "plot_equity_curve",
-        "plot_return_heatmap",
-        "plot_underwater",
-        "plot_rolling_volatility",
-        "plot_rolling_var",
-        "plot_rolling_sharpe",
-        "plot_rolling_sortino",
-        "plot_return_scatter",
-        "plot_cumulative_excess_return",
-        "plot_factor_exposures",
-        "plot_trade_return_hist",
-        "plot_return_by_holding_period",
-        "plot_exposure_ts",
-        "plot_cumulative_shortfall",
-        "plot_alpha_vs_return",
-        "plot_qq_returns",
-        "plot_rolling_skewness",
-        "plot_rolling_kurtosis",
-    ]
-except Exception:  # pragma: no cover - matplotlib may be missing
-    pass
