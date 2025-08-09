@@ -25,6 +25,8 @@ huggingface-cli login
 
 The `pwb-toolbox` package offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:
 
+### Datasets
+
 - Import `pwb_toolbox.datasets` and sequentially loads datasets for different asset classes, such as bonds, commodities, cryptocurrencies, ETFs, forex, indices, and stocks, using the `load_dataset` function:
 
 ```python
@@ -99,7 +101,7 @@ df = pwb_ds.load_dataset(
 )
 ```
 
-## Backtest engine
+### Backtest engine
 
 The `pwb_toolbox.backtesting` module offers simple building blocks for running
 Backtrader simulations. Alpha models generate `Insight` objects which are turned
@@ -122,7 +124,7 @@ run_backtest(
 )
 ```
 
-## Performance Analysis
+### Performance Analysis
 
 After running a backtest you can analyze the returned equity series using the
 `pwb_toolbox.performance` module.
@@ -149,26 +151,6 @@ plot_equity_curve(equity)
 ```
 
 Plotting utilities require `matplotlib`; some metrics also need `pandas`.
-
-## Live trading with Interactive Brokers
-
-`run_ib_strategy` streams Interactive Brokers data and orders. Install `ibapi` and either `atreyu-backtrader-api` or `ib_insync`.
-
-```python
-from pwb_toolbox.backtesting import IBConnector, run_ib_strategy
-from pwb_toolbox.backtesting.example.engine import SimpleIBStrategy
-
-data_cfg = [{"dataname": "AAPL", "name": "AAPL"}]
-run_ib_strategy(
-    SimpleIBStrategy,
-    data_cfg,
-    host="127.0.0.1",
-    port=7497,
-    client_id=1,
-)
-```
-
-Configure `host`, `port`, and `client_id` to match your TWS or Gateway settings. Test with an Interactive Brokers paper account before trading live.
 
 ## Contributing
 
