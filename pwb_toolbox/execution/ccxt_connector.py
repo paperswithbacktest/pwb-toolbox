@@ -7,8 +7,8 @@ limit orders and retrieving account information.
 
 Example
 -------
-    >>> from pwb_toolbox.execution.ccxt_connector import CCXTConnector
-    >>> cc = CCXTConnector("binance", api_key="...", api_secret="...")
+    >>> from pwb_toolbox.execution import create_connector
+    >>> cc = create_connector({"broker": "ccxt", "exchange": "binance", "api_key": "...", "api_secret": "..."})
     >>> cc.connect()
     >>> nav = cc.get_account_nav()
     >>> positions = cc.get_positions()
