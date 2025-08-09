@@ -15,13 +15,7 @@ pip install pwb-toolbox
 ```
 This package requires Python 3.10 or higher.
 
-If you need crypto-exchange connectivity, install the optional `ccxt` package:
-
-```bash
-pip install ccxt
-```
-
-To login to Huggingface Hub with Access Token
+To login to Huggingface Hub (where PWB datasets are hosted) with Access Token
 
 ```bash
 huggingface-cli login
@@ -110,7 +104,7 @@ df = pwb_ds.load_dataset(
 ### Backtest engine
 
 The `pwb_toolbox.backtesting` module offers simple building blocks for running
-Backtrader simulations. Alpha models generate `Insight` objects which are turned
+Backtrader simulations. Alpha models generate insights which are turned
 into portfolio weights and executed via Backtrader orders.
 
 ```python
@@ -130,8 +124,6 @@ run_backtest(
 )
 ```
 
-#### Submodules
-
 The backtesting package is composed of a few focused modules:
 
 - `backtest_engine` – glue code that wires together universe selection,
@@ -146,7 +138,6 @@ The backtesting package is composed of a few focused modules:
 - `strategies` – ready‑to‑use Backtrader `Strategy` subclasses.
 - `universe` – helpers for building trading universes (e.g. most liquid symbols).
 
-#### Built-in strategies
 
 `pwb_toolbox.backtesting.strategies` ships a collection of portfolio templates
 with different rebalancing rules and signal expectations:
@@ -177,8 +168,8 @@ with different rebalancing rules and signal expectations:
 ### Optimal Limit Order Execution
 
 The module `pwb_toolbox.execution.optimal_limit_order` implements the optimal
-limit‑order placement framework of Lehalle and Guéant. Given a target quantity
-and time horizon, `get_optimal_quote` solves the associated system of
+limit‑order placement framework described in *Optimal Portfolio Liquidation with Limit Orders* by Guéant, Lehalle, and Tapia.
+Given a target quantity and time horizon, `get_optimal_quote` solves the associated system of
 differential equations to return the price offset from the mid‑price that
 maximises the expected utility of execution. Market parameters such as
 volatility (`sigma`), arrival rate of market orders (`A`), liquidity impact
@@ -188,7 +179,7 @@ optimal quote path over time.
 
 ### Performance Analysis
 
-After running a backtest you can analyze the returned equity series using the
+After running a live trading session, you can analyze the returned equity series using the
 `pwb_toolbox.performance` module.
 
 ```python
@@ -211,18 +202,6 @@ print("CAGR:", cagr(equity))
 
 plot_equity_curve(equity)
 ```
-
-Plotting utilities require `matplotlib`; some metrics also need `pandas`.
-
-#### Submodules
-
-- `metrics` – one‑line helpers such as `total_return`, `sharpe_ratio` or
-  `max_drawdown` that operate on a price or NAV series.
-- `nav_metrics` – functions that expect a net asset value series and provide
-  additional statistics like rolling Sharpe and underwater analysis.
-- `trade_stats` – per‑trade analytics including win rate and profit factors.
-- `plots` – visualisations such as equity curves, drawdown plots and return
-  heatmaps.
 
 ## Contributing
 
