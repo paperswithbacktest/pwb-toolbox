@@ -130,6 +130,62 @@ run_backtest(
 )
 ```
 
+#### Submodules
+
+The backtesting package is composed of a few focused modules:
+
+- `backtest_engine` – glue code that wires together universe selection,
+  alpha models, portfolio construction and execution into a Backtrader run.
+- `base_strategy` – common bookkeeping and helpers used by all provided
+  strategies.
+- `commission` – cost models for simulating broker commissions and spreads.
+- `indicators` – reusable signal and technical indicator implementations.
+- `optimization_engine` – genetic‑algorithm tooling for parameter searches.
+- `portfolio` – utilities for combining the results of several strategies and
+  producing performance reports.
+- `strategies` – ready‑to‑use Backtrader `Strategy` subclasses.
+- `universe` – helpers for building trading universes (e.g. most liquid symbols).
+
+#### Built-in strategies
+
+`pwb_toolbox.backtesting.strategies` ships a collection of portfolio templates
+with different rebalancing rules and signal expectations:
+
+- **DailyEqualWeightPortfolio** – holds all assets with a long signal and
+  allocates equal weight each day.
+- **DailyLeveragePortfolio** – goes long with fixed leverage when the signal is
+  1 and is otherwise flat.
+- **EqualWeightEntryExitPortfolio** – opens equally‑weighted positions when an
+  entry condition triggers and leaves existing winners untouched.
+- **DynamicEqualWeightPortfolio** – event‑driven equal‑weight portfolio that can
+  rebalance on any signal change or only when the set of long assets changes.
+- **MonthlyLongShortPortfolio** – once per month allocates half of the leverage
+  to longs and half to shorts based on a universe‑aware signal.
+- **MonthlyLongShortQuantilePortfolio** – monthly rebalance that ranks assets
+  by a per‑asset signal and goes long the strongest and short the weakest.
+- **MonthlyRankedEqualWeightPortfolio** – monthly equal‑weight portfolio with an
+  optional ranking step and support for keeping only the top *N* assets.
+- **QuarterlyTopMomentumPortfolio** – every quarter concentrates exposure in the
+  single asset with the strongest recent momentum.
+- **RollingSemesterLongShortPortfolio** – semi‑annual rebalancing template that
+  accumulates long/short signals over six‑month windows.
+- **WeeklyLongShortDecilePortfolio** – rebalances weekly and trades the top and
+  bottom deciles of a signal distribution.
+- **WeightedAllocationPortfolio** – turns user‑provided weights into integer
+  share positions under a leverage constraint.
+
+### Optimal Limit Order Execution
+
+The module `pwb_toolbox.execution.optimal_limit_order` implements the optimal
+limit‑order placement framework of Lehalle and Guéant. Given a target quantity
+and time horizon, `get_optimal_quote` solves the associated system of
+differential equations to return the price offset from the mid‑price that
+maximises the expected utility of execution. Market parameters such as
+volatility (`sigma`), arrival rate of market orders (`A`), liquidity impact
+(`k`), trader risk aversion (`gamma`) and liquidation penalty (`b`) can be
+supplied to model different scenarios. Setting `is_plot=True` visualises the
+optimal quote path over time.
+
 ### Performance Analysis
 
 After running a backtest you can analyze the returned equity series using the
@@ -157,6 +213,16 @@ plot_equity_curve(equity)
 ```
 
 Plotting utilities require `matplotlib`; some metrics also need `pandas`.
+
+#### Submodules
+
+- `metrics` – one‑line helpers such as `total_return`, `sharpe_ratio` or
+  `max_drawdown` that operate on a price or NAV series.
+- `nav_metrics` – functions that expect a net asset value series and provide
+  additional statistics like rolling Sharpe and underwater analysis.
+- `trade_stats` – per‑trade analytics including win rate and profit factors.
+- `plots` – visualisations such as equity curves, drawdown plots and return
+  heatmaps.
 
 ## Contributing
 
