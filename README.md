@@ -15,6 +15,12 @@ pip install pwb-toolbox
 ```
 This package requires Python 3.10 or higher.
 
+If you need crypto-exchange connectivity, install the optional `ccxt` package:
+
+```bash
+pip install ccxt
+```
+
 To login to Huggingface Hub with Access Token
 
 ```bash

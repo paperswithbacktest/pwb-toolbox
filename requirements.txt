@@ -1,6 +1,6 @@
 backtrader
 beautifulsoup4
-ccxt
+ccxt  # for crypto-exchange connectivity
 click
 datasets
 deap
