@@ -12,10 +12,16 @@ langchain
 lxml
 matplotlib
 numba
+numpy
 pandas
+python-dateutil
 pytz
+requests
+scikit-learn
 scipy
+seaborn
 selenium
+textract
 tqdm
-twilio
+transformers
 webdriver_manager
