@@ -74,16 +74,16 @@ def scale_positions(
 
 
 def compute_orders(
-    theoretical_positions: Dict[str, float], ib_positions: Dict[str, float]
+    theoretical_positions: Dict[str, float], current_positions: Dict[str, float]
 ) -> Dict[str, float]:
     """Calculate order quantities required to move from current to target positions."""
     orders: Dict[str, float] = {}
     for symbol, target_qty in theoretical_positions.items():
-        current_qty = ib_positions.get(symbol, 0.0)
+        current_qty = current_positions.get(symbol, 0.0)
         diff = target_qty - current_qty
         if abs(diff) > 0:
             orders[symbol] = diff
-    for symbol, current_qty in ib_positions.items():
+    for symbol, current_qty in current_positions.items():
         if symbol not in theoretical_positions and current_qty != 0:
             orders[symbol] = -current_qty
     return orders
@@ -94,7 +94,7 @@ def log_current_state(
     account_nav_value: float,
     strategies_positions: Dict[str, Dict[str, float]],
     theoretical_positions: Dict[str, float],
-    ib_positions: Dict[str, float],
+    current_positions: Dict[str, float],
     orders: Dict[str, float],
     account_nav_date: pd.Timestamp,
     trades: Optional[List[Dict[str, Any]]] = None,
@@ -106,7 +106,7 @@ def log_current_state(
         "account_nav_value": account_nav_value,
         "strategies_positions": strategies_positions,
         "theoretical_positions": theoretical_positions,
-        "ib_positions": ib_positions,
+        "positions": current_positions,
         "orders": orders,
     }
     if nav_history_entry is not None:
@@ -119,12 +119,12 @@ def log_current_state(
 
 
 def execute_and_log_orders(
-    ibc,
+    connector,
     orders: Dict[str, float],
     execution_time: int,
 ) -> List[Dict[str, Any]]:
-    """Execute orders via IB connector and return executed trades."""
-    trades = ibc.execute_orders(orders, time_in_seconds=execution_time)
+    """Execute orders via connector and return executed trades."""
+    trades = connector.execute_orders(orders, time_in_seconds=execution_time)
     trade_dicts: List[Dict[str, Any]] = []
     for record in trades:
         trade_dict = record.as_dict()
