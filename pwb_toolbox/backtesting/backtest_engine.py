@@ -26,7 +26,7 @@ def _apply_broker_kwargs(broker: bt.BrokerBase, kwargs: dict) -> None:
     # -- finally push the scheme into the broker ------------------------
     if commission_fields:
         broker.setcommission(**commission_fields)  # <<< only call we need
-    # 2️⃣  Slippage (still a direct broker method) -----------------------
+    # -- slippage (still a direct broker method) ------------------------
     slippage = kwargs.pop("slippage_perc", None)
     if slippage is not None:
         broker.set_slippage_perc(slippage)
