@@ -1,3 +1,4 @@
+from .broker_factory import create_connector
 from .ccxt_connector import CCXTConnector
 from .ib_connector import IBConnector
 from .live_utils import (
