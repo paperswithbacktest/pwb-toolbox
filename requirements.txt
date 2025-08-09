@@ -1,5 +1,6 @@
 backtrader
 beautifulsoup4
+ccxt
 click
 datasets
 deap
