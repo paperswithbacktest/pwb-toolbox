@@ -214,7 +214,7 @@ Contributions to the `pwb-toolbox` package are welcome! If you have any improvem
 
 Please note that all contributions are subject to review and approval by the maintainers.
 
-## Build the Package
+### Build the Package
 
 To build the package, run:
 
@@ -230,38 +230,7 @@ To upload the package to PyPI, run:
 twine upload dist/*
 ```
 
-## License
-
-The `pwb-toolbox` package is released under the MIT license. See the LICENSE file for more details.
-
 ## Contact
 
 For any questions, issues, or suggestions regarding the `pwb-toolbox` package, please contact the maintainers or create an issue on the repository. We appreciate your feedback and involvement in improving the package.
 Happy trading!
-
-### Broker connectors
-
-Use `create_connector` from `pwb_toolbox.execution` to obtain a broker
-connection for Interactive Brokers or a CCXT-supported exchange.
-
-```python
-from pwb_toolbox.execution import create_connector
-
-# Using a configuration mapping
-conn = create_connector({"broker": "ib", "host": "127.0.0.1", "port": 7497})
-conn.connect()
-```
-
-Configuration keys (or corresponding environment variables) include:
-
-- `broker` (`PWB_BROKER`): "ib" or "ccxt"
-- IB: `host` (`PWB_IB_HOST`), `port` (`PWB_IB_PORT`),
-  `client_id` (`PWB_IB_CLIENT_ID`), `market_data_type` (`PWB_IB_MARKET_DATA_TYPE`)
-- CCXT: `exchange` (`PWB_CCXT_EXCHANGE`), `api_key` (`PWB_CCXT_API_KEY`),
-  `api_secret` (`PWB_CCXT_API_SECRET`), `params`
-
-```
-# Using environment variables
-# PWB_BROKER=ccxt PWB_CCXT_EXCHANGE=binance PWB_CCXT_API_KEY=... PWB_CCXT_API_SECRET=...
-conn = create_connector()
-```
