@@ -898,7 +898,8 @@ def get_pricing(
     Parameters
     ----------
     symbol_list : str | list[str]
-        One ticker or a list of tickers.
+        One ticker or a list of tickers. Supports suffixed form "SYM.CAT"
+        where CAT in {CRYPTO, STOCK, CMDTY, IDX, ETF, FX, BND}.
     fields : list[str] | None
         Any subset of ["open", "high", "low", "close"].
         Defaults to ["close"] for backward compatibility.
@@ -917,7 +918,6 @@ def get_pricing(
         * MultiIndex columns (symbol, field) when `len(fields) > 1`
         * Single-level columns     (symbol)      when one field & keep_single_level=True
     """
-    # ------------------------------------------------------------------ sanity
     if fields is None:
         fields = ["close"]
     if isinstance(symbol_list, str):
@@ -932,6 +932,17 @@ def get_pricing(
         raise ValueError(f"Invalid field(s): {bad}. Allowed: {sorted(ALLOWED_FIELDS)}")
 
     # --------------------------------------------------------------- download
+    # Direct routing for suffixed symbols (skip Universe lookup)
+    SUFFIX_TO_REPO = {
+        "CRP": "paperswithbacktest/Cryptocurrencies-Daily-Price",
+        "STK": "paperswithbacktest/Stocks-Daily-Price",
+        "CMD": "paperswithbacktest/Commodities-Daily-Price",
+        "IDX": "paperswithbacktest/Indices-Daily-Price",
+        "ETF": "paperswithbacktest/ETFs-Daily-Price",
+        "FXR": "paperswithbacktest/Forex-Daily-Price",
+        "BND": "paperswithbacktest/Bonds-Daily-Price",
+    }
+
     universe = ds.load_dataset(
         "paperswithbacktest/Universe-Daily-Price",
         token=_get_hf_token(),
@@ -940,15 +951,27 @@ def get_pricing(
     mapping = mapping.set_index("symbol")["repo_id"].to_dict()
 
     grouped = defaultdict(list)
-    remaining = []
+    unmapped = []
+
     for sym in symbol_list:
-        repo_id = mapping.get(sym)
-        repo_id = repo_id.split("/")[1] if isinstance(repo_id, str) else None
+        # Case 1: suffixed like "BTC.CRYPTO" → route directly, use base symbol for the dataset
+        if "." in sym:
+            base, cat = sym.rsplit(".", 1)
+            repo_full = SUFFIX_TO_REPO.get(cat.upper())
+            if repo_full:
+                repo_id = repo_full.split("/")[1]  # dataset name only
+                grouped[repo_id].append(base)  # dataset expects base ticker
+                continue
+            # unknown suffix → fall back to Universe mapping on the full symbol
+
+        # Case 2: normal symbol → use Universe mapping
+        repo_full = mapping.get(sym)
+        repo_id = repo_full.split("/")[1] if isinstance(repo_full, str) else None
         if repo_id:
             grouped[repo_id].append(sym)
         else:
             print(f"Warning: No dataset found for symbol '{sym}'")
-            remaining.append(sym)
+            unmapped.append(sym)
 
     frames = []
     for repo_id, syms in grouped.items():
@@ -965,13 +988,9 @@ def get_pricing(
     df = df.loc[start_date:end_date]
 
     # ------------------------------------------------------------- reshape
-    # Pivot can accept a list of values: returns columns = (field, symbol)
     prices = df.pivot_table(values=fields, index=df.index, columns="symbol")
-
-    # Make outer level = symbol, inner = field  →  pivot_df[sym] gives OHLC block
     prices = prices.swaplevel(axis=1).sort_index(axis=1)
 
-    # Optional: flatten back to the legacy layout if only one field requested
     if keep_single_level:
         if isinstance(prices.columns, pd.MultiIndex):
             prices.columns = [
