@@ -806,6 +806,7 @@ def __extend_etfs(df_etfs):
         "EWT": ["Indices-Daily-Price", "TWSE"],  # Taiwan
         "EWU": ["Indices-Daily-Price", "UKX"],  # United Kingdom
         "GLD": ["Commodities-Daily-Price", "GC1"],
+        "GSG": ["Commodities-Daily-Price", "GC1"],
         "IEF": ["Bonds-Daily-Price", "US10Y"],
         "IEV": ["Indices-Daily-Price", "SX5E"],
         "IWB": ["Indices-Daily-Price", "SPX"],
@@ -813,6 +814,7 @@ def __extend_etfs(df_etfs):
         "SHY": ["Bonds-Daily-Price", "US1Y"],
         "SPY": ["Indices-Daily-Price", "SPX"],
         "THD": ["Indices-Daily-Price", "SET50"],  # Thailand
+        "USO": ["Commodities-Daily-Price", "CL1"],
     }
     symbols = df_etfs.symbol.unique()
     mapping = {k: v for k, v in mapping.items() if k in symbols}
