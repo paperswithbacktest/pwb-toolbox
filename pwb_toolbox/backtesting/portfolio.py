@@ -7,7 +7,11 @@ import pandas as pd
 import pwb_toolbox.performance as pwb_perf
 
 
-def run_portfolio(strategies: Dict[str, Dict[str, Any]], leverage: float = 1.0, initial_cash: float = 100_000.0) -> pd.Series:
+def run_portfolio(
+    strategies: Dict[str, Dict[str, Any]],
+    leverage: float = 1.0,
+    initial_cash: float = 100_000.0,
+) -> pd.Series:
     """Run multiple strategies and aggregate their NAVs into a single portfolio.
 
     Parameters
@@ -39,7 +43,9 @@ def run_portfolio(strategies: Dict[str, Dict[str, Any]], leverage: float = 1.0, 
         ).sort_index()
         nav_series.append(nav)
 
-    weights = pd.Series({name: spec["weight"] for name, spec in strategies.items()}, dtype=float)
+    weights = pd.Series(
+        {name: spec["weight"] for name, spec in strategies.items()}, dtype=float
+    )
     weights /= weights.sum()
 
     nav_df = pd.concat(nav_series, axis=1).dropna().sort_index()
@@ -100,7 +106,26 @@ def generate_reports(daily_nav_df: pd.Series, reports: Path) -> None:
         json.dump(metrics, f, indent=4)
     returns_table.to_csv(reports / "returns_table.csv")
 
-    pwb_perf.plot_equity_curve(daily_nav_df).figure.savefig(reports / "equity_curve.png")
-    pwb_perf.plot_return_heatmap(daily_nav_df).figure.savefig(reports / "return_heatmap.png")
-    pwb_perf.plot_underwater(daily_nav_df).figure.savefig(reports / "underwater.png")
-    pwb_perf.plot_rolling_sharpe(daily_nav_df).figure.savefig(reports / "rolling_sharpe.png")
+    ax = pwb_perf.plot_equity_curve(daily_nav_df)
+    fig = ax.figure
+    fig.set_size_inches(10, 5)
+    fig.tight_layout()
+    fig.savefig(reports / "equity_curve.png", dpi=150)
+
+    ax = pwb_perf.plot_return_heatmap(daily_nav_df)
+    fig = ax.figure
+    fig.set_size_inches(10, 5)
+    fig.tight_layout()
+    fig.savefig(reports / "return_heatmap.png", dpi=150)
+
+    ax = pwb_perf.plot_underwater(daily_nav_df)
+    fig = ax.figure
+    fig.set_size_inches(10, 5)
+    fig.tight_layout()
+    fig.savefig(reports / "underwater.png", dpi=150)
+
+    ax = pwb_perf.plot_rolling_sharpe(daily_nav_df)
+    fig = ax.figure
+    fig.set_size_inches(10, 5)
+    fig.tight_layout()
+    fig.savefig(reports / "rolling_sharpe.png", dpi=150)
