@@ -1,3 +1,4 @@
+from datetime import date
 import importlib
 import json
 from pathlib import Path
@@ -102,30 +103,32 @@ def generate_reports(daily_nav_df: pd.Series, reports: Path) -> None:
     returns_table = pwb_perf.returns_table(daily_nav_df)
     print(returns_table)
 
-    with open(reports / "metrics.json", "w") as f:
+    with open(
+        reports / f"{date.today().isoformat()}_metrics.json", "w", encoding="utf-8"
+    ) as f:
         json.dump(metrics, f, indent=4)
-    returns_table.to_csv(reports / "returns_table.csv")
+    returns_table.to_csv(reports / f"{date.today().isoformat()}_returns_table.csv")
 
     ax = pwb_perf.plot_equity_curve(daily_nav_df)
     fig = ax.figure
     fig.set_size_inches(10, 5)
     fig.tight_layout()
-    fig.savefig(reports / "equity_curve.png", dpi=150)
+    fig.savefig(reports / f"{date.today().isoformat()}_equity_curve.png", dpi=150)
 
     ax = pwb_perf.plot_return_heatmap(daily_nav_df)
     fig = ax.figure
     fig.set_size_inches(10, 5)
     fig.tight_layout()
-    fig.savefig(reports / "return_heatmap.png", dpi=150)
+    fig.savefig(reports / f"{date.today().isoformat()}_return_heatmap.png", dpi=150)
 
     ax = pwb_perf.plot_underwater(daily_nav_df)
     fig = ax.figure
     fig.set_size_inches(10, 5)
     fig.tight_layout()
-    fig.savefig(reports / "underwater.png", dpi=150)
+    fig.savefig(reports / f"{date.today().isoformat()}_underwater.png", dpi=150)
 
     ax = pwb_perf.plot_rolling_sharpe(daily_nav_df)
     fig = ax.figure
     fig.set_size_inches(10, 5)
     fig.tight_layout()
-    fig.savefig(reports / "rolling_sharpe.png", dpi=150)
+    fig.savefig(reports / f"{date.today().isoformat()}_rolling_sharpe.png", dpi=150)
