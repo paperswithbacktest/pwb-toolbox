@@ -74,17 +74,17 @@ def scale_positions(
 
 
 def compute_orders(
-    theoretical_positions: Dict[str, float], current_positions: Dict[str, float]
+    target_positions: Dict[str, float], current_positions: Dict[str, float]
 ) -> Dict[str, float]:
     """Calculate order quantities required to move from current to target positions."""
     orders: Dict[str, float] = {}
-    for symbol, target_qty in theoretical_positions.items():
+    for symbol, target_qty in target_positions.items():
         current_qty = current_positions.get(symbol, 0.0)
         diff = target_qty - current_qty
         if abs(diff) > 0:
             orders[symbol] = diff
     for symbol, current_qty in current_positions.items():
-        if symbol not in theoretical_positions and current_qty != 0:
+        if symbol not in target_positions and current_qty != 0:
             orders[symbol] = -current_qty
     return orders
 
@@ -93,7 +93,7 @@ def log_current_state(
     logs_dir: Path,
     account_nav_value: float,
     strategies_positions: Dict[str, Dict[str, float]],
-    theoretical_positions: Dict[str, float],
+    target_positions: Dict[str, float],
     current_positions: Dict[str, float],
     orders: Dict[str, float],
     account_nav_date: pd.Timestamp,
@@ -105,7 +105,7 @@ def log_current_state(
         "timestamp": pd.Timestamp.utcnow().isoformat(),
         "account_nav_value": account_nav_value,
         "strategies_positions": strategies_positions,
-        "theoretical_positions": theoretical_positions,
+        "target_positions": target_positions,
         "positions": current_positions,
         "orders": orders,
     }
