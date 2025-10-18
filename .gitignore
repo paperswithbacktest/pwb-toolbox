@@ -9,5 +9,5 @@ pwb_toolbox/datasets/logfile.log
 *.tar.gz
 
 server/airflow/airflow.db
+server/airflow/logs/
 server/airflow/simple_auth_manager_passwords.json.generated
-server/airflow/logs
