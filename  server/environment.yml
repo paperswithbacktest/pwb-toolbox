@@ -1,0 +1,17 @@
+name: pwb-fund
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - apache-airflow==3.0.3
+      - backtrader
+      - deap
+      - ib_insync
+      - matplotlib
+      - numpy
+      - pandas
+      - pwb_toolbox
+      - pyautogui
+      - scipy
