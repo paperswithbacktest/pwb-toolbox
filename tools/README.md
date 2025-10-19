@@ -25,7 +25,7 @@ sudo pkill -u ubuntu
 Run the live execution script to connect to Interactive Brokers and log the current account state:
 
 ```bash
-PWB_API_KEY=8ea622baa9f3e1dafe00ff1375d5206c9ff7f896ca2699f7198d2850e25846c2  python -m src.execute
+PWB_API_KEY=  python -m src.execute
 ```
 
 This creates an `$HOME/Documents/pwb-fund/strategies/ib/execution_logs/` directory
@@ -48,24 +48,4 @@ The command above generates plots under
 `$HOME/Documents/pwb-fund/strategies/ib/execution_logs/plots` and saves NAV
 metrics and trade statistics to
 `$HOME/Documents/pwb-fund/strategies/ib/monitoring_reports`.
-
-## Scheduled execution with Airflow
-
-Airflow
-
-```bash
-cd ~/pwb-fund
-conda activate pwb-fund
-AIRFLOW_HOME="airflow" airflow standalone
-```
-
-In the console output immediately after startup, you’ll see a line like:
-
-```bash
-standalone | Airflow is ready
-standalone | Login with username: admin  password: XyZ123AbCd
-```
-
-A DAG (`dags/ib_execute_dag.py`) runs the live execution script every business day.
-
 

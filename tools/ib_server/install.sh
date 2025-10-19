@@ -4,14 +4,12 @@ set -euo pipefail
 # -----------------------------
 # Config (edit if needed)
 # -----------------------------
-REPO_NAME="pwb-fund"
-REPO_OWNER="paperswithbacktest"
-REPO_URL_PUBLIC="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
-REPO_URL_AUTH="https://${GITHUB_USERNAME:-}:${GITHUB_TOKEN:-}@github.com/${REPO_OWNER}/${REPO_NAME}.git"
+REPO_NAME="pwb-toolbox"
+REPO_URL_PUBLIC="https://github.com/paperswithbacktest/${REPO_NAME}.git"
 CONDA_DIR="${HOME}/miniconda3"
-ENV_NAME="pwb-fund"
+ENV_NAME="pwb"
 ENV_FILE="environment.yml"
-DATA_BASE="${HOME}/pwb-fund-data"
+DATA_BASE="${HOME}/pwb-data"
 
 # -----------------------------
 # Helpers
@@ -57,21 +55,8 @@ warn "Credential helper 'store' saves credentials in plaintext at ~/.git-credent
 # -----------------------------
 # Clone repository (with submodules)
 # -----------------------------
-if [ -d "${REPO_NAME}/.git" ]; then
-  log "Repository ${REPO_NAME} already exists. Fetching latest..."
-  (cd "${REPO_NAME}" && git fetch --all --prune && git submodule update --init --recursive)
-else
-  log "Cloning repository ${REPO_OWNER}/${REPO_NAME} with submodules..."
-  # Prefer authenticated URL if both env vars are set; else try public
-  if [ -n "${GITHUB_USERNAME:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
-    git clone --recurse-submodules "${REPO_URL_AUTH}" "${REPO_NAME}" || {
-      warn "Authenticated clone failed; falling back to public URL."
-      git clone --recurse-submodules "${REPO_URL_PUBLIC}" "${REPO_NAME}"
-    }
-  else
-    git clone --recurse-submodules "${REPO_URL_PUBLIC}" "${REPO_NAME}"
-  fi
-fi
+log "Cloning repository ${REPO_URL_PUBLIC}..."
+git clone --recurse-submodules "${REPO_URL_PUBLIC}" "${REPO_NAME}"
 
 cd "${REPO_NAME}"
 

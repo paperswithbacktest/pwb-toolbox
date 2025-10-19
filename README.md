@@ -316,6 +316,12 @@ print("CAGR:", cagr(equity))
 plot_equity_curve(equity)
 ```
 
+## PWB Server
+
+```bash
+cd pwb-toolbox/server
+```
+
 ## Contributing
 
 Contributions to the `pwb-toolbox` package are welcome! If you have any improvements, new datasets, or strategy ideas to share, please follow these guidelines:
