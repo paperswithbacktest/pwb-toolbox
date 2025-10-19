@@ -10,12 +10,13 @@ CONDA_DIR="${HOME}/miniconda3"
 ENV_NAME="pwb"
 ENV_FILE="environment.yml"
 DATA_BASE="${HOME}/pwb-data"
+DL_DIR="${HOME}/Downloads"
 
 # -----------------------------
 # Helpers
 # -----------------------------
-log() { printf "\n\033[1;32m==> %s\033[0m\n" "$*"; }
-warn() { printf "\n\033[1;33m[warning]\033[0m %s\n" "$*"; }
+log()   { printf "\n\033[1;32m==> %s\033[0m\n"   "$*"; }
+warn()  { printf "\n\033[1;33m[warning] %s\033[0m\n" "$*"; }
 
 # -----------------------------
 # Pre-req packages
@@ -32,9 +33,10 @@ if [ -x "${CONDA_DIR}/bin/conda" ]; then
 else
   log "Installing Miniconda to ${CONDA_DIR}..."
   mkdir -p "${CONDA_DIR}"
-  wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O "${CONDA_DIR}/miniconda.sh"
-  bash "${CONDA_DIR}/miniconda.sh" -b -u -p "${CONDA_DIR}"
-  rm -f "${CONDA_DIR}/miniconda.sh"
+  mkdir -p "${DL_DIR}"
+  wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O "${DL_DIR}/miniconda.sh"
+  bash "${DL_DIR}/miniconda.sh" -b -u -p "${CONDA_DIR}"
+  rm -f "${DL_DIR}/miniconda.sh"
 fi
 
 # Ensure conda is available in this shell and future shells
@@ -43,21 +45,6 @@ if ! grep -q 'conda.sh' "${HOME}/.bashrc" 2>/dev/null; then
 fi
 # shellcheck disable=SC1091
 source "${CONDA_DIR}/etc/profile.d/conda.sh"
-
-# -----------------------------
-# Git credentials (optional)
-# -----------------------------
-log "Configuring git credential storage (global)..."
-git config --global credential.helper store
-warn "Credential helper 'store' saves credentials in plaintext at ~/.git-credentials."
-
-# -----------------------------
-# Clone repository (with submodules)
-# -----------------------------
-log "Cloning repository ${REPO_URL_PUBLIC}..."
-git clone --recurse-submodules "${REPO_URL_PUBLIC}" "${REPO_NAME}"
-
-cd "${REPO_NAME}"
 
 # -----------------------------
 # Conda environment setup
@@ -84,11 +71,9 @@ echo "xfce4-session" > "${HOME}/.xsession"
 sudo systemctl enable xrdp
 sudo systemctl restart xrdp
 
-# Enforce French keyboard layout in X session
 log "Setting French keyboard layout for X session..."
 echo "setxkbmap fr" > "${HOME}/.xsessionrc"
 
-# Open RDP port if UFW is active
 if command -v ufw >/dev/null 2>&1; then
   if sudo ufw status | grep -q "Status: active"; then
     log "Allowing RDP (3389/tcp) via UFW..."
@@ -105,20 +90,19 @@ fi
 # -----------------------------
 log "Downloading Interactive Brokers TWS installer..."
 TWS_INSTALLER="tws-stable-linux-x64.sh"
-wget -q https://download2.interactivebrokers.com/installers/tws/stable/${TWS_INSTALLER} -O "${TWS_INSTALLER}"
-chmod +x "${TWS_INSTALLER}"
+wget -q https://download2.interactivebrokers.com/installers/tws/stable/${TWS_INSTALLER} -O "${DL_DIR}/${TWS_INSTALLER}"
+chmod +x "${DL_DIR}/${TWS_INSTALLER}"
 
 log "Running TWS installer (may prompt interactively)..."
+cd "${DL_DIR}"
 ./"${TWS_INSTALLER}"
 
 # -----------------------------
 # Data directories
 # -----------------------------
 log "Creating data directories under ${DATA_BASE} ..."
-mkdir -p "${DATA_BASE}/airflow"
-mkdir -p "${DATA_BASE}/strategies/ib/backtest_reports"
-mkdir -p "${DATA_BASE}/strategies/ib/execution_logs"
-mkdir -p "${DATA_BASE}/strategies/ib/monitoring_reports"
+mkdir -p "${DATA_BASE}/ib/execution_logs"
+mkdir -p "${DATA_BASE}/ib/monitoring_reports"
 
 # -----------------------------
 # Done
@@ -126,5 +110,5 @@ mkdir -p "${DATA_BASE}/strategies/ib/monitoring_reports"
 log "Setup complete."
 echo "Notes:"
 echo " - To use the conda env in new shells, it’s already initialized in ~/.bashrc."
+echo " - Installers were downloaded into ${DL_DIR}."
 echo " - To RDP in: connect to this machine on port 3389 (user: ${USER})."
-echo " - If the repo is private, rerun with GITHUB_USERNAME and GITHUB_TOKEN set."
