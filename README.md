@@ -15,7 +15,7 @@ pip install pwb-toolbox
 ```
 This package requires Python 3.10 or higher.
 
-To login to Huggingface Hub (where PWB datasets are hosted) with Access Token
+To use PWB datasets, you need to login to Huggingface Hub (where PWB datasets are hosted) with Access Token:
 
 ```bash
 huggingface-cli login
@@ -27,7 +27,7 @@ The `pwb-toolbox` package offers a range of functionalities for systematic tradi
 
 ### Datasets
 
-Sequentially loads datasets for different asset classes, such as bonds, commodities, cryptocurrencies, ETFs, forex, indices, and stocks, using the `load_dataset` function:
+The `pwb_toolbox.datasets` module offers to load datasets for different asset classes, such as bonds, commodities, cryptocurrencies, ETFs, forex, indices, and stocks, using the `get_pricing` or the `load_dataset` functions:
 
 ```python
 import pwb_toolbox.datasets as pwb_ds
@@ -42,7 +42,7 @@ df = pwb_ds.load_dataset("Indices-Daily-Price")
 df = pwb_ds.load_dataset("Stocks-Daily-Price")
 ```
 
-For more, see [/docs/datasets.md](/docs/datasets.md).
+For more, see [docs/datasets.md](/docs/datasets.md).
 
 
 ### Backtest engine
@@ -52,62 +52,181 @@ Backtrader simulations. Alpha models generate insights which are turned
 into portfolio weights and executed via Backtrader orders.
 
 ```python
-from pwb_toolbox.backtesting.examples import GoldenCrossAlpha, EqualWeightPortfolio
-from pwb_toolbox.backtesting import run_backtest
-from pwb_toolbox.backtesting.execution_models import ImmediateExecutionModel
-from pwb_toolbox.backtesting.risk_models import MaximumTotalPortfolioExposure
-from pwb_toolbox.backtesting.universe_models import ManualUniverseSelectionModel
+import numpy as np
+import backtrader as bt
+import pwb_toolbox.backtesting as pwb_bt
+import pwb_toolbox.datasets as pwb_ds
 
-run_backtest(
-    ManualUniverseSelectionModel(["SPY", "QQQ"]),
-    GoldenCrossAlpha(),
-    EqualWeightPortfolio(),
-    execution=ImmediateExecutionModel(),
-    risk=MaximumTotalPortfolioExposure(max_exposure=1.0),
-    start="2015-01-01",
-)
+
+# ────────────────────────────────────────────────────────────────
+# 1.  SIGNAL
+# ----------------------------------------------------------------
+class DualMomentumSignal(bt.Indicator):
+    """
+    Per‑asset momentum signal (12‑month Rate‑of‑Change) plus a helper
+    that the portfolio can call to obtain the whole allocation vector
+    for the *current* bar.
+    """
+
+    lines = ("momentum",)
+    params = (("period", 252),)  # ≈12 months of trading days
+
+    def __init__(self):
+        # Rate‑of‑Change over the period (use adjusted prices if your feed provides them)
+        self.lines.momentum = bt.indicators.RateOfChange(
+            self.data.close, period=self.p.period
+        )
+
+    # ----- helper ------------------------------------------------
+    @staticmethod
+    def build_weights(
+        momentum_now: dict,
+        asset_groups: list[list[str]],
+        treasury_bill: str,
+        momentum_threshold: float,
+        leverage: float,
+    ) -> dict[str, float]:
+        """
+        Returns dict {symbol: target weight}.  Weights sum to *leverage*.
+
+        Implements *dual momentum* per Antonacci:
+        pick the RS winner in each module *and* require its lookback return
+        to exceed the T‑bill lookback return; otherwise allocate that module to T‑bills.
+        """
+        longs: list[str] = []
+        tbill_slots = 0
+
+        # dynamic absolute momentum hurdle = T‑bill momentum (fallback to provided threshold if NaN)
+        tbill_mom = momentum_now.get(treasury_bill, np.nan)
+        abs_hurdle = tbill_mom if not np.isnan(tbill_mom) else momentum_threshold
+
+        # 1) Select the best performer in each group (relative momentum) with absolute check vs T‑bill
+        for group in asset_groups:
+            # Skip this group if any of its assets' momentum is still NaN
+            if any(np.isnan(momentum_now.get(s, np.nan)) for s in group):
+                continue
+
+            perf_vals = [momentum_now[s] for s in group]
+            max_perf = max(perf_vals)
+            max_symb = group[perf_vals.index(max_perf)]
+
+            if max_perf > abs_hurdle:
+                longs.append(max_symb)
+            else:
+                tbill_slots += 1
+
+        traded_slots = len(longs) + tbill_slots
+        if traded_slots == 0:
+            # Nothing to trade yet (e.g., early look‑back period)
+            return {}
+
+        # 2) Equal‑weight the *slots*; each module contributes exactly one slot
+        slot_wt = leverage / traded_slots
+        weights = {symb: slot_wt for symb in longs}
+
+        if tbill_slots:
+            weights[treasury_bill] = slot_wt * tbill_slots
+
+        return weights
+
+
+# ────────────────────────────────────────────────────────────────
+# 2.  MONTHLY PORTFOLIO
+# ----------------------------------------------------------------
+class MonthlyDualMomentumPortfolio(pwb_bt.BaseStrategy):
+    """
+    Generic monthly rebalancing engine that asks the signal for a
+    *dict of target weights* and then places the necessary orders.
+    """
+
+    params = (
+        ("leverage", 0.9),
+        ("period", 252),
+        ("momentum_threshold", 0.0),
+        ("asset_groups", None),  # list of lists (set below)
+        ("treasury_bill", "BIL"),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),  # kwargs forwarded to signal
+    )
+
+    def __init__(self):
+        super().__init__()
+        # build signals
+        self.sig = {
+            d._name: self.p.indicator_cls(d, period=self.p.period) for d in self.datas
+        }
+        self.last_month = -1
+
+    # ----- helper ------------------------------------------------
+    def _current_weights(self, use_prev_bar: bool = False) -> dict[str, float]:
+        """
+        Compute weight dict using momentum readings.
+        If use_prev_bar=True, take momentum from [-1] (prior bar), which is what we want
+        on the first bar of a new month to mimic 'month-end signal, trade next month'.
+        """
+        idx = -1 if use_prev_bar else 0
+        momentum_now = {symb: self.sig[symb][idx] for symb in self.sig}
+        return self.p.indicator_cls.build_weights(
+            momentum_now=momentum_now,
+            asset_groups=self.p.asset_groups,
+            treasury_bill=self.p.treasury_bill,
+            momentum_threshold=self.p.momentum_threshold,
+            leverage=self.p.leverage,
+        )
+
+    # ----- main step --------------------------------------------
+    def next(self):
+        super().next()
+        today = self.datas[0].datetime.date(0)
+        if today.month == self.last_month:
+            return  # only once per month
+        self.last_month = today.month
+
+        # Use prior bar's momentum when the month flips (month-end signal, trade next bar)
+        tgt_wt = self._current_weights(use_prev_bar=True)
+
+        # 1) Flatten anything that should now be zero.
+        for d in self.datas:
+            if d._name not in tgt_wt or tgt_wt[d._name] == 0:
+                self.order_target_percent(d, target=0.0)
+
+        # 2) Set targets for active assets
+        for d in self.datas:
+            wt = tgt_wt.get(d._name, 0.0)
+            if wt != 0 and self.is_tradable(d):
+                self.order_target_percent(d, target=wt)
+
+
+def run_strategy():
+    symbols = ["SPY", "EFA", "HYG", "LQD", "REM", "VNQ", "TLT", "GLD", "BIL"]
+
+    strategy = pwb_bt.run_strategy(
+        indicator_cls=DualMomentumSignal,  # per‑asset indicator
+        indicator_kwargs={"period": 252},
+        strategy_cls=MonthlyDualMomentumPortfolio,
+        strategy_kwargs={
+            "asset_groups": [
+                ["SPY", "EFA"],  # equities: US vs EAFE+
+                ["HYG", "LQD"],  # credit risk: high yield vs credit
+                ["VNQ", "REM"],  # REITs: equity REIT vs mortgage REIT (per paper)
+                ["TLT", "GLD"],  # economic stress: Treasuries vs gold
+            ],
+            "leverage": 0.9,
+        },
+        symbols=symbols,
+        start_date="1990-01-01",
+        cash=100_000.0,
+    )
+    return strategy
+
+
+if __name__ == "__main__":
+    strategy = run_strategy()
 ```
 
-The backtesting package is composed of a few focused modules:
-
-- `backtest_engine` – glue code that wires together universe selection,
-  alpha models, portfolio construction and execution into a Backtrader run.
-- `base_strategy` – common bookkeeping and helpers used by all provided
-  strategies.
-- `commission` – cost models for simulating broker commissions and spreads.
-- `indicators` – reusable signal and technical indicator implementations.
-- `optimization_engine` – genetic‑algorithm tooling for parameter searches.
-- `portfolio` – utilities for combining the results of several strategies and
-  producing performance reports.
-- `strategies` – ready‑to‑use Backtrader `Strategy` subclasses.
-- `universe` – helpers for building trading universes (e.g. most liquid symbols).
+For more, see [docs/backtesting.md](/docs/backtesting.md).
 
 
-`pwb_toolbox.backtesting.strategies` ships a collection of portfolio templates
-with different rebalancing rules and signal expectations:
-
-- **DailyEqualWeightPortfolio** – holds all assets with a long signal and
-  allocates equal weight each day.
-- **DailyLeveragePortfolio** – goes long with fixed leverage when the signal is
-  1 and is otherwise flat.
-- **EqualWeightEntryExitPortfolio** – opens equally‑weighted positions when an
-  entry condition triggers and leaves existing winners untouched.
-- **DynamicEqualWeightPortfolio** – event‑driven equal‑weight portfolio that can
-  rebalance on any signal change or only when the set of long assets changes.
-- **MonthlyLongShortPortfolio** – once per month allocates half of the leverage
-  to longs and half to shorts based on a universe‑aware signal.
-- **MonthlyLongShortQuantilePortfolio** – monthly rebalance that ranks assets
-  by a per‑asset signal and goes long the strongest and short the weakest.
-- **MonthlyRankedEqualWeightPortfolio** – monthly equal‑weight portfolio with an
-  optional ranking step and support for keeping only the top *N* assets.
-- **QuarterlyTopMomentumPortfolio** – every quarter concentrates exposure in the
-  single asset with the strongest recent momentum.
-- **RollingSemesterLongShortPortfolio** – semi‑annual rebalancing template that
-  accumulates long/short signals over six‑month windows.
-- **WeeklyLongShortDecilePortfolio** – rebalances weekly and trades the top and
-  bottom deciles of a signal distribution.
-- **WeightedAllocationPortfolio** – turns user‑provided weights into integer
-  share positions under a leverage constraint.
 
 ### Optimal Limit Order Execution
 
