@@ -1,8 +1,187 @@
 # Backtesting
 
+## Example of trading strategy
+
+`BaseStrategy`: Convenience strategy parent class that keeps a progress bar, records NAV history, exposes `is_tradable`, and returns the latest portfolio sizing.
+
+`run_strategy`: High-level helper that pulls price data, wires a backesting engine, attaches the broker and strategy, and executes the backtest in one call.
+
+```python
+import numpy as np
+import backtrader as bt
+import pwb_toolbox.backtesting as pwb_bt
+import pwb_toolbox.datasets as pwb_ds
+
+
+# ────────────────────────────────────────────────────────────────
+# 1.  SIGNAL
+# ----------------------------------------------------------------
+class DualMomentumSignal(bt.Indicator):
+    """
+    Per‑asset momentum signal (12‑month Rate‑of‑Change) plus a helper
+    that the portfolio can call to obtain the whole allocation vector
+    for the *current* bar.
+    """
+
+    lines = ("momentum",)
+    params = (("period", 252),)  # ≈12 months of trading days
+
+    def __init__(self):
+        # Rate‑of‑Change over the period (use adjusted prices if your feed provides them)
+        self.lines.momentum = bt.indicators.RateOfChange(
+            self.data.close, period=self.p.period
+        )
+
+    # ----- helper ------------------------------------------------
+    @staticmethod
+    def build_weights(
+        momentum_now: dict,
+        asset_groups: list[list[str]],
+        treasury_bill: str,
+        momentum_threshold: float,
+        leverage: float,
+    ) -> dict[str, float]:
+        """
+        Returns dict {symbol: target weight}.  Weights sum to *leverage*.
+
+        Implements *dual momentum* per Antonacci:
+        pick the RS winner in each module *and* require its lookback return
+        to exceed the T‑bill lookback return; otherwise allocate that module to T‑bills.
+        """
+        longs: list[str] = []
+        tbill_slots = 0
+
+        # dynamic absolute momentum hurdle = T‑bill momentum (fallback to provided threshold if NaN)
+        tbill_mom = momentum_now.get(treasury_bill, np.nan)
+        abs_hurdle = tbill_mom if not np.isnan(tbill_mom) else momentum_threshold
+
+        # 1) Select the best performer in each group (relative momentum) with absolute check vs T‑bill
+        for group in asset_groups:
+            # Skip this group if any of its assets' momentum is still NaN
+            if any(np.isnan(momentum_now.get(s, np.nan)) for s in group):
+                continue
+
+            perf_vals = [momentum_now[s] for s in group]
+            max_perf = max(perf_vals)
+            max_symb = group[perf_vals.index(max_perf)]
+
+            if max_perf > abs_hurdle:
+                longs.append(max_symb)
+            else:
+                tbill_slots += 1
+
+        traded_slots = len(longs) + tbill_slots
+        if traded_slots == 0:
+            # Nothing to trade yet (e.g., early look‑back period)
+            return {}
+
+        # 2) Equal‑weight the *slots*; each module contributes exactly one slot
+        slot_wt = leverage / traded_slots
+        weights = {symb: slot_wt for symb in longs}
+
+        if tbill_slots:
+            weights[treasury_bill] = slot_wt * tbill_slots
+
+        return weights
+
+
+# ────────────────────────────────────────────────────────────────
+# 2.  MONTHLY PORTFOLIO
+# ----------------------------------------------------------------
+class MonthlyDualMomentumPortfolio(pwb_bt.BaseStrategy):
+    """
+    Generic monthly rebalancing engine that asks the signal for a
+    *dict of target weights* and then places the necessary orders.
+    """
+
+    params = (
+        ("leverage", 0.9),
+        ("period", 252),
+        ("momentum_threshold", 0.0),
+        ("asset_groups", None),  # list of lists (set below)
+        ("treasury_bill", "BIL"),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),  # kwargs forwarded to signal
+    )
+
+    def __init__(self):
+        super().__init__()
+        # build signals
+        self.sig = {
+            d._name: self.p.indicator_cls(d, period=self.p.period) for d in self.datas
+        }
+        self.last_month = -1
+
+    # ----- helper ------------------------------------------------
+    def _current_weights(self, use_prev_bar: bool = False) -> dict[str, float]:
+        """
+        Compute weight dict using momentum readings.
+        If use_prev_bar=True, take momentum from [-1] (prior bar), which is what we want
+        on the first bar of a new month to mimic 'month-end signal, trade next month'.
+        """
+        idx = -1 if use_prev_bar else 0
+        momentum_now = {symb: self.sig[symb][idx] for symb in self.sig}
+        return self.p.indicator_cls.build_weights(
+            momentum_now=momentum_now,
+            asset_groups=self.p.asset_groups,
+            treasury_bill=self.p.treasury_bill,
+            momentum_threshold=self.p.momentum_threshold,
+            leverage=self.p.leverage,
+        )
+
+    # ----- main step --------------------------------------------
+    def next(self):
+        super().next()
+        today = self.datas[0].datetime.date(0)
+        if today.month == self.last_month:
+            return  # only once per month
+        self.last_month = today.month
+
+        # Use prior bar's momentum when the month flips (month-end signal, trade next bar)
+        tgt_wt = self._current_weights(use_prev_bar=True)
+
+        # 1) Flatten anything that should now be zero.
+        for d in self.datas:
+            if d._name not in tgt_wt or tgt_wt[d._name] == 0:
+                self.order_target_percent(d, target=0.0)
+
+        # 2) Set targets for active assets
+        for d in self.datas:
+            wt = tgt_wt.get(d._name, 0.0)
+            if wt != 0 and self.is_tradable(d):
+                self.order_target_percent(d, target=wt)
+
+
+def run_strategy():
+    symbols = ["SPY", "EFA", "HYG", "LQD", "REM", "VNQ", "TLT", "GLD", "BIL"]
+
+    strategy = pwb_bt.run_strategy(
+        indicator_cls=DualMomentumSignal,  # per‑asset indicator
+        indicator_kwargs={"period": 252},
+        strategy_cls=MonthlyDualMomentumPortfolio,
+        strategy_kwargs={
+            "asset_groups": [
+                ["SPY", "EFA"],  # equities: US vs EAFE+
+                ["HYG", "LQD"],  # credit risk: high yield vs credit
+                ["VNQ", "REM"],  # REITs: equity REIT vs mortgage REIT (per paper)
+                ["TLT", "GLD"],  # economic stress: Treasuries vs gold
+            ],
+            "leverage": 0.9,
+        },
+        symbols=symbols,
+        start_date="1990-01-01",
+        cash=100_000.0,
+    )
+    return strategy
+
+
+if __name__ == "__main__":
+    strategy = run_strategy()
+```
+
 ## List of strategies
 
-### 📈 Papers with Backtest Strategies
+Samples of Papers With Backtest strategies:
 
 | **Strategy Name** | **URL** | **Description** |
 |---|---|---|

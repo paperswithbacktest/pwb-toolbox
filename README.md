@@ -45,11 +45,11 @@ df = pwb_ds.load_dataset("Stocks-Daily-Price")
 For more, see [docs/datasets.md](/docs/datasets.md).
 
 
-### Backtest engine
+### Backtesting
 
-The `pwb_toolbox.backtesting` module offers simple building blocks for running
-Backtrader simulations. Alpha models generate insights which are turned
-into portfolio weights and executed via Backtrader orders.
+The `pwb_toolbox.backtesting` module offers simple building blocks for running Backtrader simulations.
+
+Here is a strategy example:
 
 ```python
 import numpy as np
@@ -59,299 +59,98 @@ import pwb_toolbox.datasets as pwb_ds
 
 
 # ────────────────────────────────────────────────────────────────
-# 1.  SIGNAL
-# ----------------------------------------------------------------
-class DualMomentumSignal(bt.Indicator):
-    """
-    Per‑asset momentum signal (12‑month Rate‑of‑Change) plus a helper
-    that the portfolio can call to obtain the whole allocation vector
-    for the *current* bar.
-    """
+# Toy dual-momentum: each month hold SPY if its lookback return > T-bill,
+# otherwise sit in BIL. Kept minimal while using pwb_bt & pwb_ds.
+# ────────────────────────────────────────────────────────────────
 
-    lines = ("momentum",)
-    params = (("period", 252),)  # ≈12 months of trading days
+class SimpleMomentum(bt.Indicator):
+    """12-month rate of change on close."""
+    lines = ("roc",)
+    params = (("period", 252),)
 
     def __init__(self):
-        # Rate‑of‑Change over the period (use adjusted prices if your feed provides them)
-        self.lines.momentum = bt.indicators.RateOfChange(
-            self.data.close, period=self.p.period
-        )
-
-    # ----- helper ------------------------------------------------
-    @staticmethod
-    def build_weights(
-        momentum_now: dict,
-        asset_groups: list[list[str]],
-        treasury_bill: str,
-        momentum_threshold: float,
-        leverage: float,
-    ) -> dict[str, float]:
-        """
-        Returns dict {symbol: target weight}.  Weights sum to *leverage*.
-
-        Implements *dual momentum* per Antonacci:
-        pick the RS winner in each module *and* require its lookback return
-        to exceed the T‑bill lookback return; otherwise allocate that module to T‑bills.
-        """
-        longs: list[str] = []
-        tbill_slots = 0
-
-        # dynamic absolute momentum hurdle = T‑bill momentum (fallback to provided threshold if NaN)
-        tbill_mom = momentum_now.get(treasury_bill, np.nan)
-        abs_hurdle = tbill_mom if not np.isnan(tbill_mom) else momentum_threshold
-
-        # 1) Select the best performer in each group (relative momentum) with absolute check vs T‑bill
-        for group in asset_groups:
-            # Skip this group if any of its assets' momentum is still NaN
-            if any(np.isnan(momentum_now.get(s, np.nan)) for s in group):
-                continue
-
-            perf_vals = [momentum_now[s] for s in group]
-            max_perf = max(perf_vals)
-            max_symb = group[perf_vals.index(max_perf)]
-
-            if max_perf > abs_hurdle:
-                longs.append(max_symb)
-            else:
-                tbill_slots += 1
-
-        traded_slots = len(longs) + tbill_slots
-        if traded_slots == 0:
-            # Nothing to trade yet (e.g., early look‑back period)
-            return {}
-
-        # 2) Equal‑weight the *slots*; each module contributes exactly one slot
-        slot_wt = leverage / traded_slots
-        weights = {symb: slot_wt for symb in longs}
-
-        if tbill_slots:
-            weights[treasury_bill] = slot_wt * tbill_slots
-
-        return weights
+        self.lines.roc = bt.indicators.RateOfChange(self.data.close, period=self.p.period)
 
 
-# ────────────────────────────────────────────────────────────────
-# 2.  MONTHLY PORTFOLIO
-# ----------------------------------------------------------------
-class MonthlyDualMomentumPortfolio(pwb_bt.BaseStrategy):
-    """
-    Generic monthly rebalancing engine that asks the signal for a
-    *dict of target weights* and then places the necessary orders.
-    """
-
-    params = (
-        ("leverage", 0.9),
-        ("period", 252),
-        ("momentum_threshold", 0.0),
-        ("asset_groups", None),  # list of lists (set below)
-        ("treasury_bill", "BIL"),
-        ("indicator_cls", None),
-        ("indicator_kwargs", {}),  # kwargs forwarded to signal
+class MonthlySwitcher(pwb_bt.BaseStrategy):
+    params = dict(
+        period=252,            # ~12 months
+        risky="SPY",
+        safe="BIL",
+        leverage=1.0,
     )
 
     def __init__(self):
         super().__init__()
-        # build signals
-        self.sig = {
-            d._name: self.p.indicator_cls(d, period=self.p.period) for d in self.datas
-        }
-        self.last_month = -1
+        # Attach momentum indicators to each data feed
+        self.mom = {d._name: SimpleMomentum(d, period=self.p.period) for d in self.datas}
+        self._last_month = -1
 
-    # ----- helper ------------------------------------------------
-    def _current_weights(self, use_prev_bar: bool = False) -> dict[str, float]:
-        """
-        Compute weight dict using momentum readings.
-        If use_prev_bar=True, take momentum from [-1] (prior bar), which is what we want
-        on the first bar of a new month to mimic 'month-end signal, trade next month'.
-        """
-        idx = -1 if use_prev_bar else 0
-        momentum_now = {symb: self.sig[symb][idx] for symb in self.sig}
-        return self.p.indicator_cls.build_weights(
-            momentum_now=momentum_now,
-            asset_groups=self.p.asset_groups,
-            treasury_bill=self.p.treasury_bill,
-            momentum_threshold=self.p.momentum_threshold,
-            leverage=self.p.leverage,
-        )
-
-    # ----- main step --------------------------------------------
     def next(self):
         super().next()
+
+        # Rebalance only on month change
         today = self.datas[0].datetime.date(0)
-        if today.month == self.last_month:
-            return  # only once per month
-        self.last_month = today.month
+        if today.month == self._last_month:
+            return
+        self._last_month = today.month
 
-        # Use prior bar's momentum when the month flips (month-end signal, trade next bar)
-        tgt_wt = self._current_weights(use_prev_bar=True)
+        # Use prior bar to emulate "signal at month-end, trade next month"
+        idx = -1
+        spy_m = float(self.mom[self.p.risky].roc[idx])
+        bil_m = float(self.mom[self.p.safe].roc[idx])
 
-        # 1) Flatten anything that should now be zero.
+        # Decide allocation
+        hold_risky = (not np.isnan(spy_m)) and (not np.isnan(bil_m)) and (spy_m > bil_m)
+
+        targets = {
+            self.p.risky: self.p.leverage if hold_risky else 0.0,
+            self.p.safe:  0.0 if hold_risky else self.p.leverage,
+        }
+
+        # Set portfolio targets
         for d in self.datas:
-            if d._name not in tgt_wt or tgt_wt[d._name] == 0:
-                self.order_target_percent(d, target=0.0)
-
-        # 2) Set targets for active assets
-        for d in self.datas:
-            wt = tgt_wt.get(d._name, 0.0)
-            if wt != 0 and self.is_tradable(d):
-                self.order_target_percent(d, target=wt)
+            self.order_target_percent(d, targets.get(d._name, 0.0))
 
 
 def run_strategy():
-    symbols = ["SPY", "EFA", "HYG", "LQD", "REM", "VNQ", "TLT", "GLD", "BIL"]
+    # Minimal universe fetched via pwb_ds inside pwb_bt
+    symbols = ["SPY", "BIL"]
 
-    strategy = pwb_bt.run_strategy(
-        indicator_cls=DualMomentumSignal,  # per‑asset indicator
+    result = pwb_bt.run_strategy(
+        indicator_cls=SimpleMomentum,             # kept for compatibility, but not required externally
         indicator_kwargs={"period": 252},
-        strategy_cls=MonthlyDualMomentumPortfolio,
-        strategy_kwargs={
-            "asset_groups": [
-                ["SPY", "EFA"],  # equities: US vs EAFE+
-                ["HYG", "LQD"],  # credit risk: high yield vs credit
-                ["VNQ", "REM"],  # REITs: equity REIT vs mortgage REIT (per paper)
-                ["TLT", "GLD"],  # economic stress: Treasuries vs gold
-            ],
-            "leverage": 0.9,
-        },
+        strategy_cls=MonthlySwitcher,
+        strategy_kwargs={"period": 252, "risky": "SPY", "safe": "BIL", "leverage": 1.0},
         symbols=symbols,
-        start_date="1990-01-01",
+        start_date="2005-01-01",
         cash=100_000.0,
     )
-    return strategy
+    return result
 
 
 if __name__ == "__main__":
-    strategy = run_strategy()
+    run_strategy()
 ```
 
-For more, see [docs/backtesting.md](/docs/backtesting.md).
+To explore more, you can find over **140 strategy examples** at [https://paperswithbacktest.com/strategies](https://paperswithbacktest.com/strategies)).
+
+For more about backtesting, see [docs/backtesting.md](/docs/backtesting.md).
 
 
-
-### Optimal Limit Order Execution
-
-The module `pwb_toolbox.execution.optimal_limit_order` implements the optimal
-limit‑order placement framework described in *Optimal Portfolio Liquidation with Limit Orders* by Guéant, Lehalle, and Tapia.
-Given a target quantity and time horizon, `get_optimal_quote` solves the associated system of
-differential equations to return the price offset from the mid‑price that
-maximises the expected utility of execution. Market parameters such as
-volatility (`sigma`), arrival rate of market orders (`A`), liquidity impact
-(`k`), trader risk aversion (`gamma`) and liquidation penalty (`b`) can be
-supplied to model different scenarios. Setting `is_plot=True` visualises the
-optimal quote path over time.
-
-### Live Strategy Execution
+### Execution
 
 The execution helpers in `pwb_toolbox.execution` can connect to brokers to run
 strategies in real time.  A typical session collects account information,
 computes target positions and submits the necessary orders.
 
-#### Interactive Brokers
+Two brokers are supporter today:
 
-```python
-from pathlib import Path
-import pandas as pd
-from pwb_toolbox import execution as pwb_exec
+- Interactive Brokers
+- CCXT (crypto)
 
-STRATEGIES = {"my_strategy": {"path": "my_package.my_strategy", "weight": 1.0}}
-logs_dir = Path("logs")
-ACCOUNT_REFERENCE_NAV_VALUE = 100_000
-ACCOUNT_REFERENCE_NAV_DATE = pd.Timestamp("2023-01-01")
-LEVERAGE = 1.0
-MARKET_DATA_TYPE = 1
+For more about execution, see [docs/execution.md](/docs/execution.md).
 
-ibc = pwb_exec.IBConnector(market_data_type=MARKET_DATA_TYPE)
-ibc.connect()
-
-account_nav_value = ibc.get_account_nav()
-account_nav_date = pd.Timestamp.today().normalize()
-
-nav_entry = pwb_exec.append_nav_history(logs_dir, account_nav_value)
-nav_series, raw_positions = pwb_exec.run_strategies(STRATEGIES)
-strategies_positions, theoretical_positions = pwb_exec.scale_positions(
-    STRATEGIES,
-    raw_positions,
-    nav_series,
-    ACCOUNT_REFERENCE_NAV_VALUE,
-    LEVERAGE,
-    ACCOUNT_REFERENCE_NAV_DATE,
-)
-
-ib_positions = ibc.get_positions()
-orders = pwb_exec.compute_orders(theoretical_positions, ib_positions)
-
-execution_time = 5 * 60  # five minutes
-trades = pwb_exec.execute_and_log_orders(ibc, orders, execution_time)
-
-pwb_exec.log_current_state(
-    logs_dir,
-    account_nav_value,
-    strategies_positions,
-    theoretical_positions,
-    ib_positions,
-    orders,
-    account_nav_date,
-    trades=trades,
-    nav_history_entry=nav_entry,
-)
-
-ibc.disconnect()
-```
-
-#### CCXT Exchanges
-
-```python
-from pathlib import Path
-import pandas as pd
-from pwb_toolbox import execution as pwb_exec
-
-STRATEGIES = {"my_strategy": {"path": "my_package.my_strategy", "weight": 1.0}}
-logs_dir = Path("logs")
-ACCOUNT_REFERENCE_NAV_VALUE = 100_000
-ACCOUNT_REFERENCE_NAV_DATE = pd.Timestamp("2023-01-01")
-LEVERAGE = 1.0
-
-cc = pwb_exec.CCXTConnector(
-    exchange="binance",
-    api_key="YOUR_API_KEY",
-    api_secret="YOUR_API_SECRET",
-)
-cc.connect()
-
-account_nav_value = cc.get_account_nav()
-account_nav_date = pd.Timestamp.today().normalize()
-
-nav_entry = pwb_exec.append_nav_history(logs_dir, account_nav_value)
-nav_series, raw_positions = pwb_exec.run_strategies(STRATEGIES)
-strategies_positions, theoretical_positions = pwb_exec.scale_positions(
-    STRATEGIES,
-    raw_positions,
-    nav_series,
-    ACCOUNT_REFERENCE_NAV_VALUE,
-    LEVERAGE,
-    ACCOUNT_REFERENCE_NAV_DATE,
-)
-
-cc_positions = cc.get_positions()
-orders = pwb_exec.compute_orders(theoretical_positions, cc_positions)
-
-execution_time = 5 * 60
-trades = pwb_exec.execute_and_log_orders(cc, orders, execution_time)
-
-pwb_exec.log_current_state(
-    logs_dir,
-    account_nav_value,
-    strategies_positions,
-    theoretical_positions,
-    cc_positions,
-    orders,
-    account_nav_date,
-    trades=trades,
-    nav_history_entry=nav_entry,
-)
-
-cc.disconnect()
-```
 
 ### Performance Analysis
 
