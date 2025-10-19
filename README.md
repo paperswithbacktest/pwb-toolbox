@@ -3,7 +3,7 @@
   <h1>Papers With Backtest Toolbox</h1>
 </div>
 
-The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms. For detailed instructions on how to use this package effectively, please refer to the associated website by visiting: https://paperswithbacktest.com/.
+The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms.
 
 
 ## Installation
