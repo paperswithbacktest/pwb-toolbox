@@ -1,4 +1,4 @@
-name: pwb-fund
+name: pwb
 channels:
   - defaults
 dependencies:

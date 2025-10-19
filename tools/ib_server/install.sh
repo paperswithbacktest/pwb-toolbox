@@ -4,8 +4,6 @@ set -euo pipefail
 # -----------------------------
 # Config (edit if needed)
 # -----------------------------
-REPO_NAME="pwb-toolbox"
-REPO_URL_PUBLIC="https://github.com/paperswithbacktest/${REPO_NAME}.git"
 CONDA_DIR="${HOME}/miniconda3"
 ENV_NAME="pwb"
 ENV_FILE="environment.yml"
