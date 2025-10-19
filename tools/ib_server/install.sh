@@ -16,7 +16,6 @@ DATA_BASE="${HOME}/pwb-data"
 # -----------------------------
 log() { printf "\n\033[1;32m==> %s\033[0m\n" "$*"; }
 warn() { printf "\n\033[1;33m[warning]\033[0m %s\n" "$*"; }
-need_cmd() { command -v "$1" >/dev/null 2>&1 || sudo apt-get update -y && sudo apt-get install -y "$1"; }
 
 # -----------------------------
 # Pre-req packages

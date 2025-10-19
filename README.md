@@ -3,7 +3,7 @@
   <h1>Papers With Backtest Toolbox</h1>
 </div>
 
-The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms. For detailed instructions on how to use this package effectively, please refer to the associated Substack publication by visiting: https://blog.paperswithbacktest.com/.
+The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms. For detailed instructions on how to use this package effectively, please refer to the associated website by visiting: https://paperswithbacktest.com/.
 
 
 ## Installation
@@ -27,7 +27,7 @@ The `pwb-toolbox` package offers a range of functionalities for systematic tradi
 
 ### Datasets
 
-- Import `pwb_toolbox.datasets` and sequentially loads datasets for different asset classes, such as bonds, commodities, cryptocurrencies, ETFs, forex, indices, and stocks, using the `load_dataset` function:
+Sequentially loads datasets for different asset classes, such as bonds, commodities, cryptocurrencies, ETFs, forex, indices, and stocks, using the `load_dataset` function:
 
 ```python
 import pwb_toolbox.datasets as pwb_ds
@@ -40,66 +40,10 @@ df = pwb_ds.load_dataset("ETFs-Daily-Price")
 df = pwb_ds.load_dataset("Forex-Daily-Price")
 df = pwb_ds.load_dataset("Indices-Daily-Price")
 df = pwb_ds.load_dataset("Stocks-Daily-Price")
-
 ```
 
-- Load daily stock price data for specific symbols using the load_dataset function. The first call retrieves data for Apple and Microsoft. The second call retrieves the same stocks but without price adjustments (`adjust=False`). The third call loads daily price data for the S&P 500 index:
+For more, see [/docs/datasets.md](/docs/datasets.md).
 
-```python
-import pwb_toolbox.datasets as pwb_ds
-
-df = pwb_ds.load_dataset(
-    "Stocks-Daily-Price",
-    ["AAPL", "MSFT"],
-)
-
-df = pwb_ds.load_dataset(
-    "Stocks-Daily-Price",
-    ["AAPL", "MSFT"],
-    adjust=False,
-)
-
-df = pwb_ds.load_dataset(
-    "Stocks-Daily-Price",
-    ["sp500"],
-)
-```
-
-- The `extend=True` argument instructs the function to return an extended historical data using indices, commodities, and bonds data.
-
-```python
-import pwb_toolbox.datasets as pwb_ds
-
-df = pwb_ds.load_dataset(
-    "ETFs-Daily-Price",
-    ["SPY", "IEF"],
-    extend=True,
-)
-```
-
-- The argument `rate_to_price=False` specifies that bond yield rates should not be converted to price values in the returned data:
-
-```python
-import pwb_toolbox.datasets as pwb_ds
-
-df = pwb_ds.load_dataset(
-    "Bonds-Daily-Price",
-    ["US10Y"],
-    rate_to_price=False,
-)
-```
-
-- The argument `to_usd=False` indicates that the data should not be converted to U.S. dollars, implying that it might be available in another currency.
-
-```python
-import pwb_toolbox.datasets as pwb_ds
-
-df = pwb_ds.load_dataset(
-    "Indices-Daily-Price",
-    ["US10Y"],
-    to_usd=False,
-)
-```
 
 ### Backtest engine
 
