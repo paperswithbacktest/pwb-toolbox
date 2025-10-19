@@ -178,10 +178,14 @@ print("CAGR:", cagr(equity))
 plot_equity_curve(equity)
 ```
 
-## PWB Server
+## Tools
+
+### Interactive Brokers server
+
+To trade PWB strategies live with Interactive Brokers, you can use:
 
 ```bash
-cd pwb-toolbox/server
+cd pwb-toolbox/tools/ib_server
 ```
 
 ## Contributing
@@ -192,10 +196,6 @@ Contributions to the `pwb-toolbox` package are welcome! If you have any improvem
 2. Make your changes and ensure they adhere to the package's coding style.
 3. Write tests to validate the functionality or provide sample usage examples.
 4. Submit a pull request, clearly explaining the purpose and benefits of your contribution.
-
-Please note that all contributions are subject to review and approval by the maintainers.
-
-### Build the Package
 
 To build the package, run:
 
@@ -210,8 +210,3 @@ To upload the package to PyPI, run:
 ```bash
 twine upload dist/*
 ```
-
-## Contact
-
-For any questions, issues, or suggestions regarding the `pwb-toolbox` package, please contact the maintainers or create an issue on the repository. We appreciate your feedback and involvement in improving the package.
-Happy trading!
