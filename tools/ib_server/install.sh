@@ -95,6 +95,8 @@ log "Running TWS installer (may prompt interactively)..."
 cd "${DL_DIR}"
 ./"${TWS_INSTALLER}"
 
+rm -f "${DL_DIR}/${TWS_INSTALLER}"
+
 # -----------------------------
 # Data directories
 # -----------------------------
@@ -108,5 +110,4 @@ mkdir -p "${DATA_BASE}/ib/monitoring_reports"
 log "Setup complete."
 echo "Notes:"
 echo " - To use the conda env in new shells, it’s already initialized in ~/.bashrc."
-echo " - Installers were downloaded into ${DL_DIR}."
 echo " - To RDP in: connect to this machine on port 3389 (user: ${USER})."

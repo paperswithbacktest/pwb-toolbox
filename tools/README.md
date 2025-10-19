@@ -1,14 +1,33 @@
-# PWB Fund
+# Interactive Broker Server
 
 ## Installation
 
-Install:
+On a ubuntu server (for instance from https://www.ovhcloud.com/), install [Miniconda](https://www.anaconda.com/), [IB TWS](https://www.interactivebrokers.com/), and RDP with:
 
 ```bash
-export GITHUB_USERNAME=
-export GITHUB_TOKEN=
-bash install.sh
+cd pwb-toolbox/tools/ib_server
+./install.sh
+conda activate pwb
 ```
+
+If TWS is already started:
+
+```bash
+python -m execute_meta_strategy
+```
+
+If TWS isn'y already started:
+
+```bash
+python -m launch_tws && python -m execute_meta_strategy
+```
+
+And to run the startegy daily:
+
+```bash
+30 9 * * Mon-Fri /bin/bash /path/to/run_daily.sh >> /path/to/logfile 2>&1
+```
+
 
 ## Fix
 

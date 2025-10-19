@@ -6,10 +6,9 @@ import time
 
 import pyautogui
 
-from .execute import execute
 
-USERNAME = "xxx"
-PASSWORD = "xxx"
+TWS_USERNAME = os.getenv("TWS_USERNAME")
+TWS_PASSWORD = os.getenv("TWS_PASSWORD")
 
 
 def is_tws_running():
@@ -60,22 +59,18 @@ def login_tws():
     # Enter username
     pyautogui.moveTo(screen_width / 2 + 100, screen_height / 2 - 10)
     pyautogui.click()
-    pyautogui.write(USERNAME, interval=0.1)
+    pyautogui.write(TWS_USERNAME, interval=0.1)
     # Enter password
     pyautogui.moveTo(screen_width / 2 + 100, screen_height / 2 + 30)
     pyautogui.click()
-    pyautogui.write(PASSWORD, interval=0.1)
+    pyautogui.write(TWS_PASSWORD, interval=0.1)
     # Click "Login" button
     pyautogui.moveTo(screen_width / 2 + 100, screen_height / 2 + 100)
     pyautogui.click()
 
 
 def main():
-    is_ready = False
-    if is_tws_ready():
-        print("TWS is running and ready.")
-        is_ready = True
-    else:
+    if not is_tws_ready():
         print("TWS is not running or not ready. Launching...")
         for _ in range(3):
             if is_tws_running():
@@ -87,10 +82,8 @@ def main():
             login_tws()
             time.sleep(30)
             if is_tws_ready():
-                is_ready = True
                 break
-    if is_ready:
-        execute()
+    print("TWS is running and ready.")
 
 
 if __name__ == "__main__":
