@@ -182,11 +182,48 @@ plot_equity_curve(equity)
 
 ### Interactive Brokers server
 
-To trade PWB strategies live with Interactive Brokers, you can use:
+To trade PWB strategies live with Interactive Brokers, you can use `pwb-toolbox/tools/ib_server`.
+
+On a ubuntu server (for instance from https://www.ovhcloud.com/), install [Miniconda](https://www.anaconda.com/), [IB TWS](https://www.interactivebrokers.com/), and RDP with:
 
 ```bash
 cd pwb-toolbox/tools/ib_server
+./install.sh
+conda activate pwb
 ```
+
+If TWS is already started:
+
+```bash
+PWB_API_KEY="" python -m execute_meta_strategy
+```
+
+If TWS isn'y already started:
+
+```bash
+TWS_USERNAME="" TWS_PASSWORD="" python -m launch_tws && PWB_API_KEY="" python -m execute_meta_strategy
+```
+
+And to run the strategy daily, define the environment variables in `.bashrc` and then set up the following cron:
+
+```bash
+30 9 * * Mon-Fri /bin/bash /path/to/run_daily.sh >> /path/to/logfile 2>&1
+```
+
+To get logs:
+
+```bash
+python -m monitor --logs-dir $HOME/pwb-data/ib/execution_logs
+```
+
+
+NB: Fix to restart the desktop environment:
+
+```bash
+ps aux | grep xfce4
+sudo pkill -u ubuntu
+```
+
 
 ## Contributing
 

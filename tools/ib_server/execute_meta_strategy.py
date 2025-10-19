@@ -8,11 +8,12 @@ import pandas as pd
 import pwb_toolbox.execution as pwb_exec
 
 
-logs_dir = Path.home() / "pwb-fund-data" / "strategies" / "all" / "execution_logs"
+logs_dir = Path.home() / "pwb-data" / "ib" / "execution_logs"
 logs_dir.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO)
 
+PWB_API_KEY = os.getenv("PWB_API_KEY")
 
 LEVERAGE = 2
 ACCOUNT_REFERENCE_NAV_VALUE = 1_000_000.0  # Reference NAV value for scaling
@@ -23,7 +24,7 @@ def get_meta_strategy():
     """Get meta strategy data"""
     response = requests.get(
         "https://paperswithbacktest.com/api/v1/meta-strategy",
-        headers={"x-api-key": os.getenv("PWB_API_KEY")},
+        headers={"x-api-key": PWB_API_KEY},
         timeout=60,
     )
     response.raise_for_status()
