@@ -201,7 +201,7 @@ PWB_API_KEY="" python -m execute_meta_strategy
 If TWS isn'y already started:
 
 ```bash
-TWS_USERNAME="" TWS_PASSWORD="" python -m launch_tws && PWB_API_KEY="" python -m execute_meta_strategy
+TWS_USERNAME="" TWS_PASSWORD="" python -m launch_ib && PWB_API_KEY="" python -m execute_meta_strategy
 ```
 
 And to run the strategy daily, define the environment variables in `.bashrc` and then set up the following cron:

@@ -11,7 +11,7 @@ TWS_USERNAME = os.getenv("TWS_USERNAME")
 TWS_PASSWORD = os.getenv("TWS_PASSWORD")
 
 
-def is_tws_running():
+def is_ib_running():
     """Check if TWS is already running."""
     try:
         # Use pgrep to look for "tws" process
@@ -30,20 +30,20 @@ def is_port_open(port, host="127.0.0.1", timeout=0.3):
         return False
 
 
-def is_tws_ready():
-    if is_tws_running():
+def is_ib_ready():
+    if is_ib_running():
         for p in (7497, 7496):
             if is_port_open(p):
                 return True
     return False
 
 
-def kill_tws():
+def kill_ib():
     """Brutally stop TWS (Linux)."""
     subprocess.run(["pkill", "-f", "tws"], check=False)
 
 
-def launch_tws():
+def launch_ib():
     """Launch TWS from $HOME/Jts/tws."""
     home = os.path.expanduser("~")
     tws_path = os.path.join(home, "Jts", "tws")
@@ -54,7 +54,7 @@ def launch_tws():
     subprocess.Popen([tws_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def login_tws():
+def login_ib():
     screen_width, screen_height = pyautogui.size()
     # Enter username
     pyautogui.moveTo(screen_width / 2 + 100, screen_height / 2 - 10)
@@ -70,18 +70,18 @@ def login_tws():
 
 
 def main():
-    if not is_tws_ready():
+    if not is_ib_ready():
         print("TWS is not running or not ready. Launching...")
         for _ in range(3):
-            if is_tws_running():
+            if is_ib_running():
                 print("TWS is running but not ready. Killing it...")
-                kill_tws()
+                kill_ib()
                 time.sleep(5)
-            launch_tws()
+            launch_ib()
             time.sleep(30)
-            login_tws()
+            login_ib()
             time.sleep(30)
-            if is_tws_ready():
+            if is_ib_ready():
                 break
     print("TWS is running and ready.")
 

@@ -10,10 +10,10 @@ ENV_NAME="pwd"
 conda activate "${ENV_NAME}"
 
 # 3. Run the sequence of Python modules
-echo "Running launch_tws..."
-python -m launch_tws
+echo "Running launch_ib..."
+python -m launch_ib
 
-echo "launch_tws succeeded ⇒ running execute_meta_strategy..."
+echo "launch_ib succeeded ⇒ running execute_meta_strategy..."
 python -m execute_meta_strategy
 
 echo "Done."
