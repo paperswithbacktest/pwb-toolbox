@@ -53,13 +53,13 @@ def execute():
         [ACCOUNT_REFERENCE_NAV_DATE], method="nearest"
     )[0]
     backtest_nav_value = daily_nav_df.iloc[pos]
+    print(daily_nav_df.head())
+    print(backtest_nav_value)
     adjustment_factor = ACCOUNT_REFERENCE_NAV_VALUE / backtest_nav_value * LEVERAGE
     target_positions = {
         elem["ticker"]: elem["position"] * adjustment_factor
         for elem in meta_strategy["positions"]
     }
-    print(target_positions)
-    print(ib_positions)
 
     ib_positions = ibc.get_positions()
 
