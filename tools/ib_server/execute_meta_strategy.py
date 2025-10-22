@@ -58,6 +58,8 @@ def execute():
         elem["ticker"]: elem["position"] * adjustment_factor
         for elem in meta_strategy["positions"]
     }
+    print(target_positions)
+    print(ib_positions)
 
     ib_positions = ibc.get_positions()
 
