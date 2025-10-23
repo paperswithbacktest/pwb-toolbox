@@ -84,11 +84,31 @@ else
 fi
 
 # -----------------------------
+# Interactive Brokers
+# -----------------------------
+
+# Determine architecture tag used by IBKR download names
+ARCH="$(uname -m)"
+if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+  IBG_ARCH="x64"
+elif [[ "$ARCH" =~ ^i[3-6]86$ ]]; then
+  IBG_ARCH="x86"
+else
+  warn "Unrecognized arch '$ARCH'; defaulting to 64-bit installer."
+  IBG_ARCH="x64"
+fi
+
+# -----------------------------
 # Interactive Brokers TWS
 # -----------------------------
 log "Downloading Interactive Brokers TWS installer..."
-TWS_INSTALLER="tws-stable-linux-x64.sh"
-wget -q https://download2.interactivebrokers.com/installers/tws/stable/${TWS_INSTALLER} -O "${DL_DIR}/${TWS_INSTALLER}"
+TWS_CHANNEL="stable"  # change to 'latest' to track latest
+
+TWS_INSTALLER="tws-${TWS_CHANNEL}-linux-${IBG_ARCH}.sh"
+TWS_URL="https://download2.interactivebrokers.com/installers/tws/${TWS_CHANNEL}/${TWS_INSTALLER}"
+
+mkdir -p "${DL_DIR}"
+wget -q "${TWS_URL}" -O "${DL_DIR}/${TWS_INSTALLER}"
 chmod +x "${DL_DIR}/${TWS_INSTALLER}"
 
 log "Running TWS installer (may prompt interactively)..."
@@ -96,6 +116,26 @@ cd "${DL_DIR}"
 ./"${TWS_INSTALLER}"
 
 rm -f "${DL_DIR}/${TWS_INSTALLER}"
+
+# -----------------------------
+# Interactive Brokers IB Gateway
+# -----------------------------
+log "Downloading Interactive Brokers IB Gateway installer..."
+# Choose Stable or Latest channel
+IBG_CHANNEL="stable-standalone"  # change to 'latest-standalone' to track latest
+
+IBG_INSTALLER="ibgateway-${IBG_CHANNEL}-linux-${IBG_ARCH}.sh"
+IBG_URL="https://download2.interactivebrokers.com/installers/ibgateway/${IBG_CHANNEL}/${IBG_INSTALLER}"
+
+mkdir -p "${DL_DIR}"
+wget -q "${IBG_URL}" -O "${DL_DIR}/${IBG_INSTALLER}"
+chmod +x "${DL_DIR}/${IBG_INSTALLER}"
+
+log "Running IB Gateway installer (may prompt interactively)..."
+cd "${DL_DIR}"
+./"${IBG_INSTALLER}"
+
+rm -f "${DL_DIR}/${IBG_INSTALLER}"
 
 # -----------------------------
 # Data directories
