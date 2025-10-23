@@ -109,7 +109,7 @@ class IBConnector:
     def connect(self) -> None:
         """Connect to the IB gateway and set the market data type."""
 
-        self.ib.connect(self.host, self.port, clientId=self.client_id)
+        self.ib.connect(self.host, self.port, clientId=self.client_id, timeout=30)
         self.ib.reqMarketDataType(self.market_data_type)
 
     def disconnect(self) -> None:
@@ -326,9 +326,7 @@ class IBConnector:
                         quantity=remaining_qty,
                         time_in_seconds=remaining_time,
                     )
-                    price = (
-                        mid_price - quote if action == "BUY" else mid_price + quote
-                    )
+                    price = mid_price - quote if action == "BUY" else mid_price + quote
                     if not (math.isfinite(quote) and math.isfinite(price)):
                         order = MarketOrder(action, remaining_qty)
                         price = None
@@ -409,4 +407,3 @@ class IBConnector:
             )
 
         return trade_records
-
