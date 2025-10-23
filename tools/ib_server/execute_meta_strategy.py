@@ -36,7 +36,7 @@ def execute():
     meta_strategy = get_meta_strategy()
 
     ibc = pwb_exec.IBConnector(
-        client_id=1,
+        client_id=2,
         market_data_type=3,  # 1 = real-time, 2 = frozen, 3 = delayed, 4 = delayed-frozen
     )
     ibc.connect()
