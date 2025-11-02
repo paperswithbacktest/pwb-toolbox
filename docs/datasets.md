@@ -13,10 +13,10 @@
 | Indices Daily Price | [https://paperswithbacktest.com/datasets/indices-daily-price](https://paperswithbacktest.com/datasets/indices-daily-price) | Historical daily prices for global stock market indices. |
 | Stocks 1-Min Price | [https://paperswithbacktest.com/datasets/stocks-1min-price](https://paperswithbacktest.com/datasets/stocks-1min-price) | Intraday 1-minute price data for major equities. Ideal for high-frequency or intraday backtests. |
 | Stocks Daily Price | [https://paperswithbacktest.com/datasets/stocks-daily-price](https://paperswithbacktest.com/datasets/stocks-daily-price) | Historical daily stock price dataset covering global exchanges. |
-| Stocks Quarterly Balance Sheet | [https://paperswithbacktest.com/datasets/stocks-quarterly-balance-sheet](https://paperswithbacktest.com/datasets/stocks-quarterly-balance-sheet) | Company-level quarterly balance sheet fundamentals. |
-| Stocks Quarterly Cash Flow | [https://paperswithbacktest.com/datasets/stocks-quarterly-cash-flow](https://paperswithbacktest.com/datasets/stocks-quarterly-cash-flow) | Company-level quarterly cash flow statements. |
+| Stocks Quarterly Balance Sheet | [https://paperswithbacktest.com/datasets/stocks-quarterly-balancesheet](https://paperswithbacktest.com/datasets/stocks-quarterly-balancesheet) | Company-level quarterly balance sheet fundamentals. |
+| Stocks Quarterly Cash Flow | [https://paperswithbacktest.com/datasets/stocks-quarterly-cashflow](https://paperswithbacktest.com/datasets/stocks-quarterly-cashflow) | Company-level quarterly cash flow statements. |
 | Stocks Quarterly Earnings | [https://paperswithbacktest.com/datasets/stocks-quarterly-earnings](https://paperswithbacktest.com/datasets/stocks-quarterly-earnings) | Quarterly earnings reports and EPS data. |
-| Stocks Quarterly Income Statement | [https://paperswithbacktest.com/datasets/stocks-quarterly-income-statement](https://paperswithbacktest.com/datasets/stocks-quarterly-income-statement) | Quarterly income statements providing revenue, expenses, and profit metrics. |
+| Stocks Quarterly Income Statement | [https://paperswithbacktest.com/datasets/stocks-quarterly-incomestatement](https://paperswithbacktest.com/datasets/stocks-quarterly-incomestatement) | Quarterly income statements providing revenue, expenses, and profit metrics. |
 | Best Alternative Data | [https://paperswithbacktest.com/datasets/best-alternative-data](https://paperswithbacktest.com/datasets/best-alternative-data) | Curated collection of alternative datasets (e.g., sentiment, macro signals, ESG metrics). |
 
 ## Arguments
