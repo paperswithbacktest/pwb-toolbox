@@ -19,9 +19,9 @@ def _get_pwb_api_key() -> str | None:
     return os.getenv("PWB_API_KEY")
 
 
-def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_key: str):
+def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str):
     base_url = "https://paperswithbacktest.com/api/v1/datasets"
-    resp = requests.get(f"{base_url}/{dataset_name}", params={"pwb_key": pwb_key, "split": split})
+    resp = requests.get(f"{base_url}/{dataset_name}", params={"pwb_api_key": pwb_api_key, "split": split}, timeout=30)
     resp.raise_for_status()
     files = resp.json().get("files", [])
     if not files:
@@ -573,10 +573,10 @@ def load_dataset(
     rate_to_price=True,
 ):
     split = "train"
-    pwb_key = _get_pwb_api_key()
+    pwb_api_key = _get_pwb_api_key()
 
-    if pwb_key:
-        dataset = _load_dataset_from_pwb(path, split=split, pwb_key=pwb_key)
+    if pwb_api_key:
+        dataset = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key)
     else:
         hf_token = os.getenv("HF_ACCESS_TOKEN")
         if not hf_token:
