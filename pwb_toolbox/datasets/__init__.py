@@ -5,6 +5,7 @@ import re
 
 import datasets as ds
 import pandas as pd
+import requests
 
 
 def _get_hf_token() -> str:
@@ -12,6 +13,22 @@ def _get_hf_token() -> str:
     if not token:
         raise ValueError("HF_ACCESS_TOKEN not set")
     return token
+
+
+def _get_pwb_api_key() -> str | None:
+    return os.getenv("PWB_API_KEY")
+
+
+def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_key: str):
+    base_url = "https://paperswithbacktest.com/api/v1/datasets"
+    resp = requests.get(f"{base_url}/{dataset_name}", params={"pwb_key": pwb_key, "split": split})
+    resp.raise_for_status()
+    files = resp.json().get("files", [])
+    if not files:
+        raise ValueError(f"No files available for dataset '{dataset_name}' and split '{split}'")
+
+    print(f"Downloading {len(files)} parquet files from PWB...")
+    return ds.load_dataset("parquet", data_files={split: files}, split=split)
 
 
 DAILY_PRICE_DATASETS = [
@@ -555,8 +572,18 @@ def load_dataset(
     to_usd=True,
     rate_to_price=True,
 ):
-    dataset = ds.load_dataset(f"paperswithbacktest/{path}", token=_get_hf_token())
-    df = dataset["train"].to_pandas()
+    split = "train"
+    pwb_key = _get_pwb_api_key()
+
+    if pwb_key:
+        dataset = _load_dataset_from_pwb(path, split=split, pwb_key=pwb_key)
+    else:
+        hf_token = os.getenv("HF_ACCESS_TOKEN")
+        if not hf_token:
+            raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
+        dataset = ds.load_dataset(f"paperswithbacktest/{path}", token=hf_token)
+
+    df = (dataset[split] if isinstance(dataset, ds.DatasetDict) else dataset).to_pandas()
 
     if path in DAILY_PRICE_DATASETS or path in DAILY_FINANCIAL_DATASETS:
         df["date"] = pd.to_datetime(df["date"])

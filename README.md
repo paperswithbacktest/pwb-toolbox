@@ -15,7 +15,9 @@ pip install pwb-toolbox
 ```
 This package requires Python 3.10 or higher.
 
-To use PWB datasets, you need to login to Huggingface Hub (where PWB datasets are hosted) with Access Token:
+To use PWB datasets, you can supply a Papers With Backtest API key via the `PWB_API_KEY` environment variable. When that is set,
+`load_dataset` will download parquet shards directly from the PWB API. If no API key is available, you can instead login to the
+Huggingface Hub (where public PWB datasets are hosted) with an access token:
 
 ```bash
 huggingface-cli login
