@@ -4,8 +4,10 @@ import os
 import re
 
 import datasets as ds
+import numpy as np
 import pandas as pd
 import requests
+from tqdm import tqdm
 
 
 def _get_hf_token() -> str:
@@ -39,21 +41,6 @@ DAILY_PRICE_DATASETS = [
     "Forex-Daily-Price",
     "Indices-Daily-Price",
     "Stocks-Daily-Price",
-]
-
-DAILY_FINANCIAL_DATASETS = [
-    "Stocks-Quarterly-BalanceSheet",
-    "Stocks-Quarterly-CashFlow",
-    "Stocks-Quarterly-Earnings",
-    "Stocks-Quarterly-IncomeStatement",
-]
-
-INTRADAY_PRICE_DATASETS = [
-    "Stocks-1Min-Price",
-]
-
-INTRADAY_NEWS = [
-    "All-Daily-News",
 ]
 
 
@@ -585,24 +572,20 @@ def load_dataset(
 
     df = (dataset[split] if isinstance(dataset, ds.DatasetDict) else dataset).to_pandas()
 
-    if path in DAILY_PRICE_DATASETS or path in DAILY_FINANCIAL_DATASETS:
-        df["date"] = pd.to_datetime(df["date"])
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
 
-    if path in INTRADAY_PRICE_DATASETS or path in INTRADAY_NEWS:
+    if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"])
 
     if isinstance(symbols, list) and "sp500" in symbols:
         symbols.remove("sp500")
         symbols += SP500_SYMBOLS
 
-    if (
-        path in DAILY_PRICE_DATASETS
-        or path in INTRADAY_PRICE_DATASETS
-        or path in DAILY_FINANCIAL_DATASETS
-    ) and isinstance(symbols, list):
+    if "symbol" in df.columns and isinstance(symbols, list):
         df = df[df["symbol"].isin(symbols)].copy()
 
-    if path in INTRADAY_NEWS and isinstance(symbols, list):
+    if "symbols" in df.columns and isinstance(symbols, list):
         df = df[
             df["symbols"].apply(lambda x: any(symbol in symbols for symbol in x))
         ].copy()
@@ -644,15 +627,8 @@ def load_dataset(
             df_forex = load_dataset("Forex-Daily-Price", to_usd=True)
             df = __convert_indices_to_usd(df, df_forex)
 
-    if path in DAILY_PRICE_DATASETS and (rate_to_price and path == "Bonds-Daily-Price"):
-        for index, row in df.iterrows():
-            years_to_maturity = __extract_years_to_maturity(row["symbol"])
-            if not years_to_maturity:
-                continue
-            face_value = 100
-            for col in ["open", "high", "low", "close"]:
-                rate = row[col]
-                df.loc[index, col] = face_value / (1 + rate / 100) ** years_to_maturity
+    if path in DAILY_PRICE_DATASETS and rate_to_price and path == "Bonds-Daily-Price":
+        df = __convert_bond_rates_to_prices(df)
 
     return df
 
@@ -795,15 +771,36 @@ def __convert_indices_to_usd(
     return pd.concat(frames, ignore_index=True)
 
 
-def __extract_years_to_maturity(bond_symbol):
-    match = re.search(r"(\d+)([YM])$", bond_symbol)
-    if match:
-        time_value = int(match.group(1))  # Extract the numeric value
-        time_unit = match.group(2)  # Extract the time unit (Y or M)
-        if time_unit == "Y":
-            return time_value  # It's already in years
-        elif time_unit == "M":
-            return time_value / 12  # Convert months to years
+def __convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) -> pd.DataFrame:
+    """
+    Convert bond yields (in percent) to prices, in-place, for rows whose
+    symbols encode maturity like 'US10Y', 'US2Y', 'US3M', etc.
+
+    Assumes columns: ['symbol', 'open', 'high', 'low', 'close'] and that
+    open/high/low/close are yields in percent.
+    """
+    # Vectorized extraction of maturity from symbol: last part "10Y", "2Y", "3M", ...
+    m = df["symbol"].str.extract(r"(\d+)([YM])$")  # 0: number, 1: unit
+    num = pd.to_numeric(m[0], errors="coerce")
+    unit = m[1]
+
+    years = pd.Series(np.nan, index=df.index, dtype="float64")
+    years[unit == "Y"] = num[unit == "Y"]
+    years[unit == "M"] = num[unit == "M"] / 12.0
+
+    # Only apply to rows where we successfully parsed the maturity
+    mask = years.notna()
+    if not mask.any():
+        return df
+
+    y = years[mask]
+
+    # Vectorized rate->price for each OHLC column
+    for col in ["open", "high", "low", "close"]:
+        r = df.loc[mask, col] / 100.0  # percent -> fraction
+        df.loc[mask, col] = face_value / (1.0 + r) ** y
+
+    return df
 
 
 def __extend_etfs(df_etfs):
