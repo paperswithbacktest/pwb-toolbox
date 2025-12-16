@@ -30,7 +30,13 @@ def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str):
         raise ValueError(f"No files available for dataset '{dataset_name}' and split '{split}'")
 
     print(f"Downloading {len(files)} parquet files from PWB...")
-    return ds.load_dataset("parquet", data_files={split: files}, split=split)
+    return ds.load_dataset(
+        "parquet", 
+        data_files={split: files}, 
+        split=split, 
+        download_mode="force_redownload", 
+        verification_mode="no_checks",
+    )
 
 
 DAILY_PRICE_DATASETS = [
@@ -558,11 +564,12 @@ def load_dataset(
     extend=False,
     to_usd=True,
     rate_to_price=True,
+    use_hf=False
 ):
     split = "train"
     pwb_api_key = _get_pwb_api_key()
 
-    if pwb_api_key:
+    if pwb_api_key and not use_hf:
         dataset = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key)
     else:
         hf_token = os.getenv("HF_ACCESS_TOKEN")
