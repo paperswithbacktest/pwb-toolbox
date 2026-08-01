@@ -7,6 +7,7 @@ pwb_toolbox/datasets/logfile.log
 *.egg-info
 *.whl
 *.tar.gz
+.venv
 
 server/airflow/airflow.db
 server/airflow/logs/

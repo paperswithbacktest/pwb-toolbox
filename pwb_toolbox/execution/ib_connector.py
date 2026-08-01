@@ -28,13 +28,42 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import math
+import statistics
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import pandas as pd
 from ib_insync import IB, LimitOrder, MarketOrder, Stock
 
 from .optimal_limit_order import get_optimal_quote
+
+# Regular NYSE/Nasdaq session length; used to convert a daily volatility
+# estimate into the ticks-per-sqrt-second units `get_optimal_quote` expects.
+_SECONDS_PER_TRADING_SESSION = 6.5 * 3600
+
+
+def _sigma_from_closes(
+    closes: Sequence[float],
+    tick_size: float,
+    seconds_per_session: float = _SECONDS_PER_TRADING_SESSION,
+) -> Optional[float]:
+    """Convert a series of daily closes into a per-instrument `sigma`.
+
+    `sigma` is the volatility parameter (in ticks per sqrt-second) expected by
+    :func:`optimal_limit_order.get_optimal_quote`. Returns ``None`` if there is
+    not enough data to produce a meaningful estimate.
+    """
+    prices = [c for c in closes if c and c > 0]
+    if len(prices) < 5 or tick_size <= 0:
+        return None
+    log_returns = [
+        math.log(prices[i] / prices[i - 1]) for i in range(1, len(prices))
+    ]
+    daily_vol = statistics.pstdev(log_returns)
+    if not daily_vol:
+        return None
+    last_price = prices[-1]
+    return (daily_vol * last_price / tick_size) / math.sqrt(seconds_per_session)
 
 
 @dataclass
@@ -162,6 +191,63 @@ class IBConnector:
             self._ensure_connection()
             return self.ib.placeOrder(contract, order)
 
+    # ------------------------------------------------------------------
+    # Per-instrument calibration for optimal limit-order pricing
+    # ------------------------------------------------------------------
+    def _get_tick_size(self, contract) -> Optional[float]:
+        """Return the contract's minimum price increment, or ``None`` if
+        it can't be looked up (e.g. contract not qualified)."""
+
+        try:
+            details = self.ib.reqContractDetails(contract)
+        except Exception as exc:  # pragma: no cover - network failure
+            logging.warning("Could not fetch contract details for %s: %s", contract.symbol, exc)
+            return None
+        if details and details[0].minTick and details[0].minTick > 0:
+            return details[0].minTick
+        return None
+
+    def _get_sigma(
+        self, contract, tick_size: float, lookback_days: int = 30
+    ) -> Optional[float]:
+        """Estimate this contract's volatility from recent daily bars."""
+
+        try:
+            bars = self.ib.reqHistoricalData(
+                contract,
+                endDateTime="",
+                durationStr=f"{lookback_days} D",
+                barSizeSetting="1 day",
+                whatToShow="TRADES",
+                useRTH=True,
+            )
+        except Exception as exc:  # pragma: no cover - network failure
+            logging.warning(
+                "Could not fetch historical data for %s volatility estimate: %s",
+                contract.symbol,
+                exc,
+            )
+            return None
+        closes = [bar.close for bar in bars]
+        return _sigma_from_closes(closes, tick_size)
+
+    def _get_quote_calibration(self, contract) -> Dict[str, float]:
+        """Best-effort per-instrument calibration for `get_optimal_quote`.
+
+        Falls back to that function's own generic defaults for anything that
+        can't be estimated (e.g. no market data permission, illiquid or newly
+        listed contract) rather than failing the order.
+        """
+
+        kwargs: Dict[str, float] = {}
+        tick_size = self._get_tick_size(contract)
+        if tick_size:
+            kwargs["tick_size"] = tick_size
+            sigma = self._get_sigma(contract, tick_size)
+            if sigma:
+                kwargs["sigma"] = sigma
+        return kwargs
+
     def place_orders(
         self, orders: Dict[str, float], order_type: str = "LMT"
     ) -> List[TradeRecord]:
@@ -283,6 +369,9 @@ class IBConnector:
                 "contract": contract,
                 "action": action,
                 "remaining_qty": remaining_qty,
+                # Estimated once per symbol per call; sigma/tick_size don't
+                # meaningfully change over the life of a single execution run.
+                "calibration": self._get_quote_calibration(contract),
             }
 
         while time.time() < deadline and any(
@@ -325,6 +414,7 @@ class IBConnector:
                         symbol=symbol,
                         quantity=remaining_qty,
                         time_in_seconds=remaining_time,
+                        **info["calibration"],
                     )
                     price = mid_price - quote if action == "BUY" else mid_price + quote
                     if not (math.isfinite(quote) and math.isfinite(price)):

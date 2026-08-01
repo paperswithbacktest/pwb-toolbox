@@ -61,31 +61,44 @@ def optimal_limit_order_formula(q_max, t_max, mu, sigma, A, k, gamma, b, is_plot
     return delta[q_max][-1]
 
 
-def get_optimal_quote(symbol, quantity, time_in_seconds, is_plot=False):
-    if symbol == "demo" or True:
-        parameters = {
-            "mu": 0.01,  # Drift term
-            "sigma": 0.3,  # Volatility
-            "A": 0.1,  # Arrival rate of market orders
-            "k": 0.3,  # Liquidity impact parameter
-            "b": 3,  # Liquidation cost
-            "tick_size": 0.01,  # Tick size
-            "average_trading_size": 100,  # Average trading size
-        }
+def get_optimal_quote(
+    symbol,
+    quantity,
+    time_in_seconds,
+    mu=0.0,
+    sigma=0.3,
+    A=0.1,
+    k=0.3,
+    gamma=None,
+    b=3,
+    tick_size=0.01,
+    average_trading_size=100,
+    is_plot=False,
+):
+    """Solve for the optimal limit-order price offset from the mid-price.
 
-    gamma = 5e-4 / parameters["tick_size"]
+    `symbol` is accepted for caller bookkeeping/logging but does not affect the
+    calculation; callers that want per-instrument calibration should pass their
+    own `mu`/`sigma`/`A`/`k`/`gamma`/`b`/`tick_size`/`average_trading_size` (e.g.
+    derived from that symbol's recent volatility, as done for commission
+    estimation in `pwb_toolbox.backtesting.commission`). Unspecified parameters
+    fall back to the same generic defaults previously hardcoded here.
+    """
+    if gamma is None:
+        gamma = 5e-4 / tick_size
+
     quote = optimal_limit_order_formula(
-        q_max=math.ceil(quantity / parameters["average_trading_size"]),
+        q_max=math.ceil(quantity / average_trading_size),
         t_max=time_in_seconds,
-        mu=0,
-        sigma=parameters["sigma"],
-        A=parameters["A"],
-        k=parameters["k"],
+        mu=mu,
+        sigma=sigma,
+        A=A,
+        k=k,
         gamma=gamma,
-        b=parameters["b"],
+        b=b,
         is_plot=is_plot,
     )
-    quote = quote * parameters["tick_size"]
+    quote = quote * tick_size
     if not math.isfinite(quote):
         return 0.0
     return quote

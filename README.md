@@ -156,28 +156,37 @@ For more about execution, see [docs/execution.md](/docs/execution.md).
 
 ### Performance Analysis
 
-After running a live trading session, you can analyze the returned equity series using the
-`pwb_toolbox.performance` module.
+Any NAV series produced by `pwb_toolbox.backtesting.run_strategy` (or your own live
+trading loop) can be analyzed with the `pwb_toolbox.performance` module. Reusing the
+`SimpleMomentum` / `MonthlySwitcher` strategy from the [Backtesting](#backtesting)
+example above:
 
 ```python
-from pwb_toolbox.backtesting.examples import GoldenCrossAlpha, EqualWeightPortfolio
-from pwb_toolbox.backtesting import run_backtest
-from pwb_toolbox.backtesting.execution_models import ImmediateExecutionModel
+import pandas as pd
 from pwb_toolbox.performance import total_return, cagr
 from pwb_toolbox.performance.plots import plot_equity_curve
 
-result, equity = run_backtest(
-    ManualUniverseSelectionModel(["SPY", "QQQ"]),
-    GoldenCrossAlpha(),
-    EqualWeightPortfolio(),
-    execution=ImmediateExecutionModel(),
-    start="2015-01-01",
-)
+strategy = run_strategy()  # from the Backtesting example above
 
-print("Total return:", total_return(equity))
-print("CAGR:", cagr(equity))
+nav = pd.Series(
+    [row["value"] for row in strategy.log_data],
+    index=pd.to_datetime([row["date"] for row in strategy.log_data]),
+).sort_index()
 
-plot_equity_curve(equity)
+print("Total return:", total_return(nav))
+print("CAGR:", cagr(nav))
+
+plot_equity_curve(nav)
+```
+
+For a full report (metrics JSON, monthly/yearly returns table, and equity/underwater/
+rolling-Sharpe plots saved to disk) in one call:
+
+```python
+from pathlib import Path
+import pwb_toolbox.backtesting as pwb_bt
+
+pwb_bt.generate_reports(nav, Path("reports"))
 ```
 
 ## Tools
@@ -235,6 +244,15 @@ Contributions to the `pwb-toolbox` package are welcome! If you have any improvem
 2. Make your changes and ensure they adhere to the package's coding style.
 3. Write tests to validate the functionality or provide sample usage examples.
 4. Submit a pull request, clearly explaining the purpose and benefits of your contribution.
+
+### Running tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+Tests run automatically on every push/PR via GitHub Actions ([.github/workflows/tests.yml](/.github/workflows/tests.yml)).
 
 To build the package, run:
 
