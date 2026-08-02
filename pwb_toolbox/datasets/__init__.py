@@ -7,6 +7,7 @@ import re
 from huggingface_hub import HfApi, hf_hub_download
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import requests
 from tqdm import tqdm
 
@@ -22,7 +23,42 @@ def _get_pwb_api_key() -> str | None:
     return os.getenv("PWB_API_KEY")
 
 
-def _read_parquet_files(paths: list[str], desc: str) -> pd.DataFrame:
+def _symbols_overlap(cell, symbol_set) -> bool:
+    """True if a news-style ``symbols`` list cell shares any ticker with ``symbol_set``."""
+    if cell is None:
+        return False
+    return any(symbol in symbol_set for symbol in cell)
+
+
+def _read_one_parquet(source, symbols=None) -> pd.DataFrame:
+    """Read a single parquet source, pushing the symbol filter down when possible.
+
+    ``source`` is a local path (``str``) or a file-like object. When ``symbols``
+    is provided, the scalar ``symbol`` column is filtered via parquet predicate
+    pushdown (which prunes row groups, so a whole shard is never materialised),
+    and the news-style list column ``symbols`` is filtered row-wise right after
+    the read. Either way memory stays bounded to a single shard's matching rows
+    instead of the full dataset, which is what makes large sharded datasets
+    (e.g. the 75 GB 1-minute prices) loadable when a symbol subset is requested.
+    """
+    filters = None
+    if symbols:
+        schema = pq.read_schema(source)
+        if "symbol" in schema.names:
+            filters = [("symbol", "in", list(symbols))]
+        if hasattr(source, "seek"):
+            source.seek(0)
+
+    df = pd.read_parquet(source, filters=filters)
+
+    if symbols and "symbol" not in df.columns and "symbols" in df.columns:
+        symbol_set = set(symbols)
+        df = df[df["symbols"].apply(lambda cell: _symbols_overlap(cell, symbol_set))]
+
+    return df
+
+
+def _read_parquet_files(paths: list[str], desc: str, symbols=None) -> pd.DataFrame:
     if not paths:
         raise ValueError("No parquet files provided.")
 
@@ -32,13 +68,13 @@ def _read_parquet_files(paths: list[str], desc: str) -> pd.DataFrame:
         if isinstance(path, str) and path.startswith(("http://", "https://")):
             resp = requests.get(path, timeout=120)
             resp.raise_for_status()
-            frames.append(pd.read_parquet(BytesIO(resp.content)))
+            frames.append(_read_one_parquet(BytesIO(resp.content), symbols))
         else:
-            frames.append(pd.read_parquet(path))
+            frames.append(_read_one_parquet(path, symbols))
     return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
 
-def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str) -> pd.DataFrame:
+def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str, symbols=None) -> pd.DataFrame:
     base_url = "https://data.paperswithbacktest.com/v1/datasets"
     resp = requests.get(f"{base_url}/{dataset_name}", params={"pwb_api_key": pwb_api_key, "split": split}, timeout=30)
     resp.raise_for_status()
@@ -47,12 +83,13 @@ def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str) -> p
         raise ValueError(f"No files available for dataset '{dataset_name}' and split '{split}'")
 
     print(f"Downloading {len(files)} parquet files from PWB...")
-    return _read_parquet_files(files, desc=f"PWB {dataset_name}")
+    return _read_parquet_files(files, desc=f"PWB {dataset_name}", symbols=symbols)
 
 
 def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]:
     patterns = [
         re.compile(rf"(^|/){re.escape(split)}-\d{{5}}-of-\d{{5}}\.parquet$"),
+        re.compile(rf"(^|/){re.escape(split)}-\d{{4}}-\d{{2}}\.parquet$"),
         re.compile(rf"(^|/){re.escape(split)}\.parquet$"),
     ]
     matched = [f for f in repo_files if any(p.search(f) for p in patterns)]
@@ -63,7 +100,7 @@ def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]
     return sorted([f for f in repo_files if f.endswith(".parquet") and f"/{split}" in f])
 
 
-def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str) -> pd.DataFrame:
+def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=None) -> pd.DataFrame:
     repo_id = f"paperswithbacktest/{dataset_name}"
     api = HfApi(token=hf_token)
     repo_files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
@@ -81,7 +118,7 @@ def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str) -> pd.Da
         )
         for file_name in iterator
     ]
-    return _read_parquet_files(local_files, desc=f"Load {dataset_name}")
+    return _read_parquet_files(local_files, desc=f"Load {dataset_name}", symbols=symbols)
 
 
 DAILY_PRICE_DATASETS = [
@@ -614,13 +651,23 @@ def load_dataset(
     split = "train"
     pwb_api_key = _get_pwb_api_key()
 
+    # Resolve the symbol filter up front (on a copy, so the caller's list is
+    # never mutated) so it can be pushed down to the per-shard parquet reads
+    # instead of concatenating every shard in memory and filtering afterwards.
+    symbol_filter = None
+    if isinstance(symbols, list):
+        symbol_filter = list(symbols)
+        if "sp500" in symbol_filter:
+            symbol_filter.remove("sp500")
+            symbol_filter += SP500_SYMBOLS
+
     if pwb_api_key and not use_hf:
-        df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key)
+        df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=symbol_filter)
     else:
         hf_token = os.getenv("HF_ACCESS_TOKEN")
         if not hf_token:
             raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
-        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token)
+        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token, symbols=symbol_filter)
 
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -628,17 +675,16 @@ def load_dataset(
     if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"])
 
-    if isinstance(symbols, list) and "sp500" in symbols:
-        symbols.remove("sp500")
-        symbols += SP500_SYMBOLS
-
-    if "symbol" in df.columns and isinstance(symbols, list):
-        df = df[df["symbol"].isin(symbols)].copy()
-
-    if "symbols" in df.columns and isinstance(symbols, list):
-        df = df[
-            df["symbols"].apply(lambda x: any(symbol in symbols for symbol in x))
-        ].copy()
+    # Safety net: the reads above already push the symbol filter down, but keep a
+    # post-filter so the result is identical regardless of the shard column layout.
+    if symbol_filter is not None:
+        if "symbol" in df.columns:
+            df = df[df["symbol"].isin(symbol_filter)].copy()
+        if "symbols" in df.columns:
+            symbol_set = set(symbol_filter)
+            df = df[
+                df["symbols"].apply(lambda cell: _symbols_overlap(cell, symbol_set))
+            ].copy()
 
     if path in DAILY_PRICE_DATASETS:
         if adjust and "adj_close" in df.columns:

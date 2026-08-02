@@ -10,6 +10,7 @@ ib_insync
 matplotlib
 numpy
 pandas
+pyarrow
 python-dateutil
 requests
 scikit-learn
