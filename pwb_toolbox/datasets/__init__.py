@@ -63,6 +63,65 @@ def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]
     return sorted([f for f in repo_files if f.endswith(".parquet") and f"/{split}" in f])
 
 
+YFINANCE_FALLBACK_DATASETS = {
+    "Stocks-Daily-Price",
+    "ETFs-Daily-Price",
+    "Cryptocurrencies-Daily-Price",
+    "Forex-Daily-Price",
+}
+
+
+def _yfinance_ticker(dataset_name: str, symbol: str) -> str:
+    if dataset_name == "Forex-Daily-Price":
+        return symbol if symbol.endswith("=X") else f"{symbol}=X"
+    if dataset_name == "Cryptocurrencies-Daily-Price":
+        return symbol if "-" in symbol else f"{symbol}-USD"
+    return symbol
+
+
+def _load_dataset_from_yfinance(dataset_name: str, symbols: list[str] | None) -> pd.DataFrame:
+    if not symbols:
+        raise ValueError(
+            f"No free yfinance fallback for a full-universe load of '{dataset_name}'; "
+            "pass an explicit symbols list, or set PWB_API_KEY/HF_ACCESS_TOKEN."
+        )
+
+    import yfinance as yf
+
+    frames = []
+    for symbol in symbols:
+        ticker = _yfinance_ticker(dataset_name, symbol)
+        hist = yf.Ticker(ticker).history(period="max", auto_adjust=False)
+        if hist.empty:
+            print(f"Warning: yfinance returned no data for '{ticker}'")
+            continue
+
+        hist = hist.reset_index().rename(
+            columns={
+                "Date": "date",
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Adj Close": "adj_close",
+                "Volume": "volume",
+            }
+        )
+        hist["symbol"] = symbol
+        keep = [
+            c
+            for c in ["date", "symbol", "open", "high", "low", "close", "adj_close", "volume"]
+            if c in hist.columns
+        ]
+        frames.append(hist[keep])
+
+    if not frames:
+        raise ValueError(f"yfinance returned no data for any of {symbols}")
+
+    print(f"Loaded {len(frames)} symbol(s) from yfinance (free fallback, no PWB/HF token)...")
+    return pd.concat(frames, ignore_index=True)
+
+
 def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str) -> pd.DataFrame:
     repo_id = f"paperswithbacktest/{dataset_name}"
     api = HfApi(token=hf_token)
@@ -612,25 +671,29 @@ def load_dataset(
     use_hf=False
 ):
     split = "train"
+
+    if isinstance(symbols, list) and "sp500" in symbols:
+        symbols.remove("sp500")
+        symbols += SP500_SYMBOLS
+
     pwb_api_key = _get_pwb_api_key()
 
     if pwb_api_key and not use_hf:
         df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key)
     else:
         hf_token = os.getenv("HF_ACCESS_TOKEN")
-        if not hf_token:
+        if hf_token:
+            df = _load_dataset_from_hf(path, split=split, hf_token=hf_token)
+        elif path in YFINANCE_FALLBACK_DATASETS:
+            df = _load_dataset_from_yfinance(path, symbols if isinstance(symbols, list) else None)
+        else:
             raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
-        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token)
 
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"]).dt.date
 
     if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"])
-
-    if isinstance(symbols, list) and "sp500" in symbols:
-        symbols.remove("sp500")
-        symbols += SP500_SYMBOLS
 
     if "symbol" in df.columns and isinstance(symbols, list):
         df = df[df["symbol"].isin(symbols)].copy()
