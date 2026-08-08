@@ -14,9 +14,9 @@ class BaseStrategy(bt.Strategy):
 
     def is_tradable(self, data):
         """Return True if the instrument's price is not constant."""
-        if len(data.close) < 3:
+        if len(data.close) < 2:
             return False
-        return data.close[0] != data.close[-2]
+        return data.close[0] != data.close[-1]
 
     def next(self):
         """Update progress bar and log current value."""
