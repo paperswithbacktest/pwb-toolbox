@@ -154,6 +154,26 @@ Two brokers are supporter today:
 For more about execution, see [docs/execution.md](/docs/execution.md).
 
 
+### Scraping strategy ideas
+
+The `pwb_toolbox.scraping` module collects published trading scripts into a
+local, deduplicated corpus. PineScript (TradingView) and thinkScript
+(thinkorswim) are recognized as separate languages and parsed separately.
+
+```python
+from pwb_toolbox.scraping import GitHubSource, ScriptStore
+
+store = ScriptStore("script-corpus")
+store.extend(GitHubSource().collect("owner/pinescript-collection"))
+```
+
+Fetching goes through a `robots.txt`-aware, rate-limited session, and by
+default the collectors skip repositories without a permissive license and
+files whose headers mark them as paid or non-redistributable.
+
+For more about scraping, see [docs/scraping.md](/docs/scraping.md).
+
+
 ### Performance Analysis
 
 Any NAV series produced by `pwb_toolbox.backtesting.run_strategy` (or your own live

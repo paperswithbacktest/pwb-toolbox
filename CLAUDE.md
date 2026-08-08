@@ -5,11 +5,11 @@ execution, and performance analytics. Requires Python 3.10+.
 
 ## Layout
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
-- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`
+- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`
 
 ## Environment
 
@@ -47,7 +47,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (43 tests, ~4s)
+pytest tests/ -v                  # full suite (98 tests, ~4s)
 pytest tests/test_optimal_limit_order.py -v
 black pwb_toolbox/                # format; the repo is black-formatted
 black --check --diff pwb_toolbox/ # check without writing
@@ -60,6 +60,9 @@ black --check --diff pwb_toolbox/ # check without writing
 - Tests must not require network access or a live broker. `ib_insync` calls are
   exercised against a mocked `IB` client (see `tests/test_ib_connector_calibration.py`),
   and dataset tests should not depend on `PWB_API_KEY` or a Hugging Face login.
+  `pwb_toolbox.scraping` follows the same rule: HTTP is served by a fake session
+  and `PoliteSession` takes injectable `sleep`/`monotonic` so rate-limiting and
+  retry behavior can be asserted without real delays (see `tests/test_scraping.py`).
 - Regression tests for fixed bugs pin the previous numeric output where the old
   behavior must be preserved (see `_LEGACY_DEFAULT_QUOTE` in
   `tests/test_optimal_limit_order.py`).
