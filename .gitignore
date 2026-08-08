@@ -17,3 +17,4 @@ server/airflow/simple_auth_manager_passwords.json.generated
 graphify-out/.graphify_python
 graphify-out/.graphify_root
 graphify-out/cache/
+graphify-out/.vocab.txt
