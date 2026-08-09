@@ -8,6 +8,8 @@ therefore checked against the content heuristics below before it is kept.
 
 import re
 
+from .models import PINESCRIPT, THINKSCRIPT
+
 _VERSION_RE = re.compile(r"^\s*//\s*@version\s*=\s*(\d+)", re.MULTILINE)
 _DECLARATION_RE = re.compile(
     r"^\s*(?:var\s+)?(strategy|indicator|study|library)\s*\(", re.MULTILINE
@@ -176,3 +178,34 @@ def looks_like_thinkscript(code: str) -> bool:
         if marker in code:
             score += 2
     return score >= 3
+
+
+def thinkscript_kind(code: str) -> str:
+    """``"strategy"`` when the study places orders, else ``"indicator"``.
+
+    thinkScript has no declaration keyword separating the two the way Pine's
+    ``strategy()``/``indicator()`` does; placing orders via ``AddOrder`` is what
+    actually makes a study a strategy.
+    """
+    return "strategy" if "AddOrder(" in code else "indicator"
+
+
+def thinkscript_pane(code: str) -> str | None:
+    """Which chart pane the study declares, or ``None`` when it does not."""
+    match = re.search(
+        r"^\s*declare\s+(lower|upper|on_volume)\s*;", code.lower(), re.MULTILINE
+    )
+    return match.group(1) if match else None
+
+
+def classify(code: str) -> str | None:
+    """Identify ``code`` as thinkScript or PineScript, or ``None`` if neither.
+
+    thinkScript is checked first: this is used mostly on thinkorswim sources,
+    and the two predicates are mutually exclusive in practice anyway.
+    """
+    if looks_like_thinkscript(code):
+        return THINKSCRIPT
+    if looks_like_pinescript(code):
+        return PINESCRIPT
+    return None

@@ -26,40 +26,21 @@ therefore validates whatever it finds with
 element. If TradingView changes its markup you will get nothing, not garbage.
 """
 
-import json
 import re
 
-from bs4 import BeautifulSoup
-
+from ..extract import code_candidates, json_string_values, page_title
 from ..languages import declaration, looks_like_pinescript, pine_version
 from ..models import PINESCRIPT, ScriptRecord
 from ..polite import PoliteSession
 
 SCRIPT_URL_RE = re.compile(r"^https?://[\w.-]*tradingview\.com/script/[\w-]+/?")
 
-_SOURCE_KEYS = ("source", "script_source", "sourceCode")
-_JSON_STRING_RE = re.compile(r'"(?:%s)"\s*:\s*"((?:[^"\\]|\\.)*)"')
+#: JSON keys the page might hand the browser the source under.
+SOURCE_KEYS = ("source", "script_source", "sourceCode")
 
 
 class TermsNotAccepted(RuntimeError):
     """Raised when the source is used without acknowledging the terms."""
-
-
-def _candidate_strings(html: str):
-    """Yield decoded values of any JSON ``source``-like key found in the page."""
-    soup = BeautifulSoup(html, "html.parser")
-    blobs = [tag.string or "" for tag in soup.find_all("script")]
-    blobs.append(html)
-
-    pattern = re.compile(_JSON_STRING_RE.pattern % "|".join(_SOURCE_KEYS))
-    for blob in blobs:
-        if not blob:
-            continue
-        for raw in pattern.findall(blob):
-            try:
-                yield json.loads(f'"{raw}"')
-            except json.JSONDecodeError:
-                continue
 
 
 def extract_pine_source(html: str) -> str | None:
@@ -67,27 +48,19 @@ def extract_pine_source(html: str) -> str | None:
 
     Returns ``None`` unless the recovered text actually reads as PineScript.
     """
-    for candidate in _candidate_strings(html):
+    for candidate in json_string_values(html, SOURCE_KEYS):
         if looks_like_pinescript(candidate):
             return candidate
 
-    # Some pages render the code as plain text rather than embedding it.
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup.find_all(["pre", "code"]):
-        text = tag.get_text("\n")
-        if looks_like_pinescript(text):
-            return text
+    # Some pages render the code as markup rather than embedding it as JSON.
+    for candidate in code_candidates(html):
+        if looks_like_pinescript(candidate.text):
+            return candidate.text
     return None
 
 
 def extract_title(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    heading = soup.find("h1")
-    if heading is not None:
-        return heading.get_text(" ", strip=True)
-    if soup.title is not None:
-        return soup.title.get_text(" ", strip=True)
-    return ""
+    return page_title(html)
 
 
 class TradingViewSource:
@@ -137,7 +110,7 @@ class TradingViewSource:
             source="tradingview",
             url=url,
             language=PINESCRIPT,
-            title=title or extract_title(resp.text),
+            title=title or page_title(resp.text),
             code=code,
             license=None,
             pine_version=pine_version(code),

@@ -12,6 +12,7 @@ import pytest
 import requests
 
 from pwb_toolbox.scraping import (
+    ForumSource,
     GitHubSource,
     PoliteSession,
     RobotsDisallowed,
@@ -19,16 +20,25 @@ from pwb_toolbox.scraping import (
     ScriptStore,
     SkippedRepository,
     TermsNotAccepted,
+    ThinkorswimSource,
     TradingViewSource,
+    classify,
+    code_candidates,
     declaration,
     detect_language,
     extract_pine_source,
+    extract_thinkscript,
     input_names,
     is_probably_commercial,
     looks_like_pinescript,
     looks_like_thinkscript,
+    looks_paywalled,
+    next_page_url,
     pine_version,
+    share_id,
     strip_comments,
+    thinkscript_kind,
+    thinkscript_pane,
 )
 
 PINE_STRATEGY = """//@version=5
@@ -557,3 +567,321 @@ def test_tradingview_respects_robots_disallow():
     source = TradingViewSource(session=session, accept_terms=True)
     with pytest.raises(RobotsDisallowed):
         source.fetch(url)
+
+
+# --- extraction helpers ------------------------------------------------------
+
+
+FORUM_PAGE = """<html><head><title>Momentum study help</title></head><body>
+<h1>Momentum study help</h1>
+<article class="message" data-author="Mobius" id="post-101">
+  <div class="bbCodeBlock"><pre><code>{ts}</code></pre></div>
+  <a href="/threads/momentum.42/#post-101">permalink</a>
+</article>
+<article class="message" data-author="rad14733" id="post-102">
+  <pre>x = 1</pre>
+  <a href="/threads/momentum.42/#post-102">permalink</a>
+</article>
+</body></html>""".format(ts=THINKSCRIPT_STUDY)
+
+
+def test_code_candidates_attributes_posts_to_authors():
+    candidates = code_candidates(FORUM_PAGE, base_url="https://forum.test/t/42")
+    authors = [c.author for c in candidates]
+    assert "Mobius" in authors and "rad14733" in authors
+
+
+def test_code_candidates_deduplicates_nested_pre_code():
+    """`<pre><code>` matches both selectors and must not yield the block twice."""
+    html = f"<html><body><pre><code>{THINKSCRIPT_STUDY}</code></pre></body></html>"
+    texts = [" ".join(c.text.split()) for c in code_candidates(html)]
+    assert len(texts) == len(set(texts)) == 1
+
+
+def test_code_candidates_resolves_relative_anchor_against_base():
+    candidates = code_candidates(FORUM_PAGE, base_url="https://forum.test/t/42")
+    anchors = [c.anchor for c in candidates if c.anchor]
+    assert any(
+        a.startswith("https://forum.test/") and "#post-101" in a for a in anchors
+    )
+
+
+def test_code_candidates_falls_back_to_page_scope_without_posts():
+    html = f"<html><body><pre>{THINKSCRIPT_STUDY}</pre></body></html>"
+    (candidate,) = code_candidates(html)
+    assert candidate.author is None
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["You must be a member to view this", "This content is for VIP members"],
+)
+def test_looks_paywalled_detects_gating(phrase):
+    assert looks_paywalled(f"<html><body><p>{phrase}</p></body></html>")
+
+
+def test_looks_paywalled_false_for_ordinary_page():
+    assert not looks_paywalled(FORUM_PAGE)
+
+
+def test_next_page_url_follows_rel_next():
+    html = '<html><body><a rel="next" href="/t/42/page-2">Next</a></body></html>'
+    assert (
+        next_page_url(html, "https://forum.test/t/42")
+        == "https://forum.test/t/42/page-2"
+    )
+
+
+def test_next_page_url_none_on_last_page():
+    assert (
+        next_page_url("<html><body>done</body></html>", "https://forum.test/") is None
+    )
+
+
+# --- thinkScript language helpers --------------------------------------------
+
+
+def test_thinkscript_kind_distinguishes_strategy_by_add_order():
+    assert thinkscript_kind(THINKSCRIPT_STUDY) == "indicator"
+    assert thinkscript_kind(THINKSCRIPT_STUDY + "\nAddOrder(OrderType.BUY_AUTO);") == (
+        "strategy"
+    )
+
+
+def test_thinkscript_pane_reads_declaration():
+    assert thinkscript_pane(THINKSCRIPT_STUDY) == "lower"
+    assert thinkscript_pane("declare upper;\nplot X = close;") == "upper"
+    assert thinkscript_pane("plot X = close;") is None
+
+
+def test_classify_routes_each_language():
+    assert classify(THINKSCRIPT_STUDY) == "thinkscript"
+    assert classify(PINE_STRATEGY) == "pinescript"
+    assert classify(TYPESCRIPT_FILE) is None
+
+
+# --- thinkorswim (tos.mx) ----------------------------------------------------
+
+
+TOS_URL = "http://tos.mx/aBcDeFg"
+
+
+def test_share_id_parses_link_forms():
+    assert share_id("http://tos.mx/aBcDeFg") == "aBcDeFg"
+    assert share_id("https://tos.mx/!aBcDeFg") == "aBcDeFg"
+    assert share_id("https://tos.mx/aBcDeFg/") == "aBcDeFg"
+
+
+def test_share_id_rejects_other_urls():
+    assert share_id("https://example.com/aBcDeFg") is None
+    assert share_id("https://tos.mx/") is None
+
+
+def test_thinkorswim_rejects_non_share_url():
+    session, _, _ = make_session({}, obey_robots=False)
+    with pytest.raises(ValueError):
+        ThinkorswimSource(session=session).fetch("https://example.com/x")
+
+
+def test_extract_thinkscript_from_embedded_json():
+    html = (
+        "<html><script>"
+        + json.dumps({"script": THINKSCRIPT_STUDY})
+        + "</script></html>"
+    )
+    assert extract_thinkscript(html) == THINKSCRIPT_STUDY
+
+
+def test_extract_thinkscript_returns_none_when_value_is_not_thinkscript():
+    """A wrong selector must yield nothing rather than plausible garbage."""
+    html = "<html><script>" + json.dumps({"script": "loadChart"}) + "</script></html>"
+    assert extract_thinkscript(html) is None
+
+
+def test_extract_thinkscript_ignores_typescript():
+    html = f"<html><body><pre>{TYPESCRIPT_FILE}</pre></body></html>"
+    assert extract_thinkscript(html) is None
+
+
+def test_thinkorswim_fetch_builds_record():
+    html = (
+        "<html><head><title>Momentum</title></head><body><pre>"
+        + THINKSCRIPT_STUDY
+        + "</pre></body></html>"
+    )
+    session, _, _ = make_session({TOS_URL: FakeResponse(text=html)}, obey_robots=False)
+    record = ThinkorswimSource(session=session).fetch(TOS_URL)
+
+    assert record is not None
+    assert record.source == "thinkorswim"
+    assert record.language == "thinkscript"
+    assert record.kind == "indicator"
+    assert record.pine_version is None
+    assert record.extra == {"share_id": "aBcDeFg", "pane": "lower"}
+
+
+def test_thinkorswim_skips_paywalled_page():
+    html = "<html><body>You must be a member to view this shared item.</body></html>"
+    session, _, _ = make_session({TOS_URL: FakeResponse(text=html)}, obey_robots=False)
+    source = ThinkorswimSource(session=session)
+    assert source.fetch(TOS_URL) is None
+    assert any("gated" in w for w in source.warnings)
+
+
+def test_thinkorswim_skips_commercial_study():
+    html = (
+        "<html><body><pre># Paid members only - do not redistribute\n"
+        + THINKSCRIPT_STUDY
+        + "</pre></body></html>"
+    )
+    session, _, _ = make_session({TOS_URL: FakeResponse(text=html)}, obey_robots=False)
+    source = ThinkorswimSource(session=session)
+    assert source.fetch(TOS_URL) is None
+    assert any("commercial" in w for w in source.warnings)
+
+
+def test_thinkorswim_warns_on_http_error():
+    session, _, _ = make_session(
+        {TOS_URL: FakeResponse(status_code=404)}, obey_robots=False, max_retries=0
+    )
+    source = ThinkorswimSource(session=session)
+    assert source.fetch(TOS_URL) is None
+    assert any("404" in w for w in source.warnings)
+
+
+def test_thinkorswim_respects_robots_disallow():
+    routes = {
+        "http://tos.mx/robots.txt": FakeResponse(text="User-agent: *\nDisallow: /")
+    }
+    session, _, _ = make_session(routes, obey_robots=True)
+    with pytest.raises(RobotsDisallowed):
+        ThinkorswimSource(session=session).fetch(TOS_URL)
+
+
+# --- forum -------------------------------------------------------------------
+
+
+THREAD_URL = "https://forum.test/threads/momentum.42/"
+
+
+def _forum_source(routes, **kwargs):
+    session, _, _ = make_session(routes, obey_robots=False)
+    return ForumSource(session=session, **kwargs)
+
+
+def test_forum_collects_posted_scripts_with_authors():
+    source = _forum_source({THREAD_URL: FakeResponse(text=FORUM_PAGE)})
+    (record,) = list(source.collect(THREAD_URL))
+
+    assert record.source == "forum"
+    assert record.language == "thinkscript"
+    assert record.author == "Mobius"
+    assert record.title == "Momentum study help"
+    assert record.extra["thread"] == THREAD_URL
+    assert record.url.endswith("#post-101")
+
+
+def test_forum_ignores_short_fragments():
+    """`x = 1` in the second post is below the length floor."""
+    source = _forum_source({THREAD_URL: FakeResponse(text=FORUM_PAGE)})
+    assert len(list(source.collect(THREAD_URL))) == 1
+
+
+def test_forum_ignores_non_code_prose():
+    html = (
+        "<html><body><article class='message' data-author='x'><pre>"
+        "Thanks, this worked great for me on the daily chart. Really appreciate "
+        "you posting it up here for everyone to use.</pre></article></body></html>"
+    )
+    source = _forum_source({THREAD_URL: FakeResponse(text=html)})
+    assert list(source.collect(THREAD_URL)) == []
+
+
+def test_forum_collects_pinescript_too():
+    html = (
+        "<html><body><article class='message' data-author='p'><pre>"
+        + PINE_STRATEGY
+        + "</pre></article></body></html>"
+    )
+    source = _forum_source({THREAD_URL: FakeResponse(text=html)})
+    (record,) = list(source.collect(THREAD_URL))
+    assert record.language == "pinescript"
+    assert record.kind == "strategy"
+    assert record.pine_version == 5
+    assert record.title == "Dual MA Cross"
+
+
+def test_forum_stops_on_paywalled_page():
+    html = "<html><body>You must be a member to view this content.</body></html>"
+    source = _forum_source({THREAD_URL: FakeResponse(text=html)})
+    assert list(source.collect(THREAD_URL)) == []
+    assert any("gated" in w for w in source.warnings)
+
+
+def test_forum_skips_commercial_posts():
+    html = (
+        "<html><body><article class='message' data-author='vendor'><pre>"
+        "# Premium members only\n"
+        + THINKSCRIPT_STUDY
+        + "</pre></article></body></html>"
+    )
+    source = _forum_source({THREAD_URL: FakeResponse(text=html)})
+    assert list(source.collect(THREAD_URL)) == []
+    assert any("commercial" in w for w in source.warnings)
+
+
+def test_forum_follows_pagination_up_to_max_pages():
+    page_two = "https://forum.test/threads/momentum.42/page-2"
+    page_one_html = FORUM_PAGE.replace(
+        "</body>", '<a rel="next" href="page-2">Next</a></body>'
+    )
+    other = THINKSCRIPT_STUDY.replace("momentum", "velocity")
+    page_two_html = (
+        "<html><body><article class='message' data-author='second'><pre>"
+        + other
+        + "</pre></article></body></html>"
+    )
+    source = _forum_source(
+        {
+            THREAD_URL: FakeResponse(text=page_one_html),
+            page_two: FakeResponse(text=page_two_html),
+        },
+        max_pages=2,
+    )
+    records = list(source.collect(THREAD_URL))
+    assert [r.author for r in records] == ["Mobius", "second"]
+
+
+def test_forum_does_not_paginate_by_default():
+    page_one_html = FORUM_PAGE.replace(
+        "</body>", '<a rel="next" href="page-2">Next</a></body>'
+    )
+    source = _forum_source({THREAD_URL: FakeResponse(text=page_one_html)})
+    assert len(list(source.collect(THREAD_URL))) == 1
+
+
+def test_forum_warns_on_http_error():
+    source = _forum_source({THREAD_URL: FakeResponse(status_code=403)}, max_pages=1)
+    assert list(source.collect(THREAD_URL)) == []
+    assert any("403" in w for w in source.warnings)
+
+
+def test_paywall_check_ignores_marker_inside_a_code_block():
+    """A commercial *script* on an open page is not a gated page.
+
+    Both filters reject the study, but they are different diagnoses and the
+    warning has to say which one fired.
+    """
+    html = (
+        "<html><body><p>Free study, posted publicly.</p><pre>"
+        "# Paid members only - do not redistribute\n"
+        + THINKSCRIPT_STUDY
+        + "</pre></body></html>"
+    )
+    assert not looks_paywalled(html)
+
+    session, _, _ = make_session({TOS_URL: FakeResponse(text=html)}, obey_robots=False)
+    source = ThinkorswimSource(session=session)
+    assert source.fetch(TOS_URL) is None
+    assert any("commercial" in w for w in source.warnings)
+    assert not any("gated" in w for w in source.warnings)
