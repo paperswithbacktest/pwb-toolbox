@@ -1,0 +1,135 @@
+# Converting PineScript to Backtrader
+
+`pwb_toolbox.converting` turns a PineScript strategy into a Backtrader one.
+
+```python
+from pwb_toolbox.converting import convert
+
+result = convert(pine_source)
+if result.ok:
+    print(result.code)
+else:
+    print("still needs work:", result.unsupported)
+```
+
+Paired with the scraping module, that is a pipeline from a published script to
+a runnable strategy:
+
+```python
+from pwb_toolbox.scraping import ScriptStore
+from pwb_toolbox.converting import convert
+
+for record in ScriptStore("script-corpus").records():
+    if record.language == "pinescript":
+        result = convert(record.code, class_name=None)
+        print(record.title, "->", "ok" if result.ok else result.unsupported)
+```
+
+## Read this first
+
+This is **not** a complete transpiler, and one cannot be written in a weekend.
+Pine is a real language with multi-timeframe requests, persistent variables,
+arrays, matrices, maps, user-defined types and libraries. Its execution model —
+every expression is a series evaluated on every bar — does not line up with
+Backtrader's, where an indicator is a line object built once and indexed per
+bar.
+
+What this does cover is the shape most published strategies actually take: a
+declaration, some inputs, a handful of `ta.*` indicators, conditions, and entry
+and exit calls. Everything else is **reported, not guessed**.
+
+A result with a non-empty `unsupported` list is a starting point plus a to-do
+list. It is not a working port, and `result.ok` tells you which you have.
+
+## The core translation
+
+Pine lets you write `ta.sma(close, 20)` anywhere because it is a series.
+Backtrader needs that indicator constructed once in `__init__` and then indexed
+in `next`. So the converter **hoists**:
+
+```pinescript
+maFast = ta.sma(close, fast)
+if ta.crossover(maFast, maSlow)
+    strategy.entry("long", strategy.long)
+```
+
+becomes
+
+```python
+def __init__(self):
+    self._sma_1 = bt.indicators.SMA(self.data.close, period=self.p.fast)
+    self._sma_2 = bt.indicators.SMA(self.data.close, period=self.p.slow)
+    self._cross_3 = bt.indicators.CrossOver(self._sma_1, self._sma_2)
+
+def next(self):
+    if self._cross_3[0] > 0:
+        self.buy()
+```
+
+Identical constructions are shared. `ta.crossover(a, b)` and
+`ta.crossunder(a, b)` on the same pair produce **one** `CrossOver`, compared in
+two directions — Backtrader recomputes every indicator on every bar, so a
+duplicate is pure waste.
+
+## What is translated
+
+| Pine | Backtrader |
+| --- | --- |
+| `strategy("T")` / `indicator("T")` | class name and docstring |
+| `input.int/float/bool/string(...)` | entries in `params` |
+| `ta.sma/ema/wma/rma/rsi/stdev/highest/lowest/atr/tr` | `bt.indicators.*` |
+| `ta.crossover/crossunder/cross` | `CrossOver` plus a direction test |
+| `ta.change(src, n)` | `src[0] - src[-n]` |
+| `close`, `open`, `high`, `low`, `volume` | `self.data.<line>[0]` |
+| `hl2`, `hlc3`, `ohlc4` | the arithmetic spelled out |
+| `close[3]` | `self.data.close[-3]` |
+| `and` / `or` / `not`, comparisons, arithmetic | the Python equivalents |
+| `cond ? a : b` | `a if cond else b` |
+| `if` / `else if` / `else` | the same, inside `next()` |
+| `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
+| `strategy.close`, `strategy.close_all`, plain `strategy.exit` | `self.close()` |
+| `math.abs/max/min/round`, `nz` | the Python equivalents |
+
+Pine inputs become real Backtrader params, so they stay tunable:
+
+```python
+cerebro.addstrategy(DualMACross, fast=3, slow=40)
+```
+
+## What is refused
+
+Reported in `result.unsupported`, never approximated:
+
+- `request.security` — multi-timeframe needs a second data feed and a resampling decision
+- `var` / `varip` — persistent state has to be designed onto the strategy
+- arrays, matrices, maps, user-defined functions and types
+- `for` / `while` loops
+- tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
+- `strategy.exit` carrying `stop`, `limit`, `trail_*` — bracket orders differ enough that a guess would silently change behavior
+- any identifier or call the converter does not know
+
+Reported separately in `result.ignored`, because dropping them changes nothing
+about how the strategy trades: `plot`, `plotshape`, `bgcolor`, `hline`, `fill`,
+`alertcondition`, `label.new`, `line.new`, and friends.
+
+Both lists are also written into the generated class's docstring, so a
+converted file explains its own gaps without needing the original result object.
+
+## A known simplification
+
+Only a bare `ta.*` call on the right-hand side of an assignment is hoisted into
+`__init__`. Compound expressions such as `spread = maFast - maSlow` are computed
+in `next()` from indexed values instead of becoming a Backtrader line.
+
+That is correct for evaluating conditions, which is what strategies do with
+them, and it avoids a class of bugs where a partially-lowered expression looks
+like a line object but is not one. The cost: `spread[1]` — history of a computed
+value — is refused rather than supported, because it would need a real line
+object to be meaningful.
+
+## Verification
+
+Unlike the scraping collectors, this module can be checked end to end locally,
+and is. The test suite compiles generated strategies and runs them through a
+real `cerebro` on synthetic bars, asserting that they execute, place orders, and
+respond to parameter overrides. "It converted" is never taken to mean "it works".

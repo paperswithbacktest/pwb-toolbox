@@ -181,6 +181,28 @@ non-redistributable.
 For more about scraping, see [docs/scraping.md](/docs/scraping.md).
 
 
+### Converting PineScript to Backtrader
+
+The `pwb_toolbox.converting` module turns a PineScript strategy into a
+Backtrader one, hoisting `ta.*` indicators into `__init__` and mapping Pine
+inputs onto tunable Backtrader params.
+
+```python
+from pwb_toolbox.converting import convert
+
+result = convert(pine_source)
+print(result.code if result.ok else result.unsupported)
+```
+
+It covers the shape most published strategies take — declaration, inputs,
+indicators, conditions, entries and exits. Anything else (`request.security`,
+`var`, arrays, loops, bracket orders) is reported in `result.unsupported`
+rather than approximated, so `result.ok` tells you whether you have a working
+port or a starting point.
+
+For more about converting, see [docs/converting.md](/docs/converting.md).
+
+
 ### Performance Analysis
 
 Any NAV series produced by `pwb_toolbox.backtesting.run_strategy` (or your own live

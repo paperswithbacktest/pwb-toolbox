@@ -5,11 +5,11 @@ execution, and performance analytics. Requires Python 3.10+.
 
 ## Layout
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
-- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`
+- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`
 
 ## Environment
 
@@ -47,7 +47,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (131 tests, ~4s)
+pytest tests/ -v                  # full suite (181 tests, ~14s)
 pytest tests/test_optimal_limit_order.py -v
 black pwb_toolbox/                # format; the repo is black-formatted
 black --check --diff pwb_toolbox/ # check without writing
@@ -63,6 +63,10 @@ black --check --diff pwb_toolbox/ # check without writing
   `pwb_toolbox.scraping` follows the same rule: HTTP is served by a fake session
   and `PoliteSession` takes injectable `sleep`/`monotonic` so rate-limiting and
   retry behavior can be asserted without real delays (see `tests/test_scraping.py`).
+- `pwb_toolbox.converting` emits Backtrader source, so its tests compile the
+  generated code and run it through a real `cerebro` on synthetic bars — a
+  conversion that parses but does not execute or trade is a failure, not a pass
+  (see the end-to-end section of `tests/test_converting.py`).
 - Regression tests for fixed bugs pin the previous numeric output where the old
   behavior must be preserved (see `_LEGACY_DEFAULT_QUOTE` in
   `tests/test_optimal_limit_order.py`).
