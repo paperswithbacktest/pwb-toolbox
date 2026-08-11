@@ -23,6 +23,54 @@ it still gets repeated here — the block is the checklist of record. No block a
 when nothing is needed; do not pad it with optional suggestions, or it stops
 meaning anything.
 
+Commands in that block get pasted into **Windows PowerShell**, so write them for
+PowerShell rather than bash. No `curl … | sed` pipelines — `curl` is an alias for
+`Invoke-WebRequest` there and takes different arguments, and `sed` does not exist.
+No `~` for the home directory (use `$HOME`), and no `&&` chaining, which Windows
+PowerShell 5.1 rejects. When the text being written contains em dashes or emoji,
+append with `[IO.File]::AppendAllText(..., (New-Object Text.UTF8Encoding $false))` —
+`Add-Content` defaults to ANSI on 5.1 and mangles them. Pin any
+`raw.githubusercontent.com` URL to a commit SHA rather than to `main`: a branch that
+has not merged yet still serves the old file, so the command silently does nothing.
+
+Each step is one self-contained paste, and each step names the program it goes into
+and how to open it. "Export the key" is not a step; "Open PowerShell (`Win`+`R`, type
+`powershell`, press Enter), then paste this" is. Assume the reader does not know which
+application a given command belongs in, and does not want to work it out — that
+assumption is the whole point of the block. Never split one command across two
+numbered items, and never wrap a command in prose they have to reassemble. Where it
+helps, say what success looks like, so a step that prints nothing is not mistaken for
+a step that failed.
+
+If a step happens in a GUI rather than a shell, describe it with the same
+specificity: name the window, the menu path, and the button text. Claude cannot open
+anything on the user's machine — it runs in a remote container — so the directions
+have to stand on their own.
+
+Never ask the user to hand-edit a command to insert a value. Told to "swap in your
+key," they reasonably paste the key on its own line, and PowerShell tries to run it
+as a command. Prompt for it instead — `$k = Read-Host 'Paste your key'` — and use
+`$k` in the next line. That also keeps the secret out of PSReadLine's history file,
+which records every line entered at the prompt in plaintext, failed ones included.
+Same rule for any placeholder, secret or not: the paste must work verbatim.
+
+A full block looks like this:
+
+````
+## 🔴 NEEDS YOU
+
+1. **Open PowerShell** — press `Win`+`R`, type `powershell`, press Enter. A window
+   opens with a `PS C:\Users\you>` prompt.
+2. **Set the key** — paste this one line, swapping in your real key, then press Enter:
+   ```powershell
+   [Environment]::SetEnvironmentVariable('API_KEY_21ST','your-key-here','User')
+   ```
+   It prints nothing when it works.
+3. **Restart Claude Code** — close that terminal window entirely and open a new one,
+   then run `/mcp` and choose `21st` from the list. Windows that were already open
+   will not see the new variable.
+````
+
 ## Layout
 
 - `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`)
