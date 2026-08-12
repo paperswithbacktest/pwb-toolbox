@@ -300,7 +300,32 @@ textarea::placeholder{color:var(--ink-3)}
 .vibe input{position:absolute;opacity:0;inset:0;cursor:pointer;margin:0}
 .vibe:has(input:checked){background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .vibe:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.titlefield{
+  font:inherit;font-size:14px;width:100%;
+  background:var(--ground);color:var(--ink);
+  border:1px solid var(--edge);border-radius:var(--r-md);padding:9px 14px;
+}
+.titlefield::placeholder{color:var(--ink-3)}
 .compose-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* saved tracks sit under the printed ones, marked as yours */
+.book-divider{
+  display:flex;align-items:center;gap:10px;padding:12px 14px 6px;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.book-divider::after{content:"";flex:1;height:1px;background:var(--edge-soft)}
+/* the remove control is a sibling of the track button, never nested inside it */
+.book li.mine{display:flex;align-items:center;gap:2px;padding-right:8px}
+.book li.mine .track{flex:1;min-width:0}
+.tk-drop{
+  font:inherit;font-size:15px;line-height:1;cursor:pointer;
+  background:none;border:1px solid transparent;border-radius:50%;
+  width:26px;height:26px;flex:none;color:var(--ink-3);
+  transition:color .14s ease,border-color .14s ease;
+}
+.tk-drop:hover{color:var(--accent);border-color:var(--edge)}
+.book-empty{padding:10px 14px 14px;font-size:12px;color:var(--ink-3);margin:0}
 .hint{font-size:12px;color:var(--ink-3);line-height:1.6;margin:0}
 .hint code{
   font-family:var(--font-mono);font-size:11px;background:var(--ground-3);
@@ -328,7 +353,7 @@ footer kbd{
 
   <header class="masthead">
     <div class="brand">
-      <span class="eyebrow">Room 07 &middot; six tracks loaded</span>
+      <span class="eyebrow" id="trackCount">Room 07 &middot; six tracks loaded</span>
       <h1 class="wordmark">Karaoke <em>Box</em></h1>
     </div>
     <div class="remote">
@@ -423,15 +448,19 @@ someone puts a mic in my hand…"></textarea>
           <label class="vibe">Blues<input type="radio" name="vibe" value="blues"></label>
           <label class="vibe">Chant<input type="radio" name="vibe" value="chant"></label>
         </div>
+        <input type="text" id="titleIn" class="titlefield" maxlength="60"
+               placeholder="Title it (optional — otherwise I use the first line)">
         <div class="compose-actions">
           <button class="btn primary" id="btnQueue">Queue it up</button>
+          <button class="btn" id="btnSave">Save to songbook</button>
           <button class="btn ghost" id="btnShare">Copy share link</button>
-          <span class="said" id="said"></span>
         </div>
+        <span class="said" id="said"></span>
         <p class="hint">
-          Syllables are split automatically. To take control, hyphen&#8203;ate a word yourself &mdash;
-          <code>ex-tra-or-di-nar-y</code> &mdash; and those splits win. The melody is derived from
-          your text, so the same lyrics always come back as the same tune.
+          <b>Queue it up</b> plays it once; <b>Save to songbook</b> gives it a track number and
+          keeps it in this browser. Syllables are split automatically &mdash; to take control,
+          hyphen&#8203;ate a word yourself (<code>ex-tra-or-di-nar-y</code>) and those splits win.
+          The melody comes from your text, so the same lyrics always return as the same tune.
         </p>
       </div>
     </section>
@@ -855,8 +884,8 @@ var ui={};
 ["remoteDigits","npCode","npTitle","npCredit","mBar","mKey","mBpm","mState",
  "field","ball","lineCur","baseCur","fillCur","subCur","lineNext","baseNext","cue",
  "progressBar","chordCur","chordNext","btnPlay","btnRestart","optLoop","optDrums",
- "kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","btnQueue",
- "btnShare","said","announcer"].forEach(function(id){ ui[id]=document.getElementById(id); });
+ "trackCount","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
+ "btnSave","btnShare","said","announcer"].forEach(function(id){ ui[id]=document.getElementById(id); });
 
 function setState(s){ ui.mState.textContent=s; }
 
@@ -1014,25 +1043,120 @@ function load(song, autoplay){
 }
 
 /* ============================================================
-   7. SONGBOOK LIST
+   7. SONGBOOK — the printed tracks, plus whatever you have added
    ============================================================ */
+var STORE_KEY="karaoke-box/songbook/v1";
+var mine=[];            /* [{code, title, lyrics, vibe}] */
+var storageWorks=true;
+
+function readStore(){
+  try{
+    var raw=localStorage.getItem(STORE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ storageWorks=false; return []; }
+}
+function writeStore(){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(mine)); return true; }
+  catch(e){ storageWorks=false; return false; }
+}
+
+/* A saved entry stores the words, not the notes — composeSong is deterministic,
+   so rebuilding from the text gives back the identical tune every time. */
+function hydrate(entry){
+  if(!entry || !entry.lyrics || !VIBES[entry.vibe]) return null;
+  var s=composeSong(entry.lyrics, entry.vibe);
+  if(!s) return null;
+  s.code=entry.code;
+  s.title=entry.title||s.title;
+  s.credit=VIBES[entry.vibe].credit;
+  s.saved=true;
+  return s;
+}
+function library(){
+  return SONGS.concat(mine.map(hydrate).filter(Boolean));
+}
+function nextCode(){
+  var n=SONGS.length;
+  mine.forEach(function(e){ n=Math.max(n, parseInt(e.code,10)); });
+  return String(n+1).padStart(3,"0");
+}
+
+function row(s, entry){
+  var li=document.createElement("li");
+  var b=document.createElement("button");
+  b.className="track"; b.type="button"; b.dataset.code=s.code;
+  b.setAttribute("aria-current","false");
+
+  var beats=0; s.lines.forEach(function(L){ L.n.forEach(function(n){ beats+=n[1]; }); });
+  var secs=Math.round(beats*60/s.bpm);
+
+  /* built with nodes rather than innerHTML — a title you typed is never markup */
+  var code=document.createElement("span");
+  code.className="tk-code"; code.textContent=s.code;
+
+  var main=document.createElement("span"); main.className="tk-main";
+  var title=document.createElement("span");
+  title.className="tk-title"; title.textContent=s.title;
+  var credit=document.createElement("span");
+  credit.className="tk-credit"; credit.textContent=s.credit;
+  main.appendChild(title); main.appendChild(credit);
+
+  var meta=document.createElement("span"); meta.className="tk-meta";
+  var lvl=document.createElement("b"); lvl.textContent=s.level;
+  meta.appendChild(lvl);
+  meta.appendChild(document.createTextNode(
+    Math.floor(secs/60)+":"+String(secs%60).padStart(2,"0")+" · "+s.bpm));
+
+  b.appendChild(code); b.appendChild(main); b.appendChild(meta);
+  b.addEventListener("click", function(){ load(s, true); });
+  li.appendChild(b);
+
+  if(entry){
+    li.className="mine";
+    var drop=document.createElement("button");
+    drop.className="tk-drop"; drop.type="button"; drop.textContent="×";
+    drop.title="Remove "+s.title+" from the songbook";
+    drop.setAttribute("aria-label","Remove "+s.title+" from the songbook");
+    drop.addEventListener("click", function(){
+      mine=mine.filter(function(e){ return e.code!==entry.code; });
+      writeStore(); drawBook();
+      ui.said.textContent="Removed “"+s.title+"”.";
+    });
+    li.appendChild(drop);
+  }
+  return li;
+}
+
 function drawBook(){
   ui.book.innerHTML="";
-  SONGS.forEach(function(s){
-    var li=document.createElement("li");
-    var b=document.createElement("button");
-    b.className="track"; b.type="button"; b.dataset.code=s.code;
-    b.setAttribute("aria-current","false");
-    var beats=0; s.lines.forEach(function(L){ L.n.forEach(function(n){ beats+=n[1]; }); });
-    var secs=Math.round(beats*60/s.bpm);
-    b.innerHTML =
-      '<span class="tk-code">'+s.code+'</span>'+
-      '<span class="tk-main"><span class="tk-title">'+s.title+'</span>'+
-      '<span class="tk-credit">'+s.credit+'</span></span>'+
-      '<span class="tk-meta"><b>'+s.level+'</b>'+Math.floor(secs/60)+':'+String(secs%60).padStart(2,"0")+' · '+s.bpm+'</span>';
-    b.addEventListener("click", function(){ load(s, true); });
-    li.appendChild(b); ui.book.appendChild(li);
-  });
+  SONGS.forEach(function(s){ ui.book.appendChild(row(s, null)); });
+
+  if(mine.length){
+    var head=document.createElement("li");
+    head.className="book-divider"; head.textContent="Yours";
+    ui.book.appendChild(head);
+    mine.forEach(function(entry){
+      var s=hydrate(entry);
+      if(s) ui.book.appendChild(row(s, entry));
+    });
+    if(!storageWorks){
+      var warn=document.createElement("li");
+      warn.className="book-empty";
+      warn.textContent="This browser is blocking storage, so these last until you reload. The share link still carries a song anywhere.";
+      ui.book.appendChild(warn);
+    }
+  }
+  /* keep the highlight on whatever is loaded */
+  if(P.song){
+    Array.prototype.forEach.call(document.querySelectorAll(".track"),function(el){
+      el.setAttribute("aria-current", el.dataset.code===P.song.code ? "true":"false");
+    });
+  }
+
+  var total=SONGS.length+mine.length;
+  var WORDS=["no","one","two","three","four","five","six","seven","eight","nine","ten"];
+  ui.trackCount.textContent =
+    "Room 07 · "+(WORDS[total]||total)+" track"+(total===1?"":"s")+" loaded";
 }
 
 /* ============================================================
@@ -1225,20 +1349,45 @@ ui.kKey.addEventListener("input", function(){
   reanchor();
 });
 
-ui.btnQueue.addEventListener("click", function(){
+function composeFromForm(){
   var text=ui.lyricsIn.value.trim();
-  if(!text){ ui.said.textContent="Type a line or two first."; ui.lyricsIn.focus(); return; }
+  if(!text){ ui.said.textContent="Type a line or two first."; ui.lyricsIn.focus(); return null; }
   var s=composeSong(text, currentVibe());
-  if(!s){ ui.said.textContent="Nothing singable in there."; return; }
+  if(!s){ ui.said.textContent="Nothing singable in there."; return null; }
+  var given=ui.titleIn.value.trim();
+  if(given) s.title=given;
+  return s;
+}
+
+ui.btnQueue.addEventListener("click", function(){
+  var s=composeFromForm();
+  if(!s) return;
   var n=s.lines.length;
   ui.said.textContent="Scored "+n+" line"+(n===1?"":"s")+".";
   load(s, true);
 });
 
+ui.btnSave.addEventListener("click", function(){
+  var s=composeFromForm();
+  if(!s) return;
+  var entry={
+    code:nextCode(), title:s.title,
+    lyrics:ui.lyricsIn.value.trim(), vibe:currentVibe()
+  };
+  mine.push(entry);
+  s.code=entry.code; s.saved=true;
+  var stored=writeStore();
+  drawBook();
+  load(s, false);
+  ui.said.textContent = stored
+    ? "Saved as track "+entry.code+" — punch "+entry.code+" any time."
+    : "Added as track "+entry.code+", but this browser blocks storage so it will not survive a reload.";
+});
+
 ui.btnShare.addEventListener("click", function(){
   var text=ui.lyricsIn.value.trim();
   if(!text){ ui.said.textContent="Nothing to share yet."; return; }
-  var payload=JSON.stringify({l:text, v:currentVibe()});
+  var payload=JSON.stringify({l:text, v:currentVibe(), t:ui.titleIn.value.trim()||undefined});
   var b64=btoa(unescape(encodeURIComponent(payload))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
   var url=location.origin+location.pathname+"#s="+b64;
   if(navigator.clipboard && navigator.clipboard.writeText){
@@ -1270,7 +1419,7 @@ document.addEventListener("keydown", function(e){
     showDigits();
     clearTimeout(digitTimer);
     if(digits.length===3){
-      var hit=SONGS.filter(function(s){return s.code===digits;})[0];
+      var hit=library().filter(function(s){return s.code===digits;})[0];
       if(hit){ load(hit,true); }
       digitTimer=setTimeout(function(){ digits=""; showDigits(); },900);
     } else {
@@ -1282,6 +1431,7 @@ document.addEventListener("keydown", function(e){
 window.addEventListener("resize", function(){ renderLine(shownLine,true); });
 
 /* boot */
+mine = readStore().filter(function(e){ return e && e.lyrics && VIBES[e.vibe]; });
 drawBook();
 showDigits();
 
@@ -1292,11 +1442,16 @@ if(location.hash.indexOf("#s=")===0){
     var json=decodeURIComponent(escape(atob(raw)));
     var data=JSON.parse(json);
     if(data && data.l){
+      var vibe = VIBES[data.v] ? data.v : "anthem";
       ui.lyricsIn.value=data.l;
-      var vr=document.querySelector('input[name="vibe"][value="'+(data.v||"anthem")+'"]');
+      if(data.t) ui.titleIn.value=data.t;
+      var vr=document.querySelector('input[name="vibe"][value="'+vibe+'"]');
       if(vr) vr.checked=true;
-      booted=composeSong(data.l, data.v||"anthem");
-      if(booted) ui.said.textContent="Loaded from a shared link.";
+      booted=composeSong(data.l, vibe);
+      if(booted){
+        if(data.t) booted.title=data.t;
+        ui.said.textContent="Loaded from a shared link. Save it to keep it in the songbook.";
+      }
     }
   }catch(err){ /* a mangled link just falls through to track 001 */ }
 }
