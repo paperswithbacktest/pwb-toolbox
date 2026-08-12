@@ -144,6 +144,43 @@ body{
   font-variant-numeric:tabular-nums;white-space:nowrap;
 }
 .chip.live{color:var(--wipe-b);border-color:rgba(255,179,71,.35);background:rgba(255,179,71,.08)}
+.chip.score{color:#7CE7A8;border-color:rgba(124,231,168,.35);background:rgba(124,231,168,.08)}
+.chip.score b{font-weight:700;font-variant-numeric:tabular-nums}
+.chip[hidden]{display:none}
+
+/* pitch ribbon: the tune as bars, your voice as dots along it */
+.scorebar{display:flex;flex-direction:column;gap:5px}
+.scorebar[hidden]{display:none}
+.ribbon{
+  width:100%;height:76px;display:block;
+  background:rgba(255,255,255,.022);
+  border:1px solid rgba(255,255,255,.06);border-radius:var(--r-md);
+}
+.scoremeta{
+  display:flex;justify-content:space-between;gap:12px;
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--screen-dimmer);
+}
+.octave-note{opacity:.75;white-space:nowrap}
+
+.result{
+  display:flex;align-items:center;gap:18px;
+  border:1px solid rgba(124,231,168,.25);border-radius:var(--r-md);
+  background:rgba(124,231,168,.06);padding:12px 16px;
+}
+.result[hidden]{display:none}
+.result-score{display:flex;align-items:baseline;gap:4px;flex:none}
+.result-score b{
+  font-family:var(--font-display);font-size:40px;font-weight:700;
+  color:#7CE7A8;line-height:1;font-variant-numeric:tabular-nums;
+}
+.result-score span{
+  font-family:var(--font-display);font-size:17px;color:var(--screen-dimmer);
+  font-variant-numeric:tabular-nums;
+}
+.result-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.result-body strong{font-family:var(--font-display);font-size:18px;color:var(--screen-ink)}
+.result-body span{font-size:12px;color:var(--screen-dim)}
 
 /* lyric field */
 .field{flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;padding:8px 2px 4px;position:relative}
@@ -400,7 +437,24 @@ footer kbd{
         <span class="chip" id="mBar">BAR 0</span>
         <span class="chip" id="mKey">KEY C</span>
         <span class="chip" id="mBpm">104 BPM</span>
+        <span class="chip score" id="mScoreWrap" hidden>SCORE <b id="mScore">0</b></span>
         <span class="chip live" id="mState">READY</span>
+      </div>
+    </div>
+
+    <div class="scorebar" id="scorebar" hidden>
+      <canvas class="ribbon" id="ribbon" aria-hidden="true"></canvas>
+      <div class="scoremeta">
+        <span id="scoreNote">Sing — the bars are the tune, the dots are you.</span>
+        <span class="octave-note">octave-forgiving</span>
+      </div>
+    </div>
+
+    <div class="result" id="result" hidden role="status">
+      <div class="result-score"><b id="resultScore">0</b><span>/ 100</span></div>
+      <div class="result-body">
+        <strong id="resultRank">—</strong>
+        <span id="resultDetail"></span>
       </div>
     </div>
 
@@ -451,6 +505,7 @@ footer kbd{
     <label class="toggle"><input type="checkbox" id="optLoop"> Loop</label>
     <label class="toggle"><input type="checkbox" id="optDrums" checked> Beat</label>
     <label class="toggle"><input type="checkbox" id="optDuet"> Duet</label>
+    <label class="toggle"><input type="checkbox" id="optScore"> Score me</label>
 
     <div class="knobs">
       <div class="knob">
@@ -893,9 +948,74 @@ function prepare(song, duet){
   }
 
   events.sort(function(a,b){ return a.t-b.t; });
-  return {lines:lines, lanes:lanes, events:events, chords:chordSpans,
+
+  /* what each singer is meant to be on at any moment — the yardstick for scoring */
+  var notes={a:[],b:[]};
+  events.forEach(function(e){
+    if(e.type==="lead") notes[e.voice].push({t:e.t, end:e.t+e.dur, midi:e.midi});
+  });
+  notes.a.sort(function(x,y){ return x.t-y.t; });
+  notes.b.sort(function(x,y){ return x.t-y.t; });
+
+  return {lines:lines, lanes:lanes, events:events, chords:chordSpans, notes:notes,
           total:total, bpb:bpb, duet:!!duet, round:round};
 }
+
+/* ============================================================
+   3b. PITCH DETECTION (YIN)
+   Plain autocorrelation octave-jumps badly on a sung note, because a
+   voice is rich in harmonics. YIN's cumulative mean normalised difference
+   is what keeps the estimate on the fundamental.
+   ============================================================ */
+var PITCH_LO=70, PITCH_HI=1050;      /* Hz — comfortably around the human range */
+
+function detectPitch(buf, rate){
+  /* halve the sample rate first: it quarters the work and costs nothing,
+     since nothing sung reaches anywhere near the new Nyquist */
+  var n=buf.length>>1, x=new Float32Array(n);
+  for(var i=0;i<n;i++) x[i]=(buf[2*i]+buf[2*i+1])*0.5;
+  var sr=rate/2;
+
+  var rms=0;
+  for(i=0;i<n;i++) rms+=x[i]*x[i];
+  rms=Math.sqrt(rms/n);
+  if(rms<0.012) return {hz:-1, clarity:0, rms:rms};   /* silence, or room noise */
+
+  var half=n>>1;
+  var tauMin=Math.max(2, Math.floor(sr/PITCH_HI));
+  var tauMax=Math.min(half-1, Math.ceil(sr/PITCH_LO));
+
+  var cmnd=new Float32Array(tauMax+1), running=0, tau, j;
+  for(tau=1; tau<=tauMax; tau++){
+    var sum=0;
+    for(j=0;j<half;j++){ var d=x[j]-x[j+tau]; sum+=d*d; }
+    running+=sum;
+    cmnd[tau]= running>0 ? sum*tau/running : 1;
+  }
+
+  var THRESH=0.13, best=-1;
+  for(tau=tauMin; tau<=tauMax; tau++){
+    if(cmnd[tau]<THRESH){
+      while(tau+1<=tauMax && cmnd[tau+1]<cmnd[tau]) tau++;   /* walk to the local floor */
+      best=tau; break;
+    }
+  }
+  if(best<0){                                   /* nothing convincing — take the best dip */
+    var lo=1e9;
+    for(tau=tauMin; tau<=tauMax; tau++) if(cmnd[tau]<lo){ lo=cmnd[tau]; best=tau; }
+    if(lo>0.45) return {hz:-1, clarity:0, rms:rms};
+  }
+
+  /* parabolic interpolation around the minimum, for sub-sample accuracy */
+  var t0=Math.max(tauMin,best-1), t2=Math.min(tauMax,best+1), refined=best;
+  if(t2>t0){
+    var a=cmnd[t0], b2=cmnd[best], c=cmnd[t2], denom=2*(2*b2-c-a);
+    if(denom!==0) refined = best + (c-a)/denom;
+  }
+  return {hz: sr/refined, clarity: 1-cmnd[best], rms:rms};
+}
+
+function hzToMidi(hz){ return 69 + 12*Math.log(hz/440)/Math.LN2; }
 
 /* ============================================================
    4. PLAYER
@@ -943,7 +1063,8 @@ function schedule(){
     P.evIdx++;
   }
   if(P.evIdx>=e.length && nowBeat() >= P.prep.total){
-    if(P.loop){ P.skipCount=true; restart(true); } else { stop(); }
+    if(P.loop){ P.skipCount=true; restart(true); }
+    else { finishScore(); stop(); }
   }
 }
 
@@ -984,6 +1105,7 @@ function stop(){
 }
 function restart(keepGoing){
   var wasPlaying = P.playing || keepGoing;
+  if(S.on) resetScore();
   clearInterval(P.timer); P.timer=null;
   P.playing=false; P.anchorBeat=0; killActive();
   lanes[0].shown=-1; lanes[1].shown=-1;
@@ -1005,7 +1127,8 @@ var ui={};
  "field","laneA","baseA","fillA","ballA","partA",
  "laneB","baseB","fillB","ballB","partB","subCur","lineNext","baseNext","cue","optDuet",
  "progressBar","chordCur","chordNext","btnPlay","btnRestart","optLoop","optDrums",
- "trackCount","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
+ "trackCount","mScoreWrap","mScore","scorebar","ribbon","scoreNote","optScore",
+ "result","resultScore","resultRank","resultDetail","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
  "btnSave","btnShare","said","announcer"].forEach(function(id){ ui[id]=document.getElementById(id); });
 
 function setState(s){ ui.mState.textContent=s; }
@@ -1146,6 +1269,15 @@ function frame(){
   var atA = paintLane(lanes[0], b, counting);
   paintLane(lanes[1], b, counting);
 
+  if(S.on){
+    listen(b, counting);
+    drawRibbon(b);
+    ui.mScore.textContent=liveScore();
+    ui.scoreNote.textContent = S.target>0
+      ? ("you " + (S.live>0 ? noteName(S.live) : "—") + " · aim " + noteName(S.target))
+      : (S.live>0 ? "you "+noteName(S.live) : "sing — bars are the tune, dots are you");
+  }
+
   /* the translation line and the look-ahead follow the lead singer */
   var curA = atA ? lanes[0].entries[atA.idx] : null;
   ui.subCur.textContent = curA ? (curA.sub||"") : "";
@@ -1177,7 +1309,224 @@ function frame(){
   }
 }
 
+/* ============================================================
+   5b. SCORING
+   ============================================================ */
+var S = {
+  on:false, analyser:null, buf:null, stream:null,
+  credit:0, chances:0,
+  runFrom:-1, bestRun:0,      /* streaks measured in beats, not frames */
+  lastTarget:-1, notes:0, notesHit:0, noteScored:false,
+  history:[],                 /* {beat, midi, hit} for the ribbon */
+  live:-1, target:-1, done:null
+};
+
+function scoredPart(){
+  /* the part you muted is the part you are singing, so that is what gets graded */
+  if(P.prep && P.prep.duet){
+    if(lanes[0].muted && !lanes[1].muted) return "a";
+    if(lanes[1].muted && !lanes[0].muted) return "b";
+  }
+  return "a";
+}
+
+/* the index of the note being sung, so that two notes at the same pitch
+   still count as two — comparing pitches alone silently merges them */
+function targetIndexAt(beat, part){
+  var list=P.prep && P.prep.notes ? P.prep.notes[part] : null;
+  if(!list) return -1;
+  for(var i=0;i<list.length;i++){
+    if(beat>=list[i].t && beat<list[i].end) return i;
+    if(list[i].t>beat) break;
+  }
+  return -1;
+}
+function targetAt(beat, part){
+  var i=targetIndexAt(beat, part);
+  return i<0 ? -1 : P.prep.notes[part][i].midi+P.transpose;
+}
+
+/* Distance to the target, ignoring which octave you sang it in — a bass
+   answering a soprano line is singing the note, not missing it by twelve. */
+function centsOff(sung, target){
+  var d=(sung-target)%12;
+  if(d>6) d-=12; if(d<-6) d+=12;
+  return d;
+}
+
+function resetScore(){
+  S.credit=0; S.chances=0;
+  S.runFrom=-1; S.bestRun=0;
+  S.lastTarget=-1; S.notes=0; S.notesHit=0; S.noteScored=false;
+  S.history=[]; S.live=-1; S.target=-1; S.done=null;
+  ui.result.hidden=true;
+  ui.mScore.textContent="0";
+}
+
+async function micOn(){
+  initAudio();
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    ui.said.textContent="This browser has no microphone API.";
+    return false;
+  }
+  try{
+    S.stream = await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}
+    });
+  }catch(err){
+    /* an embedded page is often denied the microphone outright */
+    var why = (err && err.name==="NotAllowedError")
+      ? "The microphone was blocked here. If this page is embedded, open it in its own tab and try again."
+      : (err && err.name==="NotFoundError")
+        ? "No microphone found."
+        : "Could not open the microphone"+(err && err.name ? " ("+err.name+")" : "")+".";
+    ui.said.textContent=why;
+    ui.scoreNote.textContent=why;
+    return false;
+  }
+  var src=ctx.createMediaStreamSource(S.stream);
+  var hp=ctx.createBiquadFilter(); hp.type="highpass"; hp.frequency.value=60;
+  S.analyser=ctx.createAnalyser();
+  S.analyser.fftSize=2048;
+  /* deliberately not connected onward — routing a live mic to the speakers
+     in a page that is already playing a backing track is a feedback loop */
+  src.connect(hp); hp.connect(S.analyser);
+  S.buf=new Float32Array(S.analyser.fftSize);
+  return true;
+}
+
+function micOff(){
+  if(S.stream) S.stream.getTracks().forEach(function(t){ t.stop(); });
+  S.stream=null; S.analyser=null; S.buf=null;
+}
+
+function rank(score){
+  if(score>=95) return "Perfect pitch";
+  if(score>=87) return "Showstopper";
+  if(score>=76) return "Crowd pleaser";
+  if(score>=62) return "Solid set";
+  if(score>=45) return "Warming up";
+  return "Keep practising";
+}
+
+function listen(beat, counting){
+  if(!S.on || !S.analyser) return;
+  S.analyser.getFloatTimeDomainData(S.buf);
+  var got=detectPitch(S.buf, ctx.sampleRate);
+  var part=scoredPart();
+  var ti=targetIndexAt(beat, part);
+  var target = ti<0 ? -1 : P.prep.notes[part][ti].midi+P.transpose;
+  S.target=target;
+  S.live = got.hz>0 ? hzToMidi(got.hz) : -1;
+
+  if(!P.playing || counting || target<0){
+    if(S.runFrom>=0){ S.bestRun=Math.max(S.bestRun, beat-S.runFrom); S.runFrom=-1; }
+    return;
+  }
+
+  /* a new note to aim at */
+  if(ti!==S.lastTarget){
+    S.lastTarget=ti; S.notes++; S.noteScored=false;
+  }
+
+  S.chances++;
+  var hit=false;
+  if(S.live>0){
+    var off=Math.abs(centsOff(S.live, target));
+    /* full marks within a quarter-tone, tailing to nothing at two semitones */
+    S.credit += off<=0.5 ? 1 : (off>=2 ? 0 : 1-(off-0.5)/1.5);
+    hit = off<=0.9;
+  }
+  if(hit){
+    if(S.runFrom<0) S.runFrom=beat;
+    if(!S.noteScored){ S.noteScored=true; S.notesHit++; }
+  } else if(S.runFrom>=0){
+    S.bestRun=Math.max(S.bestRun, beat-S.runFrom); S.runFrom=-1;
+  }
+
+  S.history.push({beat:beat, midi:S.live, target:target, hit:hit});
+  if(S.history.length>900) S.history.shift();
+}
+
+function liveScore(){
+  return S.chances ? Math.round(100*S.credit/S.chances) : 0;
+}
+
+function finishScore(){
+  if(!S.on || S.chances<8) return;
+  if(S.runFrom>=0){ S.bestRun=Math.max(S.bestRun, P.prep.total-S.runFrom); S.runFrom=-1; }
+  var sc=liveScore(), secs=S.bestRun*secPerBeat();
+  S.done={score:sc, rank:rank(sc), run:secs, notes:S.notes, hit:S.notesHit};
+  ui.resultScore.textContent=sc;
+  ui.resultRank.textContent=S.done.rank;
+  ui.resultDetail.textContent =
+    S.notesHit+" of "+S.notes+" notes landed · longest run in tune "+secs.toFixed(1)+"s";
+  ui.result.hidden=false;
+}
+
+/* ---------- the pitch ribbon ---------- */
+function drawRibbon(beat){
+  var cv=ui.ribbon, g=cv.getContext("2d");
+  var W=cv.clientWidth, H=cv.clientHeight, dpr=Math.min(2, window.devicePixelRatio||1);
+  if(cv.width!==Math.round(W*dpr) || cv.height!==Math.round(H*dpr)){
+    cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+  }
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,W,H);
+  if(!P.prep) return;
+
+  var BACK=6, AHEAD=2, span=BACK+AHEAD;            /* beats of context */
+  var x0=beat-BACK;
+  function bx(b){ return (b-x0)/span*W; }
+
+  var part=scoredPart();
+  var list=P.prep.notes[part]||[];
+
+  /* centre the view on whatever is being sung right now */
+  var centre = S.target>0 ? S.target : 66;
+  var RANGE=9;                                      /* semitones shown either side */
+  function py(m){
+    var d=centsOff(m, centre);
+    return H/2 - (d/RANGE)*(H/2-8);
+  }
+
+  /* the line you are aiming at */
+  for(var i=0;i<list.length;i++){
+    var nt=list[i];
+    if(nt.end<x0 || nt.t>beat+AHEAD) continue;
+    var a=bx(Math.max(nt.t,x0)), b2=bx(Math.min(nt.end, beat+AHEAD));
+    var y=py(nt.midi+P.transpose);
+    g.fillStyle = part==="b" ? "rgba(53,214,192,.30)" : "rgba(255,120,120,.28)";
+    g.beginPath();
+    if(g.roundRect) g.roundRect(a, y-4, Math.max(2,b2-a), 8, 4);
+    else g.rect(a, y-4, Math.max(2,b2-a), 8);
+    g.fill();
+  }
+
+  /* the playhead */
+  g.strokeStyle="rgba(255,255,255,.16)"; g.lineWidth=1;
+  g.beginPath(); g.moveTo(bx(beat),0); g.lineTo(bx(beat),H); g.stroke();
+
+  /* what you actually sang */
+  for(i=0;i<S.history.length;i++){
+    var h=S.history[i];
+    if(h.beat<x0 || h.midi<0) continue;
+    g.fillStyle = h.hit ? "#7CE7A8" : "#FFB347";
+    g.fillRect(bx(h.beat)-1.5, py(h.midi)-1.5, 3, 3);
+  }
+}
+
 var NOTE_NAMES=["C","C♯","D","E♭","E","F","F♯","G","A♭","A","B♭","B"];
+function noteName(midi){
+  var r=Math.round(midi);
+  return NOTE_NAMES[((r%12)+12)%12] + (Math.floor(r/12)-1);
+}
+
+/* read-only hook for the browser test harness; the page never reads it back */
+window.__karaokeProbe=function(){
+  return {live:S.live, target:S.target, credit:S.credit, chances:S.chances,
+          score:liveScore(), on:S.on, part:scoredPart()};
+};
 function transposeName(name){
   if(!CHORD_TABLE[name]) return name;
   var root=CHORD_TABLE[name][0], suffix=name.replace(/^[A-G][b#]?/,"");
@@ -1193,6 +1542,7 @@ function load(song, autoplay){
   clearInterval(P.timer); P.timer=null; P.playing=false; killActive();
   P.song=song; P.prep=prepare(song, P.duet); P.anchorBeat=0;
   setLaneEntries();
+  if(S.on) resetScore();
 
   ui.npCode.textContent=song.code;
   ui.npTitle.textContent=song.title;
@@ -1513,6 +1863,25 @@ ui.optDuet.addEventListener("change", function(){
   ui.said.textContent = P.duet
     ? (P.prep.round ? "Duet: a round — B comes in behind A." : "Duet: parts A and B.")
     : "";
+});
+
+ui.optScore.addEventListener("change", async function(){
+  if(this.checked){
+    this.disabled=true;
+    var ok=await micOn();
+    this.disabled=false;
+    if(!ok){ this.checked=false; return; }
+    S.on=true;
+    resetScore();
+    ui.scorebar.hidden=false;
+    ui.mScoreWrap.hidden=false;
+    ui.scoreNote.textContent="Sing — the bars are the tune, the dots are you.";
+  } else {
+    S.on=false; micOff();
+    ui.scorebar.hidden=true;
+    ui.mScoreWrap.hidden=true;
+    ui.result.hidden=true;
+  }
 });
 
 lanes.forEach(function(L){
