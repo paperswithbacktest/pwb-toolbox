@@ -170,21 +170,26 @@ It is a single self-contained file: both typefaces are embedded as base64 woff2,
 it opens from `file://` with no build step and no network, which is also why it is
 ~120 KB. Rebuilding means re-querying the skill, not editing the base64 by hand.
 
-`.github/workflows/pages.yml` publishes `docs/` to GitHub Pages on every push to
-`main` that touches it.
+`docs/` is published straight from the branch — **Settings → Pages → Source →
+"Deploy from a branch"**, branch `main`, folder `/docs`. GitHub builds and serves it
+itself; no workflow is involved, and the build shows up in Actions as a
+`pages build and deployment` run that nothing in this repo authors.
 
-Enabling Pages is a one-time manual step: **Settings → Pages → Source → "GitHub
-Actions"**. It cannot be automated from a workflow here. `actions/configure-pages`
-runs with `enablement: true`, but the default `GITHUB_TOKEN` is not permitted to
-create a Pages site — run 1 failed with `Create Pages site failed. Error: Resource
-not accessible by integration`. The `pages: write` permission covers deploying to a
-site that already exists, not creating one; creating needs a token with admin
-rights. The flag is kept because it is a no-op once Pages exists and would work
-under such a token.
+That is what makes `docs/.nojekyll` load-bearing rather than decorative. The branch
+source runs the folder through Jekyll, which would otherwise try to build the `.md`
+files sitting beside `index.html`. The file is empty — its presence is the entire
+signal.
 
-`docs/.nojekyll` only matters on the fallback "deploy from a branch" source, which
-does run Jekyll and would otherwise try to build the `.md` files sitting beside
-`index.html`. The Actions path serves the artifact verbatim and ignores it.
+There used to be a `.github/workflows/pages.yml` that deployed the same directory
+through `actions/deploy-pages`. It never once succeeded, and it was removed rather
+than left to add a red X to every push touching `docs/`. Two reasons, either
+sufficient: a workflow cannot enable Pages here in the first place, because the
+default `GITHUB_TOKEN` may not create a Pages site (`Create Pages site failed.
+Error: Resource not accessible by integration` — `pages: write` covers deploying to
+a site that already exists, not creating one); and once a branch source is selected,
+`actions/deploy-pages` cannot target it at all, since it only deploys to sites whose
+build type is `workflow`. Reviving it would mean switching Source back to "GitHub
+Actions" and enabling Pages by hand first.
 
 The installer also drops six companion skills (`design`, `design-system`,
 `ui-styling`, `brand`, `slides`, `banner-design`) alongside the main one. They were
