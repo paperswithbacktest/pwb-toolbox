@@ -38,13 +38,21 @@ def _read_parquet_files(paths: list[str], desc: str) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
 
-def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str) -> pd.DataFrame:
+def _load_dataset_from_pwb(
+    dataset_name: str, split: str, pwb_api_key: str
+) -> pd.DataFrame:
     base_url = "https://data.paperswithbacktest.com/v1/datasets"
-    resp = requests.get(f"{base_url}/{dataset_name}", params={"pwb_api_key": pwb_api_key, "split": split}, timeout=30)
+    resp = requests.get(
+        f"{base_url}/{dataset_name}",
+        params={"pwb_api_key": pwb_api_key, "split": split},
+        timeout=30,
+    )
     resp.raise_for_status()
     files = resp.json().get("files", [])
     if not files:
-        raise ValueError(f"No files available for dataset '{dataset_name}' and split '{split}'")
+        raise ValueError(
+            f"No files available for dataset '{dataset_name}' and split '{split}'"
+        )
 
     print(f"Downloading {len(files)} parquet files from PWB...")
     return _read_parquet_files(files, desc=f"PWB {dataset_name}")
@@ -60,7 +68,9 @@ def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]
         return sorted(matched)
 
     # Fallback for unusual naming conventions.
-    return sorted([f for f in repo_files if f.endswith(".parquet") and f"/{split}" in f])
+    return sorted(
+        [f for f in repo_files if f.endswith(".parquet") and f"/{split}" in f]
+    )
 
 
 YFINANCE_FALLBACK_DATASETS = {
@@ -79,7 +89,9 @@ def _yfinance_ticker(dataset_name: str, symbol: str) -> str:
     return symbol
 
 
-def _load_dataset_from_yfinance(dataset_name: str, symbols: list[str] | None) -> pd.DataFrame:
+def _load_dataset_from_yfinance(
+    dataset_name: str, symbols: list[str] | None
+) -> pd.DataFrame:
     if not symbols:
         raise ValueError(
             f"No free yfinance fallback for a full-universe load of '{dataset_name}'; "
@@ -110,7 +122,16 @@ def _load_dataset_from_yfinance(dataset_name: str, symbols: list[str] | None) ->
         hist["symbol"] = symbol
         keep = [
             c
-            for c in ["date", "symbol", "open", "high", "low", "close", "adj_close", "volume"]
+            for c in [
+                "date",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "adj_close",
+                "volume",
+            ]
             if c in hist.columns
         ]
         frames.append(hist[keep])
@@ -118,7 +139,9 @@ def _load_dataset_from_yfinance(dataset_name: str, symbols: list[str] | None) ->
     if not frames:
         raise ValueError(f"yfinance returned no data for any of {symbols}")
 
-    print(f"Loaded {len(frames)} symbol(s) from yfinance (free fallback, no PWB/HF token)...")
+    print(
+        f"Loaded {len(frames)} symbol(s) from yfinance (free fallback, no PWB/HF token)..."
+    )
     return pd.concat(frames, ignore_index=True)
 
 
@@ -128,9 +151,15 @@ def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str) -> pd.Da
     repo_files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
     parquet_files = _list_hf_split_parquet_files(repo_files, split)
     if not parquet_files:
-        raise ValueError(f"No parquet files found for split '{split}' in dataset '{repo_id}'.")
+        raise ValueError(
+            f"No parquet files found for split '{split}' in dataset '{repo_id}'."
+        )
 
-    iterator = tqdm(parquet_files, desc=f"HF {dataset_name}", unit="file") if len(parquet_files) > 1 else parquet_files
+    iterator = (
+        tqdm(parquet_files, desc=f"HF {dataset_name}", unit="file")
+        if len(parquet_files) > 1
+        else parquet_files
+    )
     local_files = [
         hf_hub_download(
             repo_id=repo_id,
@@ -668,7 +697,7 @@ def load_dataset(
     extend=False,
     to_usd=True,
     rate_to_price=True,
-    use_hf=False
+    use_hf=False,
 ):
     split = "train"
 
@@ -685,7 +714,9 @@ def load_dataset(
         if hf_token:
             df = _load_dataset_from_hf(path, split=split, hf_token=hf_token)
         elif path in YFINANCE_FALLBACK_DATASETS:
-            df = _load_dataset_from_yfinance(path, symbols if isinstance(symbols, list) else None)
+            df = _load_dataset_from_yfinance(
+                path, symbols if isinstance(symbols, list) else None
+            )
         else:
             raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
 
@@ -884,7 +915,9 @@ def __convert_indices_to_usd(
     return pd.concat(frames, ignore_index=True)
 
 
-def __convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) -> pd.DataFrame:
+def __convert_bond_rates_to_prices(
+    df: pd.DataFrame, face_value: float = 100.0
+) -> pd.DataFrame:
     """
     Convert bond yields (in percent) to prices, in-place, for rows whose
     symbols encode maturity like 'US10Y', 'US2Y', 'US3M', etc.

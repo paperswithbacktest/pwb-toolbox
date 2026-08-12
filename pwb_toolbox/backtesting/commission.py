@@ -6,7 +6,6 @@ import scipy.stats as stats
 
 from ..datasets import get_pricing
 
-
 _MIN_OBS = 5  # need at least this many returns to attempt Gibbs
 _EPS = 1e-12  # numeric floor to avoid divide-by-zero
 

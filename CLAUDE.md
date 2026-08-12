@@ -83,15 +83,17 @@ A full block looks like this:
 ## Environment
 
 Dependencies live in `requirements.txt`; `requirements-dev.txt` adds `pytest`.
-CI (`.github/workflows/tests.yml`) runs `pip install -r requirements-dev.txt`
-then `pytest tests/ -v` on Python 3.11.
+CI (`.github/workflows/tests.yml`) runs two jobs on Python 3.11: `test`
+(`pytest tests/ -v`) and `format` (`black --check --diff pwb_toolbox/ tools/
+tests/`). They are separate jobs so a formatting nit cannot mask a real test
+failure, or the reverse.
 
 In Claude Code on the web, `.claude/hooks/session-start.sh` does this setup
 automatically: it builds a `.venv/` (the system interpreter has Debian-managed
 packages such as `cryptography` that pip cannot upgrade), installs
-`requirements-dev.txt` plus `black`, and exports `PATH` and `PYTHONPATH` so
-bare `python`, `pytest`, and `black` resolve to that venv. The hook is a no-op
-in local sessions, which manage their own environment.
+`requirements-dev.txt`, and exports `PATH` and `PYTHONPATH` so bare `python`,
+`pytest`, and `black` resolve to that venv. The hook is a no-op in local
+sessions, which manage their own environment.
 
 It runs asynchronously, so the session is usable immediately while packages
 install in the background — roughly a minute on a cold container, ~2s once it
@@ -103,7 +105,7 @@ To set the same thing up by hand:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt black
+pip install -r requirements-dev.txt
 export PYTHONPATH="$PWD"
 ```
 
@@ -118,14 +120,22 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ```bash
 pytest tests/ -v                  # full suite (170 tests, ~20s cold / ~3s warm)
 pytest tests/test_optimal_limit_order.py -v
-black pwb_toolbox/                # format; the repo is black-formatted
-black --check --diff pwb_toolbox/ # check without writing
+black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
+black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 ```
 
 ## Conventions
 
 - Formatting is `black` with default settings — see `.vscode/settings.json`,
   which also enables pylint with `--disable=relative-beyond-top-level`.
+  `black pwb_toolbox/ tools/ tests/` is the formatted surface, is clean, and is
+  gated by the `format` CI job. Do **not** run bare `black .`: it would also
+  rewrite `pwb_toolbox_legacy/` (superseded, kept as-is for reference) and the
+  vendored skill under `.claude/skills/`, which tracks upstream and is restored
+  by `uipro init` — neither is in the gated scope.
+  `black` is pinned in `requirements-dev.txt`; its stable style changes with
+  each January release, so an unpinned formatter would eventually fail CI on
+  code nobody touched. Bump the pin deliberately, reformatting in the same commit.
 - Tests must not require network access or a live broker. `ib_insync` calls are
   exercised against a mocked `IB` client (see `tests/test_ib_connector_calibration.py`),
   and dataset tests should not depend on `PWB_API_KEY` or a Hugging Face login.

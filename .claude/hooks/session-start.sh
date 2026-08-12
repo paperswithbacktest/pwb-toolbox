@@ -47,7 +47,8 @@ fi
 
 echo "Installing pwb-toolbox dependencies with $("$VENV/bin/python" --version)..."
 "$VENV/bin/python" -m pip install --quiet --upgrade pip
+# black now comes from requirements-dev.txt, pinned. Installing it separately
+# here would pull the latest release instead and disagree with CI's pin.
 "$VENV/bin/python" -m pip install --quiet -r requirements-dev.txt
-"$VENV/bin/python" -m pip install --quiet black
 
 echo "Dependencies installed. Run tests with: pytest tests/ -v"

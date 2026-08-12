@@ -5,6 +5,7 @@ except `symbol`/`quantity`/`time_in_seconds` (an `if symbol == "demo" or True:`
 always took the same hardcoded-demo branch), so every instrument silently got
 identical, non-calibrated pricing.
 """
+
 import math
 
 from pwb_toolbox.execution.optimal_limit_order import get_optimal_quote

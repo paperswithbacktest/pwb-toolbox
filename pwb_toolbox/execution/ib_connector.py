@@ -56,9 +56,7 @@ def _sigma_from_closes(
     prices = [c for c in closes if c and c > 0]
     if len(prices) < 5 or tick_size <= 0:
         return None
-    log_returns = [
-        math.log(prices[i] / prices[i - 1]) for i in range(1, len(prices))
-    ]
+    log_returns = [math.log(prices[i] / prices[i - 1]) for i in range(1, len(prices))]
     daily_vol = statistics.pstdev(log_returns)
     if not daily_vol:
         return None
@@ -201,7 +199,9 @@ class IBConnector:
         try:
             details = self.ib.reqContractDetails(contract)
         except Exception as exc:  # pragma: no cover - network failure
-            logging.warning("Could not fetch contract details for %s: %s", contract.symbol, exc)
+            logging.warning(
+                "Could not fetch contract details for %s: %s", contract.symbol, exc
+            )
             return None
         if details and details[0].minTick and details[0].minTick > 0:
             return details[0].minTick
