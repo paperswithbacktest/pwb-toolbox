@@ -320,6 +320,30 @@ input[type=range]::-moz-range-thumb{
   border:1px solid var(--edge);border-radius:var(--r-sm);padding:6px 10px;
 }
 .btn.small{padding:6px 12px;font-size:13px}
+.board-link{
+  display:flex;align-items:center;gap:10px;padding:11px 18px;
+  border-bottom:1px solid var(--edge-soft);
+}
+.board-link label{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-3);white-space:nowrap;
+}
+.board-link input{
+  font:inherit;font-size:13px;flex:1;min-width:0;
+  background:var(--ground);color:var(--ink);
+  border:1px solid var(--edge);border-radius:var(--r-sm);padding:6px 10px;
+}
+.board-status{
+  margin:0;padding:9px 18px;font-size:12px;line-height:1.5;
+  border-bottom:1px solid var(--edge-soft);color:var(--ink-2);
+}
+.board-status[hidden]{display:none}
+.board-status.ok{color:#2E9E62}
+.board-status.bad{color:var(--accent)}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .board-status.ok{color:#7CE7A8}
+}
+:root[data-theme="dark"] .board-status.ok{color:#7CE7A8}
 .board{list-style:none;margin:0;padding:6px 6px 10px;display:flex;flex-direction:column;gap:1px}
 .board li{
   display:grid;grid-template-columns:auto auto 1fr auto;gap:12px;align-items:baseline;
@@ -582,13 +606,20 @@ footer kbd{
     <section class="pane" aria-label="Leaderboard">
       <div class="pane-head">
         <h2>Leaderboard</h2>
-        <p>Best runs, this browser</p>
+        <p id="boardWhere">Best runs, this browser</p>
       </div>
       <div class="board-who">
         <label for="singerIn">Singing as</label>
         <input type="text" id="singerIn" maxlength="18" placeholder="You" autocomplete="off">
         <button class="btn ghost small" id="btnClearBoard">Clear</button>
       </div>
+      <div class="board-link">
+        <label for="boardUrl">Shared board</label>
+        <input type="text" id="boardUrl" autocomplete="off" spellcheck="false"
+               placeholder="http://192.168.1.5:8770 — blank keeps scores in this browser only">
+        <button class="btn ghost small" id="btnConnect">Connect</button>
+      </div>
+      <p class="board-status" id="boardStatus" hidden></p>
       <ol class="board" id="board"></ol>
     </section>
     </div>
@@ -1190,7 +1221,8 @@ var ui={};
  "progressBar","chordCur","chordNext","btnPlay","btnRestart","optLoop","optDrums",
  "trackCount","mScoreWrap","mScore","scorebar","ribbon","scoreNote","optScore",
  "result","resultScore","resultRank","resultDetail","resultFlag",
- "board","singerIn","btnClearBoard","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
+ "board","boardWhere","singerIn","btnClearBoard",
+ "boardUrl","btnConnect","boardStatus","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
  "btnSave","btnShare","said","announcer"].forEach(function(id){ ui[id]=document.getElementById(id); });
 
 function setState(s){ ui.mState.textContent=s; }
@@ -1498,9 +1530,102 @@ function whenLabel(iso){
   }catch(e){ return ""; }
 }
 
+/* ---------- shared board ----------
+   Off unless a server is actually configured, so the standalone page makes
+   no requests at all: a published artifact is sandboxed against outbound
+   traffic, and firing doomed fetches at it would only produce noise. */
+var URL_KEY="karaoke-box/board-url/v1";
+var boardEndpoint="";      /* "" = this browser only */
+var shared=[], sharedOk=false, freshAt=null;
+
+function metaEndpoint(){
+  var m=document.querySelector('meta[name="karaoke-board"]');
+  return m && m.content ? m.content : "";
+}
+function normalizeEndpoint(raw){
+  var v=(raw||"").trim().replace(/\/+$/,"");
+  if(!v) return "";
+  if(!/\/api\/scores$/.test(v)) v+="/api/scores";
+  try{ return new URL(v, location.href).href; }catch(e){ return ""; }
+}
+function endpointLabel(){
+  if(!boardEndpoint) return "";
+  try{ return new URL(boardEndpoint).host; }catch(e){ return boardEndpoint; }
+}
+function setStatus(text, kind){
+  ui.boardStatus.hidden=!text;
+  ui.boardStatus.textContent=text||"";
+  ui.boardStatus.className="board-status"+(kind?" "+kind:"");
+}
+
+function askServer(path, options){
+  var ctl = window.AbortController ? new AbortController() : null;
+  var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 5000) : null;
+  var opts = options||{};
+  if(ctl) opts.signal=ctl.signal;
+  return fetch(boardEndpoint+(path||""), opts).then(function(r){
+    if(timer) clearTimeout(timer);
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    return r.json();
+  }, function(err){
+    if(timer) clearTimeout(timer);
+    throw err;
+  });
+}
+
+function reachFailure(err){
+  sharedOk=false;
+  var why = (err && err.name==="AbortError") ? "timed out" : "could not be reached";
+  setStatus("The shared board at "+endpointLabel()+" "+why+
+            ". Showing this browser's scores instead.", "bad");
+  drawBoard();
+}
+
+function pullShared(){
+  if(!boardEndpoint) return Promise.resolve(false);
+  return askServer("?limit=20").then(function(data){
+    shared = (data && data.scores) || [];
+    sharedOk = true;
+    setStatus("Sharing with "+endpointLabel()+" — "+shared.length+
+              " run"+(shared.length===1?"":"s")+" on the board.", "ok");
+    drawBoard();
+    return true;
+  }, function(err){ reachFailure(err); return false; });
+}
+
+function pushShared(entry){
+  if(!boardEndpoint) return;
+  askServer("", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(entry)
+  }).then(function(data){
+    shared=(data && data.scores)||shared;
+    sharedOk=true;
+    if(data && data.entry) freshAt=data.entry.at;
+    setStatus("Sent to "+endpointLabel()+".", "ok");
+    drawBoard();
+  }, reachFailure);
+}
+
+function connectBoard(raw, quiet){
+  boardEndpoint=normalizeEndpoint(raw);
+  try{ localStorage.setItem(URL_KEY, boardEndpoint); }catch(e){}
+  if(!boardEndpoint){
+    sharedOk=false; shared=[];
+    setStatus(quiet ? "" : "Scores stay in this browser.", "");
+    drawBoard();
+    return Promise.resolve(false);
+  }
+  setStatus("Connecting to "+endpointLabel()+"…", "");
+  return pullShared();
+}
+
 function drawBoard(){
   ui.board.innerHTML="";
-  if(!board.length){
+  var rows = sharedOk ? shared : board;
+  ui.boardWhere.textContent = sharedOk ? "Everyone on this board" : "Best runs, this browser";
+  if(!rows.length){
     var p=document.createElement("li");
     p.className="board-empty";
     p.textContent = S.on
@@ -1509,9 +1634,9 @@ function drawBoard(){
     ui.board.appendChild(p);
     return;
   }
-  board.slice(0,10).forEach(function(e,i){
+  rows.slice(0,10).forEach(function(e,i){
     var li=document.createElement("li");
-    if(e.id===freshId) li.className="fresh";
+    if((e.id && e.id===freshId) || (freshAt && e.at===freshAt)) li.className="fresh";
 
     var pos=document.createElement("span");
     pos.className="bd-pos"; pos.textContent=(i+1)+".";
@@ -1535,7 +1660,7 @@ function drawBoard(){
     li.appendChild(pos); li.appendChild(sc); li.appendChild(main); li.appendChild(when);
     ui.board.appendChild(li);
   });
-  if(!boardWorks){
+  if(!boardWorks && !sharedOk){
     var w=document.createElement("li");
     w.className="board-empty";
     w.textContent="This browser is blocking storage, so these last until you reload.";
@@ -1560,6 +1685,7 @@ function recordRun(sc, rankName){
   writeBoard();
   drawBoard();
   drawBook();
+  pushShared(entry);
   return {isBest:(prev===null || sc>prev), prev:prev, first:prev===null};
 }
 
@@ -2044,11 +2170,20 @@ ui.singerIn.addEventListener("change", function(){
   try{ localStorage.setItem(NAME_KEY, this.value.trim()); }catch(e){}
 });
 
+ui.btnConnect.addEventListener("click", function(){
+  connectBoard(ui.boardUrl.value, false);
+});
+ui.boardUrl.addEventListener("keydown", function(e){
+  if(e.key==="Enter") connectBoard(this.value, false);
+});
+
 ui.btnClearBoard.addEventListener("click", function(){
   if(!board.length) return;
   board=[]; freshId=null;
   writeBoard(); drawBoard(); drawBook();
-  ui.said.textContent="Leaderboard cleared.";
+  ui.said.textContent = sharedOk
+    ? "Cleared this browser's copy — the shared board is untouched."
+    : "Leaderboard cleared.";
 });
 
 ui.optScore.addEventListener("change", async function(){
@@ -2184,8 +2319,13 @@ window.addEventListener("resize", function(){
 
 /* boot */
 board = readBoard();
+var savedEndpoint="";
+try{ savedEndpoint=localStorage.getItem(URL_KEY)||""; }catch(e){}
+if(!savedEndpoint) savedEndpoint=metaEndpoint();
+savedEndpoint=normalizeEndpoint(savedEndpoint);
+ui.boardUrl.value=savedEndpoint;
 try{ ui.singerIn.value = localStorage.getItem(NAME_KEY) || ""; }catch(e){}
-drawBoard();
+connectBoard(savedEndpoint, true);
 mine = readStore().filter(function(e){ return e && e.lyrics && VIBES[e.vibe]; });
 drawBook();
 showDigits();
