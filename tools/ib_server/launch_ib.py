@@ -6,7 +6,6 @@ import time
 
 import pyautogui
 
-
 TWS_USERNAME = os.getenv("TWS_USERNAME")
 TWS_PASSWORD = os.getenv("TWS_PASSWORD")
 

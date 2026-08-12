@@ -34,7 +34,9 @@ def main(csv_path: str | Path) -> None:
     today = nav.index[-1]
     start_of_year = pd.Timestamp(year=today.year, month=1, day=1)
     results["ytd"] = _compute_metrics(nav[nav.index >= start_of_year])
-    results["last_30d"] = _compute_metrics(nav[nav.index >= today - pd.Timedelta(days=30)])
+    results["last_30d"] = _compute_metrics(
+        nav[nav.index >= today - pd.Timedelta(days=30)]
+    )
 
     print(json.dumps(results, indent=2, default=float))
 

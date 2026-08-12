@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest
+# Pinned: black's stable style changes with each January release, so an
+# unpinned formatter would eventually fail CI on code nobody touched.
+black==26.5.1

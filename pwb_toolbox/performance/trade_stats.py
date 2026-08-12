@@ -106,13 +106,15 @@ def slippage_stats(trades: Sequence[Mapping[str, Any]]) -> Dict[str, float]:
         if "entry_price" in t and "model_entry_price" in t and t["model_entry_price"]:
             entry_slip.append(
                 direction
-                * (t["entry_price"] - t["model_entry_price"]) / t["model_entry_price"]
+                * (t["entry_price"] - t["model_entry_price"])
+                / t["model_entry_price"]
             )
 
         if "exit_price" in t and "model_exit_price" in t and t["model_exit_price"]:
             exit_slip.append(
                 direction
-                * (t["model_exit_price"] - t["exit_price"]) / t["model_exit_price"]
+                * (t["model_exit_price"] - t["exit_price"])
+                / t["model_exit_price"]
             )
 
     avg_entry = sum(entry_slip) / len(entry_slip) if entry_slip else 0.0
@@ -130,7 +132,9 @@ def latency_stats(trades: Sequence[Mapping[str, Any]]) -> Dict[str, float]:
         if signal_time is None or entry_time is None:
             continue
         delta = entry_time - signal_time
-        secs = delta.total_seconds() if hasattr(delta, "total_seconds") else float(delta)
+        secs = (
+            delta.total_seconds() if hasattr(delta, "total_seconds") else float(delta)
+        )
         latencies.append(secs)
 
     if not latencies:

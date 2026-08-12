@@ -1,5 +1,6 @@
 .env
 .DS_Store
+grok-export/
 __pycache__
 ssrn-abstract-classifier
 wandb

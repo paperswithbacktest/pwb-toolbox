@@ -147,9 +147,7 @@ class CCXTConnector:
         balance = ex.fetch_balance()
         totals = balance.get("total", {})
         if isinstance(totals, dict):
-            return float(
-                sum(v for v in totals.values() if isinstance(v, (int, float)))
-            )
+            return float(sum(v for v in totals.values() if isinstance(v, (int, float))))
         try:
             return float(totals)
         except (TypeError, ValueError):

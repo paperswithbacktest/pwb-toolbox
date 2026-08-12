@@ -8,7 +8,6 @@ import pandas as pd
 
 import pwb_toolbox.execution as pwb_exec
 
-
 logs_dir = Path.home() / "pwb-data" / "ib" / "execution_logs"
 logs_dir.mkdir(parents=True, exist_ok=True)
 

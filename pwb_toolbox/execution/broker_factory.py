@@ -60,9 +60,7 @@ def create_connector(config: Optional[Dict[str, Any]] = None) -> Connector:
         port = int(cfg.get("port", os.getenv("PWB_IB_PORT", 7497)))
         client_id = int(cfg.get("client_id", os.getenv("PWB_IB_CLIENT_ID", 1)))
         market_data_type = int(
-            cfg.get(
-                "market_data_type", os.getenv("PWB_IB_MARKET_DATA_TYPE", 4)
-            )
+            cfg.get("market_data_type", os.getenv("PWB_IB_MARKET_DATA_TYPE", 4))
         )
         return IBConnector(
             host=host,

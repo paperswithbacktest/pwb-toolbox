@@ -1,0 +1,52 @@
+name: Pages
+
+# Publishes docs/ to GitHub Pages.
+#
+# Requires a ONE-TIME manual step before the first successful run:
+#   Settings > Pages > Source > "GitHub Actions"
+#
+# enablement: true asks the API to create the Pages site, but the default
+# GITHUB_TOKEN is not permitted to do so — run 1 failed with "Create Pages site
+# failed. Error: Resource not accessible by integration". pages: write covers
+# deploying to a site that already exists, not creating one. The flag is kept
+# because it is a no-op once Pages exists (the preceding GET succeeds and no
+# create is attempted) and it would work under a token with admin rights.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; let an in-flight one finish rather than cancelling.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # docs/ only. The artifact is served verbatim — no Jekyll on this path.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
