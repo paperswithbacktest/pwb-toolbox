@@ -39,6 +39,7 @@ Usage:
 
 Exit status is 0 unless --strict is passed, in which case any finding exits 1.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -88,7 +89,9 @@ class Graph:
 
     def linked(self, target: str, caller_file: str) -> bool:
         """True if any node in caller_file already touches target."""
-        return any(frozenset((target, c)) in self.pairs for c in self.by_file[caller_file])
+        return any(
+            frozenset((target, c)) in self.pairs for c in self.by_file[caller_file]
+        )
 
     def inferred_count(self) -> int:
         return sum(1 for e in self.links if e.get("confidence") == "INFERRED")
@@ -143,7 +146,9 @@ class Resolver:
             out.append(self.rel(submod))
         return out
 
-    def relative_module_file(self, src: Path, level: int, mod: str | None) -> str | None:
+    def relative_module_file(
+        self, src: Path, level: int, mod: str | None
+    ) -> str | None:
         """Resolve `from ..pkg.mod import X` relative to the importing file.
 
         level 1 = the file's own package, level 2 = its parent, and so on.
@@ -181,8 +186,11 @@ class Resolver:
         pkg_dir = self.root.joinpath(*mod.split("."))
         if pkg_dir.is_dir():
             prefix = self.rel(pkg_dir) + "/"
-            hits = [(f, nid) for (f, nid) in self.graph.by_label.get(attr, [])
-                    if f.startswith(prefix)]
+            hits = [
+                (f, nid)
+                for (f, nid) in self.graph.by_label.get(attr, [])
+                if f.startswith(prefix)
+            ]
             for f, nid in hits:
                 if not f.endswith("__init__.py"):
                     return nid, f
@@ -222,8 +230,8 @@ def scan(root: Path, graph: Graph):
         parents = parent_map(tree)
         pdir = p.parent
 
-        alias_map: dict[str, str] = {}   # alias -> local dotted module
-        third: dict[str, str] = {}       # bound name -> third-party package
+        alias_map: dict[str, str] = {}  # alias -> local dotted module
+        third: dict[str, str] = {}  # bound name -> third-party package
         # imported name -> (target_file | None, import_form, dotted_module)
         imported: dict[str, tuple[str | None, str, str]] = {}
 
@@ -233,7 +241,7 @@ def scan(root: Path, graph: Graph):
                     if a.asname and a.name.split(".")[0] in LOCAL_PKGS:
                         alias_map[a.asname] = a.name
             elif isinstance(node, ast.ImportFrom):
-                if node.level:                      # explicit relative -> local
+                if node.level:  # explicit relative -> local
                     tf = resolver.relative_module_file(p, node.level, node.module)
                     dotted = "." * node.level + (node.module or "")
                     for a in node.names:
@@ -250,53 +258,64 @@ def scan(root: Path, graph: Graph):
                 # A same-directory sibling module is a local implicit-relative
                 # import, not third-party. Missing this check reports false
                 # collisions (e.g. `from ssrn_abstract import SsrnAbstract`).
-                if (pdir / f"{top}.py").exists() or (pdir / top / "__init__.py").exists():
+                if (pdir / f"{top}.py").exists() or (
+                    pdir / top / "__init__.py"
+                ).exists():
                     continue
                 for a in node.names:
                     third[a.asname or a.name] = mod
 
         for node in ast.walk(tree):
             # Defect A: alias.attr(...)
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id in alias_map):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in alias_map
+            ):
                 mod = alias_map[node.func.value.id]
                 tgt, tgt_file = resolver.resolve(mod, node.func.attr)
                 if not tgt:
-                    continue                        # callee absent from graph
+                    continue  # callee absent from graph
                 if graph.linked(tgt, r):
-                    continue                        # edge already present
+                    continue  # edge already present
                 scope = enclosing_def(node, parents)
                 caller = graph.by_file_label.get((r, scope)) if scope else None
-                defect_a.append({
-                    "caller_file": r,
-                    "line": node.lineno,
-                    "alias": node.func.value.id,
-                    "attr": node.func.attr,
-                    "module": mod,
-                    "target_file": tgt_file,
-                    "target_node": tgt,
-                    "caller_node": caller or graph.by_file_label.get((r, Path(r).name)),
-                })
+                defect_a.append(
+                    {
+                        "caller_file": r,
+                        "line": node.lineno,
+                        "alias": node.func.value.id,
+                        "attr": node.func.attr,
+                        "module": mod,
+                        "target_file": tgt_file,
+                        "target_node": tgt,
+                        "caller_node": caller
+                        or graph.by_file_label.get((r, Path(r).name)),
+                    }
+                )
 
             # Defect B: any load of a third-party name shadowed by a repo symbol
-            elif (isinstance(node, ast.Name)
-                  and isinstance(node.ctx, ast.Load)
-                  and node.id in third):
+            elif (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and node.id in third
+            ):
                 for local_file in repo_defs.get(node.id, ()):
                     if local_file == r:
                         continue
                     tgt = graph.by_file_label.get((local_file, node.id))
                     if tgt and graph.linked(tgt, r):
-                        defect_b.append({
-                            "caller_file": r,
-                            "line": node.lineno,
-                            "package": third[node.id],
-                            "name": node.id,
-                            "shadowed_by": local_file,
-                            "target_node": tgt,
-                        })
+                        defect_b.append(
+                            {
+                                "caller_file": r,
+                                "line": node.lineno,
+                                "package": third[node.id],
+                                "name": node.id,
+                                "shadowed_by": local_file,
+                                "target_node": tgt,
+                            }
+                        )
 
         # Defect C: class inheritance edges that are missing or mistyped.
         for node in ast.walk(tree):
@@ -311,8 +330,9 @@ def scan(root: Path, graph: Graph):
                 elif isinstance(base, ast.Attribute):
                     # `bt.Strategy` - third-party or aliased; only in scope if
                     # the alias points at a local package.
-                    if not (isinstance(base.value, ast.Name)
-                            and base.value.id in alias_map):
+                    if not (
+                        isinstance(base.value, ast.Name) and base.value.id in alias_map
+                    ):
                         continue
                     base_name, qualified = base.attr, True
                 else:
@@ -322,10 +342,12 @@ def scan(root: Path, graph: Graph):
                 base_node = None
                 if qualified:
                     base_node, base_file = resolver.resolve(
-                        alias_map[base.value.id], base_name)
+                        alias_map[base.value.id], base_name
+                    )
                 else:
                     target_file, form, dotted = imported.get(
-                        base_name, (None, "local", ""))
+                        base_name, (None, "local", "")
+                    )
                     if target_file:
                         base_node = graph.by_file_label.get((target_file, base_name))
                     elif base_name in imported:
@@ -352,37 +374,45 @@ def scan(root: Path, graph: Graph):
                     # matched to the right class - but the import itself is dead,
                     # so the edge describes intent, not runnable code. Record it
                     # regardless of edge quality rather than dropping it.
-                    dead_imports.append({
+                    dead_imports.append(
+                        {
+                            "file": r,
+                            "line": node.lineno,
+                            "subclass": node.name,
+                            "base": base_name,
+                            "imported_from": imported[base_name][2],
+                            "resolved_to": graph.nodes[base_node].get("source_file"),
+                        }
+                    )
+
+                edge = edge_between(graph, sub, base_node)
+                ok = (
+                    edge is not None
+                    and edge.get("relation") == "inherits"
+                    and edge.get("confidence") == "EXTRACTED"
+                )
+                if ok:
+                    continue
+                defect_c.append(
+                    {
                         "file": r,
                         "line": node.lineno,
                         "subclass": node.name,
                         "base": base_name,
-                        "imported_from": imported[base_name][2],
-                        "resolved_to": graph.nodes[base_node].get("source_file"),
-                    })
-
-                edge = edge_between(graph, sub, base_node)
-                ok = (edge is not None
-                      and edge.get("relation") == "inherits"
-                      and edge.get("confidence") == "EXTRACTED")
-                if ok:
-                    continue
-                defect_c.append({
-                    "file": r,
-                    "line": node.lineno,
-                    "subclass": node.name,
-                    "base": base_name,
-                    "base_file": base_file,
-                    "import_form": form,
-                    "broken_import": broken_import,
-                    "status": "missing" if edge is None else "mistyped",
-                    "relation": edge.get("relation") if edge else None,
-                    "confidence": edge.get("confidence") if edge else None,
-                    "confidence_score": edge.get("confidence_score") if edge else None,
-                    "edge_location": edge.get("source_location") if edge else None,
-                    "sub_node": sub,
-                    "base_node": base_node,
-                })
+                        "base_file": base_file,
+                        "import_form": form,
+                        "broken_import": broken_import,
+                        "status": "missing" if edge is None else "mistyped",
+                        "relation": edge.get("relation") if edge else None,
+                        "confidence": edge.get("confidence") if edge else None,
+                        "confidence_score": (
+                            edge.get("confidence_score") if edge else None
+                        ),
+                        "edge_location": edge.get("source_location") if edge else None,
+                        "sub_node": sub,
+                        "base_node": base_node,
+                    }
+                )
 
     return defect_a, defect_b, defect_c, dead_imports
 
@@ -430,12 +460,16 @@ def centrality_impact(graph: Graph, defect_a, defect_b, defect_c):
 
     b0 = nx.betweenness_centrality(before)
     b1 = nx.betweenness_centrality(after)
-    touched = ({f["target_node"] for f in defect_a}
-               | {f["target_node"] for f in defect_b}
-               | {f["base_node"] for f in defect_c if f["status"] == "missing"})
+    touched = (
+        {f["target_node"] for f in defect_a}
+        | {f["target_node"] for f in defect_b}
+        | {f["base_node"] for f in defect_c if f["status"] == "missing"}
+    )
     rows = []
     for nid in touched:
-        rows.append((graph.nodes[nid].get("label", nid), b0.get(nid, 0.0), b1.get(nid, 0.0)))
+        rows.append(
+            (graph.nodes[nid].get("label", nid), b0.get(nid, 0.0), b1.get(nid, 0.0))
+        )
     rows.sort(key=lambda r: -abs(r[2] - r[1]))
     return {
         "edges_before": before.number_of_edges(),
@@ -449,8 +483,9 @@ def centrality_impact(graph: Graph, defect_a, defect_b, defect_c):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--graph", default="graphify-out/graph.json")
     ap.add_argument("--root", default=".")
     ap.add_argument("--json", action="store_true", help="emit a JSON summary only")
@@ -473,21 +508,29 @@ def main() -> int:
     any_finding = bool(defect_a or defect_b or defect_c)
 
     if args.json:
-        print(json.dumps({
-            "edges": total,
-            "inferred": inferred,
-            "defect_a_missing_edges": len(defect_a),
-            "defect_b_fake_edges": len(fakes),
-            "defect_b_sites": len(defect_b),
-            "defect_c_missing": len(c_missing),
-            "defect_c_mistyped": len(c_mistyped),
-            "dead_base_class_imports": len(dead_imports),
-            "corrected_edges": total - len(fakes) + len(defect_a) + len(c_missing),
-            "defect_a": defect_a,
-            "defect_b": defect_b,
-            "defect_c": defect_c,
-            "dead_imports": dead_imports,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "edges": total,
+                    "inferred": inferred,
+                    "defect_a_missing_edges": len(defect_a),
+                    "defect_b_fake_edges": len(fakes),
+                    "defect_b_sites": len(defect_b),
+                    "defect_c_missing": len(c_missing),
+                    "defect_c_mistyped": len(c_mistyped),
+                    "dead_base_class_imports": len(dead_imports),
+                    "corrected_edges": total
+                    - len(fakes)
+                    + len(defect_a)
+                    + len(c_missing),
+                    "defect_a": defect_a,
+                    "defect_b": defect_b,
+                    "defect_c": defect_c,
+                    "dead_imports": dead_imports,
+                },
+                indent=2,
+            )
+        )
         return 1 if (args.strict and any_finding) else 0
 
     print("=" * 74)
@@ -500,7 +543,9 @@ def main() -> int:
     for caller in sorted(grouped):
         print(f"  {caller}")
         for f in sorted(grouped[caller], key=lambda x: x["line"]):
-            print(f"    :{f['line']:<5} {f['alias']}.{f['attr']}()  ->  {f['target_file']}")
+            print(
+                f"    :{f['line']:<5} {f['alias']}.{f['attr']}()  ->  {f['target_file']}"
+            )
 
     print()
     print("=" * 74)
@@ -512,7 +557,9 @@ def main() -> int:
         key = (f["package"], f["name"], f["shadowed_by"])
         agg[key][0] += 1
         agg[key][1].add(f["caller_file"])
-    for (pkg, name, shadow), (count, files) in sorted(agg.items(), key=lambda kv: -kv[1][0]):
+    for (pkg, name, shadow), (count, files) in sorted(
+        agg.items(), key=lambda kv: -kv[1][0]
+    ):
         print(f"  `from {pkg} import {name}`  shadowed by  {shadow}")
         print(f"    {count} sites / {len(files)} files")
         for f in sorted(files):
@@ -526,31 +573,47 @@ def main() -> int:
     by_base = defaultdict(list)
     for f in defect_c:
         by_base[(f["base"], f["base_file"], f["import_form"])].append(f)
-    for (base, base_file, form), items in sorted(by_base.items(), key=lambda kv: -len(kv[1])):
-        note = "  [BROKEN IMPORT - path does not exist]" if items[0]["broken_import"] else ""
+    for (base, base_file, form), items in sorted(
+        by_base.items(), key=lambda kv: -len(kv[1])
+    ):
+        note = (
+            "  [BROKEN IMPORT - path does not exist]"
+            if items[0]["broken_import"]
+            else ""
+        )
         print(f"  base {base}  ({base_file or 'unresolved'})  via {form} import{note}")
         sample = items[0]
         if sample["status"] == "mistyped":
-            print(f"    graph says: relation={sample['relation']} "
-                  f"confidence={sample['confidence']} score={sample['confidence_score']} "
-                  f"@ {sample['edge_location']}")
-            print(f"    should be : relation=inherits confidence=EXTRACTED score=1.0 "
-                  f"@ each class definition")
+            print(
+                f"    graph says: relation={sample['relation']} "
+                f"confidence={sample['confidence']} score={sample['confidence_score']} "
+                f"@ {sample['edge_location']}"
+            )
+            print(
+                f"    should be : relation=inherits confidence=EXTRACTED score=1.0 "
+                f"@ each class definition"
+            )
         for f in sorted(items, key=lambda x: (x["file"], x["line"])):
-            print(f"      {f['file']}:{f['line']}  {f['subclass']}({f['base']})  [{f['status']}]")
+            print(
+                f"      {f['file']}:{f['line']}  {f['subclass']}({f['base']})  [{f['status']}]"
+            )
         print()
 
     if dead_imports:
         print("=" * 74)
         print("NOTE - base classes reached through an import path that does not exist")
         print("=" * 74)
-        print("Not a graph defect: these edges may be correctly typed. But the import\n"
-              "is dead, so the edge describes intent rather than runnable code, and\n"
-              "graphify only found the base class by bare-name fallback.\n")
+        print(
+            "Not a graph defect: these edges may be correctly typed. But the import\n"
+            "is dead, so the edge describes intent rather than runnable code, and\n"
+            "graphify only found the base class by bare-name fallback.\n"
+        )
         grouped_dead = defaultdict(list)
         for f in dead_imports:
             grouped_dead[(f["imported_from"], f["base"], f["resolved_to"])].append(f)
-        for (frm, base, to), items in sorted(grouped_dead.items(), key=lambda kv: -len(kv[1])):
+        for (frm, base, to), items in sorted(
+            grouped_dead.items(), key=lambda kv: -len(kv[1])
+        ):
             print(f"  `from {frm} import {base}`  ->  no such module")
             print(f"    bare-name fallback resolved to: {to}")
             plural = "subclass" if len(items) == 1 else "subclasses"
@@ -566,13 +629,21 @@ def main() -> int:
     structural = len(fakes) + len(defect_a) + len(c_missing)
     print(f"  edges in graph        : {total}  (INFERRED: {inferred}, {pct(inferred)})")
     print(f"  fake edges present    : {len(fakes)}  ({pct(len(fakes))})")
-    print(f"  real edges missing    : {len(defect_a) + len(c_missing)}"
-          f"  ({pct(len(defect_a) + len(c_missing))})")
-    print(f"  mistyped edges        : {len(c_mistyped)}  ({pct(len(c_mistyped))}, topology unaffected)")
-    print(f"  corrected edge count  : {total - len(fakes) + len(defect_a) + len(c_missing)}")
+    print(
+        f"  real edges missing    : {len(defect_a) + len(c_missing)}"
+        f"  ({pct(len(defect_a) + len(c_missing))})"
+    )
+    print(
+        f"  mistyped edges        : {len(c_mistyped)}  ({pct(len(c_mistyped))}, topology unaffected)"
+    )
+    print(
+        f"  corrected edge count  : {total - len(fakes) + len(defect_a) + len(c_missing)}"
+    )
     print(f"  structural error      : {structural}  ({pct(structural)})")
-    print(f"  total error surface   : {structural + len(c_mistyped)}"
-          f"  ({pct(structural + len(c_mistyped))})")
+    print(
+        f"  total error surface   : {structural + len(c_mistyped)}"
+        f"  ({pct(structural + len(c_mistyped))})"
+    )
 
     impact = centrality_impact(graph, defect_a, defect_b, defect_c)
     if impact is None:
