@@ -153,6 +153,13 @@ python3 .claude/skills/ui-ux-pro-max/scripts/search.py "fintech dashboard" --dom
 The SKILL.md frontmatter says "67 styles, 161 palettes" — that string is hardcoded
 in the upstream template and lags the shipped CSVs. Trust the data files.
 
+`docs/index.html` is a landing page built entirely from those queries — palette,
+font pairing and motion timings all came from the skill rather than being invented.
+It is a single self-contained file: both typefaces are embedded as base64 woff2, so
+it opens from `file://` with no build step and no network, which is also why it is
+~120 KB. Rebuilding means re-querying the skill, not editing the base64 by hand.
+GitHub Pages can serve it as-is from the `/docs` folder.
+
 The installer also drops six companion skills (`design`, `design-system`,
 `ui-styling`, `brand`, `slides`, `banner-design`) alongside the main one. They were
 removed deliberately — several of their generators shell out to `npx shadcn` or
