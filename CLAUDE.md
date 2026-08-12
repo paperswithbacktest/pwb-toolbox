@@ -159,7 +159,17 @@ font pairing and motion timings all came from the skill rather than being invent
 It is a single self-contained file: both typefaces are embedded as base64 woff2, so
 it opens from `file://` with no build step and no network, which is also why it is
 ~120 KB. Rebuilding means re-querying the skill, not editing the base64 by hand.
-GitHub Pages can serve it as-is from the `/docs` folder.
+
+`.github/workflows/pages.yml` publishes `docs/` to GitHub Pages on every push to
+`main` that touches it. `actions/configure-pages` runs with `enablement: true`, so
+the first run turns Pages on through the API rather than requiring the repository
+setting to be flipped by hand. If that call is ever refused — org policy, or Pages
+already enabled against a different source — set Settings → Pages → Source to
+"GitHub Actions" once and re-run the workflow.
+
+`docs/.nojekyll` only matters on the fallback "deploy from a branch" source, which
+does run Jekyll and would otherwise try to build the `.md` files sitting beside
+`index.html`. The Actions path serves the artifact verbatim and ignores it.
 
 The installer also drops six companion skills (`design`, `design-system`,
 `ui-styling`, `brand`, `slides`, `banner-design`) alongside the main one. They were

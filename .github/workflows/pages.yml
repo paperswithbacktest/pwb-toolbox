@@ -1,0 +1,46 @@
+name: Pages
+
+# Publishes docs/ to GitHub Pages. `configure-pages` with enablement: true turns
+# Pages on via the API on the first run, so this does not need the repository
+# setting to be flipped by hand first. If that call is refused — org policy, or
+# Pages already enabled with a different source — set Settings > Pages > Source
+# to "GitHub Actions" once and re-run; everything after that works unchanged.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; let an in-flight one finish rather than cancelling.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # docs/ only. The artifact is served verbatim — no Jekyll on this path.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
