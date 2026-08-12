@@ -30,6 +30,8 @@
   --screen-dimmer:#333A48;
   --wipe-a:#FF4D6D;
   --wipe-b:#FFB347;
+  --wipe-c:#35D6C0;   /* the second singer, cool against A's warm sweep */
+  --wipe-d:#7AA7FF;
 
   --font-display:"Bodoni 72","Bodoni MT",Didot,"Playfair Display",Georgia,"Times New Roman",serif;
   --font-lyric:"Arial Black","Helvetica Neue",Helvetica,Impact,system-ui,sans-serif;
@@ -145,13 +147,33 @@ body{
 
 /* lyric field */
 .field{flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;padding:8px 2px 4px;position:relative}
+
+/* Each singer gets a lane. Solo mode runs lane A alone and hides the badge,
+   so the layout is the same one the page has always had. */
+.lane{display:flex;align-items:flex-start;gap:12px;--w1:var(--wipe-a);--w2:var(--wipe-b)}
+.lane[data-part="b"]{--w1:var(--wipe-c);--w2:var(--wipe-d)}
+.lane-body{flex:1;min-width:0;position:relative}
+.lane[hidden]{display:none}
+.part{
+  display:none;font-family:var(--font-mono);font-size:12px;font-weight:700;
+  letter-spacing:.06em;line-height:1;cursor:pointer;flex:none;margin-top:.35em;
+  width:30px;height:26px;border-radius:var(--r-sm);
+  background:transparent;color:var(--w1);
+  border:1px solid color-mix(in srgb, var(--w1) 45%, transparent);
+  transition:opacity .14s ease,background .14s ease;
+}
+.field.duet .part{display:block}
+.part:hover{background:color-mix(in srgb, var(--w1) 14%, transparent)}
+.part[aria-pressed="true"]{opacity:.34;text-decoration:line-through}
 .ball{
   position:absolute;width:13px;height:13px;border-radius:50%;
-  background:radial-gradient(circle at 35% 30%,#fff,var(--wipe-a) 62%,#B0203C);
-  box-shadow:0 0 14px rgba(255,77,109,.65);
+  background:radial-gradient(circle at 35% 30%,#fff,var(--w1) 62%,rgba(0,0,0,.55));
+  box-shadow:0 0 14px color-mix(in srgb, var(--w1) 62%, transparent);
   left:0;top:0;opacity:0;pointer-events:none;
   transform:translate(-50%,-50%);
 }
+/* the waiting singer's next line, held but not yet sweeping */
+.lane.idle .line-base{opacity:.55}
 .line{position:relative;min-height:1.1em;overflow:hidden}
 .line-inner{position:relative;display:inline-block;white-space:nowrap;transform-origin:left center}
 .line-base,.line-fill{
@@ -163,11 +185,16 @@ body{
 .line-base{color:var(--screen-dim)}
 .line-fill{
   position:absolute;inset:0;
-  background:linear-gradient(90deg,var(--wipe-a),var(--wipe-b));
+  background:linear-gradient(90deg,var(--w1,var(--wipe-a)),var(--w2,var(--wipe-b)));
   -webkit-background-clip:text;background-clip:text;color:transparent;
   clip-path:inset(0 calc(100% - var(--wipe,0px)) 0 0);
   filter:drop-shadow(0 0 12px rgba(255,109,90,.32));
 }
+.lane[data-part="b"] .line-fill{filter:drop-shadow(0 0 12px rgba(70,180,220,.32))}
+/* two lanes need to share the height one used to have */
+.field.duet .line-base,.field.duet .line-fill{font-size:var(--lyric-duet,clamp(1.15rem,3.7vw,2.3rem))}
+/* in duet the two lanes already show what is coming, so the look-ahead is noise */
+.field.duet .line.next{display:none}
 /* the next line has no wipe, so it is free to wrap */
 .line.next{overflow:visible}
 .line.next .line-inner{display:block;white-space:normal}
@@ -378,12 +405,29 @@ footer kbd{
     </div>
 
     <div class="field" id="field">
-      <div class="ball" id="ball"></div>
-      <div class="line" id="lineCur">
-        <span class="line-inner">
-          <span class="line-base" id="baseCur"></span>
-          <span class="line-fill" id="fillCur" aria-hidden="true"></span>
-        </span>
+      <div class="lane" id="laneA" data-part="a">
+        <button class="part" id="partA" type="button" aria-pressed="false">A</button>
+        <div class="lane-body">
+          <div class="ball" id="ballA"></div>
+          <div class="line">
+            <span class="line-inner">
+              <span class="line-base" id="baseA"></span>
+              <span class="line-fill" id="fillA" aria-hidden="true"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="lane" id="laneB" data-part="b" hidden>
+        <button class="part" id="partB" type="button" aria-pressed="false">B</button>
+        <div class="lane-body">
+          <div class="ball" id="ballB"></div>
+          <div class="line">
+            <span class="line-inner">
+              <span class="line-base" id="baseB"></span>
+              <span class="line-fill" id="fillB" aria-hidden="true"></span>
+            </span>
+          </div>
+        </div>
       </div>
       <div class="sub" id="subCur"></div>
       <div class="line next" id="lineNext"><span class="line-inner"><span class="line-base" id="baseNext"></span></span></div>
@@ -406,6 +450,7 @@ footer kbd{
     <button class="btn ghost" id="btnRestart">Restart</button>
     <label class="toggle"><input type="checkbox" id="optLoop"> Loop</label>
     <label class="toggle"><input type="checkbox" id="optDrums" checked> Beat</label>
+    <label class="toggle"><input type="checkbox" id="optDuet"> Duet</label>
 
     <div class="knobs">
       <div class="knob">
@@ -488,6 +533,7 @@ var SONGS = [
 {
   code:"001", title:"Twinkle, Twinkle, Little Star", credit:"Traditional · public domain",
   keyName:"C", bpm:104, beatsPerBar:4, level:"Easy",
+  duet:{parts:["a","b","a","b","both","both"]},
   lines:[
     {n:[[60,1,"Twin-"],[60,1,"kle "],[67,1,"twin-"],[67,1,"kle "],[69,1,"lit-"],[69,1,"tle "],[67,2,"star, "]]},
     {n:[[65,1,"How "],[65,1,"I "],[64,1,"won-"],[64,1,"der "],[62,1,"what "],[62,1,"you "],[60,2,"are! "]]},
@@ -502,6 +548,7 @@ var SONGS = [
 {
   code:"002", title:"Row, Row, Row Your Boat", credit:"Traditional round · public domain",
   keyName:"C", bpm:114, beatsPerBar:3, feel:"compound", level:"Easy",
+  duet:{round:6},   /* a true canon: B enters two bars behind A */
   lines:[
     {n:[[60,1.5,"Row, "],[60,1.5,"row, "],[60,1,"row "],[62,.5,"your "],[64,1.5,"boat, "]]},
     {n:[[64,1,"Gent-"],[62,.5,"ly "],[64,1,"down "],[65,.5,"the "],[67,3,"stream. "]]},
@@ -514,6 +561,7 @@ var SONGS = [
 {
   code:"003", title:"Frère Jacques", credit:"Traditional round · public domain",
   keyName:"C", bpm:112, beatsPerBar:4, level:"Easy",
+  duet:{round:8},   /* the classic four-part round, taken as two */
   lines:[
     {sub:"Are you sleeping,", n:[[60,1,"Frè-"],[62,1,"re "],[64,1,"Jac-"],[60,1,"ques, "]]},
     {sub:"are you sleeping,", n:[[60,1,"Frè-"],[62,1,"re "],[64,1,"Jac-"],[60,1,"ques, "]]},
@@ -529,6 +577,7 @@ var SONGS = [
 {
   code:"004", title:"Joyful, Joyful", credit:"Beethoven · words Henry van Dyke, 1907",
   keyName:"C", bpm:112, beatsPerBar:4, level:"Steady",
+  duet:{parts:["a","b","a","both"]},
   lines:[
     {n:[[64,1,"Joy-"],[64,1,"ful, "],[65,1,"joy-"],[67,1,"ful, "],[67,1,"we "],[65,1,"a-"],[64,1,"dore "],[62,1,"Thee, "]]},
     {n:[[60,1,"God "],[60,1,"of "],[62,1,"glo-"],[64,1,"ry, "],[64,1.5,"Lord "],[62,.5,"of "],[62,2,"love; "]]},
@@ -540,6 +589,7 @@ var SONGS = [
 {
   code:"005", title:"The Backtest Blues", credit:"Original · twelve bars in C",
   keyName:"C7", bpm:96, beatsPerBar:4, shuffle:true, level:"Swagger",
+  duet:{parts:["a","b","a","b","both","a","b","a","b","both"]},
   lines:[
     {n:[[67,.667,"I "],[70,.333,"fit "],[70,.667,"the "],[72,.333,"curve "],[70,.667,"so "],[70,.333,"tight "],[67,.667,"it "],[67,.333,"sings, "],
         [65,.667,"my "],[67,.333,"Sharpe "],[65,.667,"was "],[63,.333,"three "],[63,1,"point "],[60,1,"one. "]]},
@@ -566,6 +616,7 @@ var SONGS = [
 {
   code:"006", title:"Sing It Anyway", credit:"Original · a waltz in A minor",
   keyName:"Am", bpm:84, beatsPerBar:3, level:"Tender",
+  duet:{parts:["a","a","b","b","both","both","both","both"]},
   lines:[
     {n:[[64,1,"The "],[69,1,"lights "],[71,1,"go "],[72,3,"down, "],[72,1,"the "],[71,1,"room "],[69,1,"gets "],[67,3,"small, "]]},
     {n:[[64,1,"some-"],[69,1,"one "],[71,1,"puts "],[72,2,"a "],[74,1,"mic "],[72,1,"in "],[71,1,"my "],[69,1,"hand, "],[69,3,null]]},
@@ -620,11 +671,12 @@ function killActive(){
 /* Guide voice: two slightly detuned triangles through a gentle lowpass,
    with a touch of vibrato once the note has settled. Reads as "someone humming
    the tune" rather than a test tone. */
-function voiceLead(t, midi, dur){
+function voiceLead(t, midi, dur, part){
   var f = hz(midi);
+  var dark = part==="b";          /* the second singer sits darker, so the two separate */
   var g = ctx.createGain();
   var lp = ctx.createBiquadFilter(); lp.type="lowpass";
-  lp.frequency.setValueAtTime(Math.min(6000, f*7), t); lp.Q.value=0.6;
+  lp.frequency.setValueAtTime(Math.min(6000, f*(dark?3.4:7)), t); lp.Q.value=dark?1.1:0.6;
   g.connect(lp); lp.connect(leadG);
 
   var a=0.018, rel=Math.min(0.14, dur*0.45);
@@ -636,9 +688,10 @@ function voiceLead(t, midi, dur){
   [0,-6,7].forEach(function(det,i){
     var o = ctx.createOscillator();
     o.type = i===2 ? "sine" : "triangle";
-    o.frequency.value = f * (i===2?2:1);
-    o.detune.value = det;
-    var vg = ctx.createGain(); vg.gain.value = i===2?0.16:0.5;
+    /* B's third partial drops an octave instead of rising one */
+    o.frequency.value = f * (i===2 ? (dark?0.5:2) : 1);
+    o.detune.value = dark ? det*2 : det;
+    var vg = ctx.createGain(); vg.gain.value = i===2 ? (dark?0.34:0.16) : 0.5;
     o.connect(vg); vg.connect(g);
     o.start(t); o.stop(t+dur+0.05); track(o);
   });
@@ -717,14 +770,61 @@ function clickTick(t,accent){
 /* ============================================================
    3. PREPARE A SONG  ->  timed lines, syllables, and events
    ============================================================ */
-function prepare(song){
+/* A second voice on a shared line: the nearest chord tone above the melody,
+   so the harmony is always consonant with what the band is playing. */
+function harmonize(midi, chordName){
+  var c=CHORD_TABLE[chordName];
+  if(!c) return midi+4;
+  var pcs=c[1].map(function(iv){ return (c[0]+iv)%12; });
+  for(var m=midi+3; m<midi+13; m++){
+    if(pcs.indexOf(((m%12)+12)%12)>=0) return m;
+  }
+  return midi+4;
+}
+
+/* When a song carries no arrangement of its own, singers simply alternate
+   and finish together. */
+function defaultParts(n){
+  var p=[];
+  for(var i=0;i<n;i++) p.push(i===n-1 ? "both" : (i%2 ? "b" : "a"));
+  return p;
+}
+
+function shiftLine(L, by){
+  return {
+    index:L.index, start:L.start+by, end:L.end+by, sub:L.sub, voice:L.voice,
+    syls:L.syls.map(function(s){
+      return {text:s.text, start:s.start+by, end:s.end+by};
+    })
+  };
+}
+
+function prepare(song, duet){
   var lines=[], events=[], beat=0;
+  var spec = song.duet || {};
+  var round = (duet && spec.round) ? spec.round : 0;
+  var parts = (duet && !round) ? (spec.parts || defaultParts(song.lines.length)) : null;
+
+  /* chords are needed while laying out the melody, so that a shared line can be
+     harmonised against whatever chord is sounding underneath it */
+  var raw=[], rb=0;
+  song.chords.forEach(function(c){ raw.push({t:rb, end:rb+c[1], name:c[0]}); rb+=c[1]; });
+  function chordAt(t){
+    for(var i=0;i<raw.length;i++){ if(t>=raw[i].t && t<raw[i].end) return raw[i].name; }
+    return raw.length ? raw[raw.length-1].name : "C";
+  }
 
   song.lines.forEach(function(L, li){
     var lineStart=beat, syls=[], cur=null;
+    var voice = parts ? (parts[li]||"a") : "a";
     L.n.forEach(function(nt){
       var midi=nt[0], dur=nt[1], text=nt[2];
-      if(midi>0) events.push({t:beat, type:"lead", midi:midi, dur:dur});
+      if(midi>0){
+        events.push({t:beat, type:"lead", midi:midi, dur:dur, voice:(voice==="b"?"b":"a")});
+        /* sung together — B takes the upper line */
+        if(voice==="both") events.push({t:beat, type:"lead", dur:dur, voice:"b",
+                                        midi:harmonize(midi, chordAt(beat))});
+      }
       if(text!=null){
         cur={text:text, start:beat, end:beat+dur, left:0, width:0};
         syls.push(cur);
@@ -733,10 +833,25 @@ function prepare(song){
       }
       beat+=dur;
     });
-    lines.push({index:li, start:lineStart, end:beat, syls:syls, sub:L.sub||""});
+    lines.push({index:li, start:lineStart, end:beat, syls:syls, sub:L.sub||"", voice:voice});
   });
 
-  var total=beat;
+  /* a round runs long by however far behind the second singer enters */
+  var total = beat + round;
+
+  var lanes;
+  if(!duet){
+    lanes=[lines, []];
+  } else if(round){
+    events = events.concat(events.filter(function(e){ return e.type==="lead"; })
+      .map(function(e){ return {t:e.t+round, type:"lead", midi:e.midi, dur:e.dur, voice:"b"}; }));
+    lanes=[lines, lines.map(function(L){ return shiftLine(L, round); })];
+  } else {
+    lanes=[
+      lines.filter(function(L){ return L.voice!=="b"; }),
+      lines.filter(function(L){ return L.voice!=="a"; })
+    ];
+  }
 
   /* chords + bass */
   var cb=0, chordSpans=[];
@@ -778,7 +893,8 @@ function prepare(song){
   }
 
   events.sort(function(a,b){ return a.t-b.t; });
-  return {lines:lines, events:events, chords:chordSpans, total:total, bpb:bpb};
+  return {lines:lines, lanes:lanes, events:events, chords:chordSpans,
+          total:total, bpb:bpb, duet:!!duet, round:round};
 }
 
 /* ============================================================
@@ -787,7 +903,7 @@ function prepare(song){
 var P = {
   song:null, prep:null, playing:false,
   anchorCtx:0, anchorBeat:0,
-  tempo:1, transpose:0, guide:0.8, drums:true, loop:false,
+  tempo:1, transpose:0, guide:0.8, drums:true, loop:false, duet:false,
   evIdx:0, timer:null, countIn:0, skipCount:false
 };
 
@@ -812,7 +928,11 @@ function schedule(){
     var ev=e[P.evIdx], t=beatToTime(ev.t);
     if(t >= ctx.currentTime-0.01){
       switch(ev.type){
-        case "lead": if(P.guide>0.001) voiceLead(t, ev.midi+P.transpose, ev.dur*sp*0.96); break;
+        case "lead":
+          /* a muted part drops out of the guide so you can sing it yourself */
+          if(P.guide>0.001 && !lanes[ev.voice==="b"?1:0].muted)
+            voiceLead(t, ev.midi+P.transpose, ev.dur*sp*0.96, ev.voice);
+          break;
         case "pad":  voicePad(t, ev.name, ev.dur*sp); break;
         case "bass": voiceBass(t, ev.name, ev.dur*sp); break;
         case "kick": if(P.drums) drumKick(t); break;
@@ -866,7 +986,7 @@ function restart(keepGoing){
   var wasPlaying = P.playing || keepGoing;
   clearInterval(P.timer); P.timer=null;
   P.playing=false; P.anchorBeat=0; killActive();
-  renderLine(0, true);
+  lanes[0].shown=-1; lanes[1].shown=-1;
   if(wasPlaying) play(); else { ui.btnPlay.textContent="Play"; setState("READY"); }
 }
 function reanchor(){
@@ -882,84 +1002,113 @@ function reanchor(){
    ============================================================ */
 var ui={};
 ["remoteDigits","npCode","npTitle","npCredit","mBar","mKey","mBpm","mState",
- "field","ball","lineCur","baseCur","fillCur","subCur","lineNext","baseNext","cue",
+ "field","laneA","baseA","fillA","ballA","partA",
+ "laneB","baseB","fillB","ballB","partB","subCur","lineNext","baseNext","cue","optDuet",
  "progressBar","chordCur","chordNext","btnPlay","btnRestart","optLoop","optDrums",
  "trackCount","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
  "btnSave","btnShare","said","announcer"].forEach(function(id){ ui[id]=document.getElementById(id); });
 
 function setState(s){ ui.mState.textContent=s; }
 
-var shownLine=-1, layout=null;
+/* ---------- lanes ----------
+   One lane per singer. Solo mode uses lane A only; duet mode adds lane B,
+   which for a round is the very same lines running a couple of bars behind. */
+function Lane(root, base, fill, ball, badge, part){
+  return {root:root, base:base, fill:fill, ball:ball, badge:badge, part:part,
+          entries:[], shown:-1, layout:null, muted:false};
+}
+var lanes=[
+  Lane(ui.laneA, ui.baseA, ui.fillA, ui.ballA, ui.partA, "a"),
+  Lane(ui.laneB, ui.baseB, ui.fillB, ui.ballB, ui.partB, "b")
+];
+function setLaneEntries(){
+  lanes[0].entries = P.prep.lanes[0];
+  lanes[1].entries = P.prep.lanes[1];
+  lanes[0].shown=-1; lanes[1].shown=-1;
+  lanes[1].root.hidden = !P.prep.lanes[1].length;
+  ui.field.classList.toggle("duet", P.prep.duet && P.prep.lanes[1].length>0);
+  /* paint straight away rather than waiting on the next animation frame —
+     a background tab has no frames, and the monitor would sit on stale words */
+  paintLane(lanes[0], P.anchorBeat, false);
+  paintLane(lanes[1], P.anchorBeat, false);
+}
 
-function renderLine(idx, force){
-  if(idx===shownLine && !force) return;
-  shownLine=idx;
-  var L=P.prep.lines[idx], N=P.prep.lines[idx+1];
+function renderLaneLine(lane, idx, force){
+  if(idx===lane.shown && !force) return;
+  lane.shown=idx;
+  var L=lane.entries[idx];
+  lane.base.textContent=""; lane.fill.textContent="";
+  lane.layout=null;
+  if(!L) return;
 
-  ui.baseCur.textContent=""; ui.fillCur.textContent="";
   var spans=[];
   L.syls.forEach(function(s){
-    var a=document.createElement("span"); a.textContent=s.text; ui.baseCur.appendChild(a);
-    var b=document.createElement("span"); b.textContent=s.text; ui.fillCur.appendChild(b);
+    var a=document.createElement("span"); a.textContent=s.text; lane.base.appendChild(a);
+    var b=document.createElement("span"); b.textContent=s.text; lane.fill.appendChild(b);
     spans.push(a);
   });
-  if(!L.syls.length){ ui.baseCur.textContent="· · ·"; ui.fillCur.textContent="· · ·"; }
-
-  ui.baseNext.textContent = N ? N.syls.map(function(s){return s.text;}).join("") : "";
-  ui.subCur.textContent = L.sub || "";
+  if(!L.syls.length){ lane.base.textContent="· · ·"; lane.fill.textContent="· · ·"; }
 
   /* Shrink to fit. The wipe is one horizontal sweep, so the line must never wrap —
      and an inline box reports scrollWidth 0, so measure the rendered rect instead. */
-  ui.baseCur.style.fontSize=""; ui.fillCur.style.fontSize="";
-  var avail = ui.field.clientWidth;
-  var w = ui.baseCur.getBoundingClientRect().width;
+  lane.base.style.fontSize=""; lane.fill.style.fontSize="";
+  var avail = lane.base.parentNode.parentNode.clientWidth || ui.field.clientWidth;
+  var w = lane.base.getBoundingClientRect().width;
   if(w>avail && avail>0){
-    var start = parseFloat(getComputedStyle(ui.baseCur).fontSize);
+    var start = parseFloat(getComputedStyle(lane.base).fontSize);
     var size = Math.max(11, start*(avail/w)*0.985);
-    ui.baseCur.style.fontSize=size+"px";
-    ui.fillCur.style.fontSize=size+"px";
+    lane.base.style.fontSize=size+"px";
+    lane.fill.style.fontSize=size+"px";
     /* one correction pass — glyph widths are not perfectly linear in font-size */
-    var w2 = ui.baseCur.getBoundingClientRect().width;
+    var w2 = lane.base.getBoundingClientRect().width;
     if(w2>avail){
       size=Math.max(11, size*(avail/w2)*0.99);
-      ui.baseCur.style.fontSize=size+"px";
-      ui.fillCur.style.fontSize=size+"px";
+      lane.base.style.fontSize=size+"px";
+      lane.fill.style.fontSize=size+"px";
     }
   }
 
-  var lineBox = ui.baseCur.getBoundingClientRect();
-  layout = spans.map(function(el,i){
+  var lineBox = lane.base.getBoundingClientRect();
+  lane.layout = spans.map(function(el,i){
     var r = el.getBoundingClientRect();
     return {syl:L.syls[i], left:r.left-lineBox.left, width:r.width};
   });
-  ui.announcer.textContent = L.syls.map(function(s){return s.text;}).join("");
+  if(lane.part==="a") ui.announcer.textContent = L.syls.map(function(s){return s.text;}).join("");
 }
 
-function frame(){
-  requestAnimationFrame(frame);
-  if(!P.prep) return;
+/* the entry this singer is inside, or failing that the one they are waiting on */
+function laneIndexAt(lane, b){
+  var e=lane.entries, active=-1, upcoming=-1;
+  for(var i=0;i<e.length;i++){
+    if(b>=e[i].start && b<e[i].end){ active=i; break; }
+    if(b<e[i].start){ upcoming=i; break; }
+    active=i;
+  }
+  if(active>=0 && b<e[active].end) return {idx:active, live:true};
+  if(upcoming>=0) return {idx:upcoming, live:false};
+  return {idx:Math.max(0,e.length-1), live:false};
+}
 
-  var counting = P.playing && P.countIn && ctx && ctx.currentTime < P.countIn;
-  var b = counting ? 0 : Math.max(0, Math.min(nowBeat(), P.prep.total));
+function paintLane(lane, b, counting){
+  if(!lane.entries.length){ lane.root.hidden=true; return; }
+  lane.root.hidden=false;
 
-  /* which line */
-  var lines=P.prep.lines, idx=0;
-  for(var i=0;i<lines.length;i++){ if(b >= lines[i].start) idx=i; else break; }
-  renderLine(idx);
+  var at=laneIndexAt(lane, b);
+  renderLaneLine(lane, at.idx);
+  lane.root.classList.toggle("idle", !at.live);
 
-  /* wipe */
-  var px=0, ballX=null, ballY=0;
-  if(layout && layout.length){
+  var px=0, ballX=null, ballY=0, L=lane.layout;
+  if(L && L.length){
     var lastEnd=0;
-    for(var j=0;j<layout.length;j++){
-      var it=layout[j], s=it.syl;
+    for(var j=0;j<L.length;j++){
+      var it=L[j], s=it.syl;
       if(b>=s.end){ px=it.left+it.width; lastEnd=j; }
       else if(b>=s.start){
         var p=(b-s.start)/Math.max(.0001,(s.end-s.start));
         px=it.left+it.width*p;
         ballX=it.left+it.width/2;
         /* hop toward the next syllable over the tail of this one */
-        var nx=layout[j+1];
+        var nx=L[j+1];
         if(nx && p>0.62){
           var u=(p-0.62)/0.38;
           ballX = it.left+it.width/2 + (nx.left+nx.width/2 - (it.left+it.width/2))*u;
@@ -969,22 +1118,40 @@ function frame(){
       } else { break; }
     }
     if(ballX===null){
-      var k=Math.min(lastEnd, layout.length-1);
-      if(b < layout[0].syl.start) ballX=layout[0].left+layout[0].width/2;
-      else ballX=layout[k].left+layout[k].width/2;
+      var k=Math.min(lastEnd, L.length-1);
+      ballX = (b < L[0].syl.start) ? L[0].left+L[0].width/2 : L[k].left+L[k].width/2;
     }
   }
-  ui.fillCur.style.setProperty("--wipe", px+"px");
+  lane.fill.style.setProperty("--wipe", px+"px");
 
-  var fieldRect=ui.field.getBoundingClientRect();
-  var lineRect=ui.baseCur.getBoundingClientRect();
-  if(ballX!==null && layout && layout.length && !counting && P.playing){
-    ui.ball.style.opacity="1";
-    ui.ball.style.left=(lineRect.left-fieldRect.left+ballX)+"px";
-    ui.ball.style.top=(lineRect.top-fieldRect.top-10+ballY)+"px";
+  var bodyRect=lane.ball.parentNode.getBoundingClientRect();
+  var lineRect=lane.base.getBoundingClientRect();
+  if(ballX!==null && L && L.length && !counting && P.playing && at.live){
+    lane.ball.style.opacity="1";
+    lane.ball.style.left=(lineRect.left-bodyRect.left+ballX)+"px";
+    lane.ball.style.top=(lineRect.top-bodyRect.top-10+ballY)+"px";
   } else {
-    ui.ball.style.opacity="0";
+    lane.ball.style.opacity="0";
   }
+  return at;
+}
+
+function frame(){
+  requestAnimationFrame(frame);
+  if(!P.prep) return;
+
+  var counting = P.playing && P.countIn && ctx && ctx.currentTime < P.countIn;
+  var b = counting ? 0 : Math.max(0, Math.min(nowBeat(), P.prep.total));
+
+  var atA = paintLane(lanes[0], b, counting);
+  paintLane(lanes[1], b, counting);
+
+  /* the translation line and the look-ahead follow the lead singer */
+  var curA = atA ? lanes[0].entries[atA.idx] : null;
+  ui.subCur.textContent = curA ? (curA.sub||"") : "";
+  var all=P.prep.lines, nxt=null;
+  for(var n=0;n<all.length;n++){ if(all[n].start>b){ nxt=all[n]; break; } }
+  ui.baseNext.textContent = nxt ? nxt.syls.map(function(s){return s.text;}).join("") : "";
 
   /* meters */
   var bar=Math.floor(b/P.prep.bpb)+1;
@@ -1024,8 +1191,8 @@ function transposeName(name){
 function load(song, autoplay){
   var wasPlaying=P.playing;
   clearInterval(P.timer); P.timer=null; P.playing=false; killActive();
-  P.song=song; P.prep=prepare(song); P.anchorBeat=0;
-  shownLine=-1; renderLine(0,true);
+  P.song=song; P.prep=prepare(song, P.duet); P.anchorBeat=0;
+  setLaneEntries();
 
   ui.npCode.textContent=song.code;
   ui.npTitle.textContent=song.title;
@@ -1332,6 +1499,33 @@ ui.btnRestart.addEventListener("click", function(){ restart(false); });
 ui.optLoop.addEventListener("change", function(){ P.loop=this.checked; });
 ui.optDrums.addEventListener("change", function(){ P.drums=this.checked; });
 
+ui.optDuet.addEventListener("change", function(){
+  P.duet=this.checked;
+  if(!P.song) return;
+  /* the arrangement changes underneath, so rebuild and pick the song back up
+     where it was — a round runs longer, so the position may need clamping */
+  var at=Math.max(0, nowBeat()), was=P.playing;
+  clearInterval(P.timer); P.timer=null; P.playing=false; killActive();
+  P.prep=prepare(P.song, P.duet);
+  setLaneEntries();
+  P.anchorBeat=Math.min(at, P.prep.total);
+  if(was){ P.skipCount=true; play(); } else { ui.btnPlay.textContent="Play"; }
+  ui.said.textContent = P.duet
+    ? (P.prep.round ? "Duet: a round — B comes in behind A." : "Duet: parts A and B.")
+    : "";
+});
+
+lanes.forEach(function(L){
+  L.badge.addEventListener("click", function(){
+    L.muted=!L.muted;
+    L.badge.setAttribute("aria-pressed", L.muted?"true":"false");
+    L.badge.title = L.muted
+      ? "Part "+L.part.toUpperCase()+" is yours — click to hear the guide again"
+      : "Mute part "+L.part.toUpperCase()+" and sing it yourself";
+  });
+  L.badge.title="Mute part "+L.part.toUpperCase()+" and sing it yourself";
+});
+
 ui.kGuide.addEventListener("input", function(){
   P.guide=this.value/100;
   ui.vGuide.textContent=this.value+"%";
@@ -1428,7 +1622,9 @@ document.addEventListener("keydown", function(e){
   }
 });
 
-window.addEventListener("resize", function(){ renderLine(shownLine,true); });
+window.addEventListener("resize", function(){
+  lanes.forEach(function(L){ renderLaneLine(L, L.shown, true); });
+});
 
 /* boot */
 mine = readStore().filter(function(e){ return e && e.lyrics && VIBES[e.vibe]; });
