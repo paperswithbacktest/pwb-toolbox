@@ -302,7 +302,53 @@ input[type=range]::-moz-range-thumb{
 
 /* ---------- panes ---------- */
 .panes{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;align-items:start}
+.stack{display:flex;flex-direction:column;gap:22px;min-width:0}
 @media (max-width:880px){.panes{grid-template-columns:1fr}}
+
+/* leaderboard */
+.board-who{
+  display:flex;align-items:center;gap:10px;padding:12px 18px;
+  border-bottom:1px solid var(--edge-soft);
+}
+.board-who label{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-3);white-space:nowrap;
+}
+.board-who input{
+  font:inherit;font-size:14px;flex:1;min-width:0;
+  background:var(--ground);color:var(--ink);
+  border:1px solid var(--edge);border-radius:var(--r-sm);padding:6px 10px;
+}
+.btn.small{padding:6px 12px;font-size:13px}
+.board{list-style:none;margin:0;padding:6px 6px 10px;display:flex;flex-direction:column;gap:1px}
+.board li{
+  display:grid;grid-template-columns:auto auto 1fr auto;gap:12px;align-items:baseline;
+  padding:9px 12px;border-radius:var(--r-md);
+}
+.board li.fresh{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.bd-pos{
+  font-family:var(--font-mono);font-size:11px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;min-width:18px;
+}
+.bd-score{
+  font-family:var(--font-display);font-size:20px;font-weight:700;
+  font-variant-numeric:tabular-nums;min-width:34px;
+}
+.bd-main{min-width:0;display:flex;flex-direction:column;gap:0}
+.bd-title{font-size:14px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bd-sub{font-size:11.5px;color:var(--ink-3)}
+.bd-when{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);white-space:nowrap}
+.board-empty{padding:14px 14px 16px;margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.6}
+
+.best-flag{
+  display:inline-block;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:#7CE7A8;
+  border:1px solid rgba(124,231,168,.4);border-radius:999px;padding:2px 8px;margin-left:8px;
+}
+.tk-best{
+  display:block;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
 .pane{
   background:var(--ground-2);border:1px solid var(--edge);border-radius:var(--r-lg);
   box-shadow:var(--shadow);overflow:hidden;
@@ -453,7 +499,7 @@ footer kbd{
     <div class="result" id="result" hidden role="status">
       <div class="result-score"><b id="resultScore">0</b><span>/ 100</span></div>
       <div class="result-body">
-        <strong id="resultRank">—</strong>
+        <strong id="resultRank">—</strong><span class="best-flag" id="resultFlag" hidden></span>
         <span id="resultDetail"></span>
       </div>
     </div>
@@ -524,6 +570,7 @@ footer kbd{
   </section>
 
   <div class="panes">
+    <div class="stack">
     <section class="pane" aria-label="Songbook">
       <div class="pane-head">
         <h2>The songbook</h2>
@@ -531,6 +578,20 @@ footer kbd{
       </div>
       <ul class="book" id="book"></ul>
     </section>
+
+    <section class="pane" aria-label="Leaderboard">
+      <div class="pane-head">
+        <h2>Leaderboard</h2>
+        <p>Best runs, this browser</p>
+      </div>
+      <div class="board-who">
+        <label for="singerIn">Singing as</label>
+        <input type="text" id="singerIn" maxlength="18" placeholder="You" autocomplete="off">
+        <button class="btn ghost small" id="btnClearBoard">Clear</button>
+      </div>
+      <ol class="board" id="board"></ol>
+    </section>
+    </div>
 
     <section class="pane" aria-label="Your own lyrics">
       <div class="pane-head">
@@ -1128,7 +1189,8 @@ var ui={};
  "laneB","baseB","fillB","ballB","partB","subCur","lineNext","baseNext","cue","optDuet",
  "progressBar","chordCur","chordNext","btnPlay","btnRestart","optLoop","optDrums",
  "trackCount","mScoreWrap","mScore","scorebar","ribbon","scoreNote","optScore",
- "result","resultScore","resultRank","resultDetail","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
+ "result","resultScore","resultRank","resultDetail","resultFlag",
+ "board","singerIn","btnClearBoard","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
  "btnSave","btnShare","said","announcer"].forEach(function(id){ ui[id]=document.getElementById(id); });
 
 function setState(s){ ui.mState.textContent=s; }
@@ -1400,6 +1462,107 @@ function micOff(){
   S.stream=null; S.analyser=null; S.buf=null;
 }
 
+/* ---------- leaderboard ---------- */
+var BOARD_KEY="karaoke-box/scores/v1";
+var NAME_KEY="karaoke-box/singer/v1";
+var board=[], boardWorks=true, freshId=null;
+
+function readBoard(){
+  try{
+    var raw=localStorage.getItem(BOARD_KEY);
+    var v=raw?JSON.parse(raw):[];
+    return Array.isArray(v) ? v.filter(function(e){
+      return e && typeof e.score==="number" && e.title;
+    }) : [];
+  }catch(e){ boardWorks=false; return []; }
+}
+function writeBoard(){
+  try{ localStorage.setItem(BOARD_KEY, JSON.stringify(board.slice(0,50))); return true; }
+  catch(e){ boardWorks=false; return false; }
+}
+function singerName(){
+  var v=(ui.singerIn.value||"").trim();
+  return v || "You";
+}
+function bestFor(code){
+  var b=null;
+  board.forEach(function(e){ if(e.code===code && (b===null || e.score>b)) b=e.score; });
+  return b;
+}
+function whenLabel(iso){
+  try{
+    var d=new Date(iso), now=new Date();
+    var sameDay = d.toDateString()===now.toDateString();
+    if(sameDay) return d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+    return d.toLocaleDateString(undefined,{day:"numeric",month:"short"});
+  }catch(e){ return ""; }
+}
+
+function drawBoard(){
+  ui.board.innerHTML="";
+  if(!board.length){
+    var p=document.createElement("li");
+    p.className="board-empty";
+    p.textContent = S.on
+      ? "Sing a track through to the end and your score lands here."
+      : "Turn on “Score me” in the transport, sing a track to the end, and your score lands here.";
+    ui.board.appendChild(p);
+    return;
+  }
+  board.slice(0,10).forEach(function(e,i){
+    var li=document.createElement("li");
+    if(e.id===freshId) li.className="fresh";
+
+    var pos=document.createElement("span");
+    pos.className="bd-pos"; pos.textContent=(i+1)+".";
+
+    var sc=document.createElement("span");
+    sc.className="bd-score"; sc.textContent=e.score;
+
+    var main=document.createElement("span"); main.className="bd-main";
+    var t=document.createElement("span");
+    t.className="bd-title"; t.textContent=e.title;
+    var sub=document.createElement("span"); sub.className="bd-sub";
+    var bits=[e.name||"You", e.rank];
+    if(e.duet) bits.push("duet, part "+String(e.part||"a").toUpperCase());
+    if(e.tempo && e.tempo!==100) bits.push(e.tempo+"% tempo");
+    sub.textContent=bits.join(" · ");
+    main.appendChild(t); main.appendChild(sub);
+
+    var when=document.createElement("span");
+    when.className="bd-when"; when.textContent=whenLabel(e.at);
+
+    li.appendChild(pos); li.appendChild(sc); li.appendChild(main); li.appendChild(when);
+    ui.board.appendChild(li);
+  });
+  if(!boardWorks){
+    var w=document.createElement("li");
+    w.className="board-empty";
+    w.textContent="This browser is blocking storage, so these last until you reload.";
+    ui.board.appendChild(w);
+  }
+}
+
+function recordRun(sc, rankName){
+  var prev=bestFor(P.song.code);
+  var entry={
+    id:String(Date.now())+"-"+board.length,
+    code:P.song.code, title:P.song.title, name:singerName(),
+    score:sc, rank:rankName, at:new Date().toISOString(),
+    notes:S.notes, hit:S.notesHit,
+    duet:!!(P.prep&&P.prep.duet), part:scoredPart(),
+    tempo:Math.round(P.tempo*100)
+  };
+  board.push(entry);
+  board.sort(function(a,b){ return b.score-a.score; });
+  board=board.slice(0,50);
+  freshId=entry.id;
+  writeBoard();
+  drawBoard();
+  drawBook();
+  return {isBest:(prev===null || sc>prev), prev:prev, first:prev===null};
+}
+
 function rank(score){
   if(score>=95) return "Perfect pitch";
   if(score>=87) return "Showstopper";
@@ -1458,9 +1621,15 @@ function finishScore(){
   var sc=liveScore(), secs=S.bestRun*secPerBeat();
   S.done={score:sc, rank:rank(sc), run:secs, notes:S.notes, hit:S.notesHit};
   ui.resultScore.textContent=sc;
+
+  var how=recordRun(sc, S.done.rank);
   ui.resultRank.textContent=S.done.rank;
-  ui.resultDetail.textContent =
-    S.notesHit+" of "+S.notes+" notes landed · longest run in tune "+secs.toFixed(1)+"s";
+  ui.resultFlag.hidden = !how.isBest;
+  ui.resultFlag.textContent = how.first ? "first run" : "new best";
+
+  var detail = S.notesHit+" of "+S.notes+" notes landed · longest run in tune "+secs.toFixed(1)+"s";
+  if(how.isBest && !how.first) detail += " · beat "+how.prev;
+  ui.resultDetail.textContent=detail;
   ui.result.hidden=false;
 }
 
@@ -1623,6 +1792,12 @@ function row(s, entry){
   meta.appendChild(lvl);
   meta.appendChild(document.createTextNode(
     Math.floor(secs/60)+":"+String(secs%60).padStart(2,"0")+" · "+s.bpm));
+  var pb=bestFor(s.code);
+  if(pb!==null){
+    var best=document.createElement("span");
+    best.className="tk-best"; best.textContent="best "+pb;
+    meta.appendChild(best);
+  }
 
   b.appendChild(code); b.appendChild(main); b.appendChild(meta);
   b.addEventListener("click", function(){ load(s, true); });
@@ -1865,6 +2040,17 @@ ui.optDuet.addEventListener("change", function(){
     : "";
 });
 
+ui.singerIn.addEventListener("change", function(){
+  try{ localStorage.setItem(NAME_KEY, this.value.trim()); }catch(e){}
+});
+
+ui.btnClearBoard.addEventListener("click", function(){
+  if(!board.length) return;
+  board=[]; freshId=null;
+  writeBoard(); drawBoard(); drawBook();
+  ui.said.textContent="Leaderboard cleared.";
+});
+
 ui.optScore.addEventListener("change", async function(){
   if(this.checked){
     this.disabled=true;
@@ -1876,6 +2062,7 @@ ui.optScore.addEventListener("change", async function(){
     ui.scorebar.hidden=false;
     ui.mScoreWrap.hidden=false;
     ui.scoreNote.textContent="Sing — the bars are the tune, the dots are you.";
+    drawBoard();
   } else {
     S.on=false; micOff();
     ui.scorebar.hidden=true;
@@ -1996,6 +2183,9 @@ window.addEventListener("resize", function(){
 });
 
 /* boot */
+board = readBoard();
+try{ ui.singerIn.value = localStorage.getItem(NAME_KEY) || ""; }catch(e){}
+drawBoard();
 mine = readStore().filter(function(e){ return e && e.lyrics && VIBES[e.vibe]; });
 drawBook();
 showDigits();
