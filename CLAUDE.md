@@ -77,6 +77,7 @@ A full block looks like this:
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
+- `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`
 
 ## Environment
@@ -115,7 +116,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (43 tests, ~4s)
+pytest tests/ -v                  # full suite (170 tests, ~20s cold / ~3s warm)
 pytest tests/test_optimal_limit_order.py -v
 black pwb_toolbox/                # format; the repo is black-formatted
 black --check --diff pwb_toolbox/ # check without writing
