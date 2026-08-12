@@ -1,10 +1,16 @@
 name: Pages
 
-# Publishes docs/ to GitHub Pages. `configure-pages` with enablement: true turns
-# Pages on via the API on the first run, so this does not need the repository
-# setting to be flipped by hand first. If that call is refused — org policy, or
-# Pages already enabled with a different source — set Settings > Pages > Source
-# to "GitHub Actions" once and re-run; everything after that works unchanged.
+# Publishes docs/ to GitHub Pages.
+#
+# Requires a ONE-TIME manual step before the first successful run:
+#   Settings > Pages > Source > "GitHub Actions"
+#
+# enablement: true asks the API to create the Pages site, but the default
+# GITHUB_TOKEN is not permitted to do so — run 1 failed with "Create Pages site
+# failed. Error: Resource not accessible by integration". pages: write covers
+# deploying to a site that already exists, not creating one. The flag is kept
+# because it is a no-op once Pages exists (the preceding GET succeeds and no
+# create is attempted) and it would work under a token with admin rights.
 
 on:
   push:

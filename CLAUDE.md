@@ -171,11 +171,16 @@ it opens from `file://` with no build step and no network, which is also why it 
 ~120 KB. Rebuilding means re-querying the skill, not editing the base64 by hand.
 
 `.github/workflows/pages.yml` publishes `docs/` to GitHub Pages on every push to
-`main` that touches it. `actions/configure-pages` runs with `enablement: true`, so
-the first run turns Pages on through the API rather than requiring the repository
-setting to be flipped by hand. If that call is ever refused — org policy, or Pages
-already enabled against a different source — set Settings → Pages → Source to
-"GitHub Actions" once and re-run the workflow.
+`main` that touches it.
+
+Enabling Pages is a one-time manual step: **Settings → Pages → Source → "GitHub
+Actions"**. It cannot be automated from a workflow here. `actions/configure-pages`
+runs with `enablement: true`, but the default `GITHUB_TOKEN` is not permitted to
+create a Pages site — run 1 failed with `Create Pages site failed. Error: Resource
+not accessible by integration`. The `pages: write` permission covers deploying to a
+site that already exists, not creating one; creating needs a token with admin
+rights. The flag is kept because it is a no-op once Pages exists and would work
+under such a token.
 
 `docs/.nojekyll` only matters on the fallback "deploy from a branch" source, which
 does run Jekyll and would otherwise try to build the `.md` files sitting beside
