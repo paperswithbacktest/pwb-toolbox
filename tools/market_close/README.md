@@ -7,17 +7,28 @@ way it should be spoken.
 
 ```bash
 python -m tools.market_close --demo                        # canned session, no credentials
+python -m tools.market_close --preview                     # tape and movers only
 python -m tools.market_close --kicker-file kicker.txt --out close.txt
 python -m tools.market_close --segments render/            # one file per block
 ```
 
 ## The daily loop
 
-1. `python -m tools.market_close --kicker-file kicker.txt --segments render/`
-2. Read it once out loud. The generator writes seven segments; you write the eighth.
-3. Paste `render/01-…` through `render/08-…` into ElevenLabs Text to Speech one at a
+1. `python -m tools.market_close --preview` — check the figures read correctly
+   before committing to anything.
+2. `python -m tools.market_close --kicker-file kicker.txt --segments render/`
+3. Read it once out loud. The generator writes seven segments; you write the eighth.
+4. Paste `render/01-…` through `render/08-…` into ElevenLabs Text to Speech one at a
    time, on **Eleven v3**, stability **Natural**.
-4. Stitch the clips, drop the track onto a HeyGen avatar as uploaded audio.
+5. Stitch the clips, drop the track onto a HeyGen avatar as uploaded audio.
+
+Step 1 exists because the tape and movers carry nearly every number in the
+broadcast — index levels, breadth counts, two percentage moves, two closing prices.
+They are also the segments that change most between sessions, so an unfamiliar
+ticker spelling or an odd-sounding level shows up there first. `--preview` prints
+those two blocks exactly as they will be performed, jokes included, so what you
+audition is what ships. It exits non-zero when there is nothing to show, which
+makes it usable as a guard in a scheduled run.
 
 Rendering segment by segment is not fussiness. v3 holds a performance together
 better across a few sentences than across a whole broadcast, and a bad take on the
@@ -83,7 +94,8 @@ string concatenation rather than wrapping for source readability.
 | `--kicker-file PATH` | hand-written kicker for the `[KICKER]` slot |
 | `--names PATH` | JSON `{"TICKER": "spoken name"}`, merged over the built-ins |
 | `--anchor`, `--show` | rename the anchor and the programme |
-| `--out PATH` | write the full script (default: stdout) |
+| `--preview` | tape and movers only; exits `1` when neither has data |
+| `--out PATH` | write the script (default: stdout) |
 | `--segments DIR` | also write one numbered file per block, in render order |
 
 `COMPANY_NAMES` in `market.py` covers about sixty large caps. Anything absent gets

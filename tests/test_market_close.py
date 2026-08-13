@@ -485,6 +485,49 @@ def test_split_segments_round_trips_the_render():
 
 
 # --------------------------------------------------------------------------
+# preview
+# --------------------------------------------------------------------------
+
+
+def test_preview_carries_the_tape_and_movers_only():
+    text = script.preview(market.demo_facts())
+    assert "[THE TAPE]" in text
+    assert "[MOVERS]" in text
+    for dropped in ("[COLD OPEN]", "[RATES]", "[COMMODITIES]", "[KICKER]"):
+        assert dropped not in text
+    assert "[THE STRAIGHT BEAT]" not in text
+    assert "[SIGN-OFF]" not in text
+
+
+def test_preview_matches_the_full_render_word_for_word():
+    """A preview that read differently from the broadcast would be useless."""
+    facts = market.demo_facts()
+    text = script.preview(facts)
+    full = script.render(facts)
+    for _, body in script.split_segments(text):
+        assert body in full
+
+
+def test_preview_keeps_the_no_digits_invariant():
+    text = script.preview(market.demo_facts())
+    assert not any(c.isdigit() for c in text)
+
+
+def test_preview_is_empty_without_market_data():
+    assert script.preview(MarketFacts(session_date=DAY_TWO)) == ""
+
+
+def test_preview_survives_one_missing_segment():
+    facts = MarketFacts(
+        session_date=DAY_TWO,
+        indices=[Quote("SPX", market.INDEX_NAMES["SPX"], 100.6, 100.0)],
+    )
+    text = script.preview(facts)
+    assert "[THE TAPE]" in text
+    assert "[MOVERS]" not in text
+
+
+# --------------------------------------------------------------------------
 # cli
 # --------------------------------------------------------------------------
 
@@ -551,3 +594,42 @@ def test_cli_date_overrides_the_rotation_seed(tmp_path):
 def test_cli_rejects_a_malformed_date():
     with pytest.raises(SystemExit):
         main(["--demo", "--date", "13/08/2026"])
+
+
+def test_cli_preview_prints_only_the_two_segments(capsys):
+    assert main(["--demo", "--preview"]) == 0
+    out = capsys.readouterr().out
+    assert "[THE TAPE]" in out
+    assert "[MOVERS]" in out
+    assert "[SIGN-OFF]" not in out
+    assert "[THE STRAIGHT BEAT]" not in out
+
+
+def test_cli_preview_writes_to_out(tmp_path):
+    out = tmp_path / "preview.txt"
+    assert main(["--demo", "--preview", "--out", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert "[THE TAPE]" in text
+    assert "[KICKER]" not in text
+
+
+def test_cli_preview_ignores_a_kicker(tmp_path, capsys):
+    kicker = tmp_path / "kicker.txt"
+    kicker.write_text("A parrot with a lawyer.", encoding="utf-8")
+    assert main(["--demo", "--preview", "--kicker-file", str(kicker)]) == 0
+    assert "A parrot with a lawyer." not in capsys.readouterr().out
+
+
+def test_cli_preview_writes_two_numbered_segments(tmp_path):
+    target = tmp_path / "render"
+    assert main(["--demo", "--preview", "--segments", str(target)]) == 0
+    assert sorted(p.name for p in target.iterdir()) == [
+        "01-the-tape.txt",
+        "02-movers.txt",
+    ]
+
+
+def test_cli_preview_reports_when_there_is_nothing_to_show(monkeypatch, capsys):
+    monkeypatch.setattr(market, "demo_facts", lambda session=None: MarketFacts(DAY_TWO))
+    assert main(["--demo", "--preview"]) == 1
+    assert "no tape or movers data to preview" in capsys.readouterr().err

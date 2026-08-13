@@ -1,11 +1,14 @@
 """Command line interface for the daily market-close script generator.
 
     python -m tools.market_close --demo
+    python -m tools.market_close --preview
     python -m tools.market_close --kicker-file kicker.txt --out close.txt
     python -m tools.market_close --segments render/
 
 ``--segments`` is the one worth knowing about: it writes the script out one
 numbered file per block, which is the order you paste them into ElevenLabs.
+``--preview`` is the one you'll type most: tape and movers only, to check the
+figures read correctly before committing to a render.
 """
 
 from __future__ import annotations
@@ -83,7 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--anchor", default="Max Brennan", help="anchor name")
     parser.add_argument("--show", default="the Market Close", help="programme name")
     parser.add_argument(
-        "--out", type=Path, help="write the full script here (default: stdout)"
+        "--preview",
+        action="store_true",
+        help="show only the tape and movers, for checking the numbers",
+    )
+    parser.add_argument(
+        "--out", type=Path, help="write the script here (default: stdout)"
     )
     parser.add_argument(
         "--segments",
@@ -112,10 +120,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.kicker_file is not None:
         kicker = args.kicker_file.read_text(encoding="utf-8")
 
-    text = script.render(
-        facts,
-        ScriptOptions(anchor=args.anchor, show=args.show, kicker=kicker),
-    )
+    if args.preview:
+        text = script.preview(facts)
+        if not text:
+            _log("no tape or movers data to preview")
+            return 1
+    else:
+        text = script.render(
+            facts,
+            ScriptOptions(anchor=args.anchor, show=args.show, kicker=kicker),
+        )
 
     offenders = warn_on_digits(text)
     if offenders:

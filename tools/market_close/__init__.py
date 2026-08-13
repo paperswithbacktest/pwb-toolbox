@@ -8,7 +8,7 @@ way it should be spoken. See ``README.md`` in this directory.
 """
 
 from .market import MarketFacts, Quote, collect, demo_facts
-from .script import ScriptOptions, render, split_segments
+from .script import ScriptOptions, preview, render, split_segments
 
 __all__ = [
     "MarketFacts",
@@ -16,6 +16,7 @@ __all__ = [
     "ScriptOptions",
     "collect",
     "demo_facts",
+    "preview",
     "render",
     "split_segments",
 ]

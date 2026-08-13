@@ -387,6 +387,22 @@ def render(facts: MarketFacts, options: ScriptOptions | None = None) -> str:
     return "\n\n\n".join(segment for segment in segments if segment) + "\n"
 
 
+def preview(facts: MarketFacts) -> str:
+    """Just the tape and the movers — the segments carrying the figures.
+
+    What is worth checking before you spend renders is the numbers, and nearly
+    all of them live in these two blocks: index levels, breadth counts, two
+    percentage moves and two closing prices. The jokes are the same either way,
+    so a preview that dropped them would read differently from what ships;
+    these are whole segments, exactly as they will be performed.
+
+    Empty when neither segment has data, which the caller should treat as
+    nothing to show rather than an empty script.
+    """
+    blocks = [block for block in (tape(facts), movers(facts)) if block]
+    return "\n\n\n".join(blocks) + "\n" if blocks else ""
+
+
 def split_segments(text: str) -> list[tuple[str, str]]:
     """Split a rendered script into ``(name, body)`` pairs.
 
