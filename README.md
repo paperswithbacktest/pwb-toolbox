@@ -46,6 +46,29 @@ df = pwb_ds.load_dataset("Stocks-Daily-Price")
 
 For more, see [docs/datasets.md](/docs/datasets.md).
 
+### FXMacroData release calendar
+
+Scheduled macroeconomic events can be loaded directly into a pandas DataFrame:
+
+```python
+import pwb_toolbox.datasets as pwb_ds
+
+events = pwb_ds.load_fxmacrodata_calendar(
+    currency="usd",
+    start_date="2026-08-01",
+    end_date="2026-08-31",
+    top_tier_only=True,
+)
+```
+
+Public calendar access does not require a key. For authenticated requests, set
+`FXMACRODATA_API_KEY` (or the shorter `FXMD_API_KEY`) in the environment. Do
+not put keys in source code.
+
+This focused loader supports the release-calendar surface. FXMacroData's
+indicator history, forecasts, FX OHLC, COT, commodities, sessions, news, and
+seasonality endpoints are not exposed by `pwb-toolbox`.
+
 
 ### Backtesting
 

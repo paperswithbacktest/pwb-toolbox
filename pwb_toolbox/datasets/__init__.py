@@ -10,6 +10,8 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
+from .fxmacrodata import load_fxmacrodata_calendar
+
 
 def _get_hf_token() -> str:
     token = os.getenv("HF_ACCESS_TOKEN")
