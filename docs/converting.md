@@ -89,6 +89,8 @@ duplicate is pure waste.
 | `if` / `else if` / `else` | the same, inside `next()` |
 | `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
 | `strategy.close`, `strategy.close_all`, plain `strategy.exit` | `self.close()` |
+| `strategy.position_size` | `self.position.size` |
+| `bar_index` | `len(self)` |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
 
 Pine inputs become real Backtrader params, so they stay tunable:
@@ -96,6 +98,23 @@ Pine inputs become real Backtrader params, so they stay tunable:
 ```python
 cerebro.addstrategy(DualMACross, fast=3, slow=40)
 ```
+
+An input does not have to be the whole right-hand side. The percentage idiom
+works too, and the param is named from the input's title when there is no
+variable to take the name from:
+
+```pinescript
+stop = input.float(5.0, "Stop Percent") / 100
+```
+
+```python
+params = (('stop_percent', 5),)
+...
+stop = (self.p.stop_percent / 100)
+```
+
+Where a title-derived name collides with a variable, the computed local wins
+every later reference — that is what the Pine source means by the name.
 
 ## What is refused
 

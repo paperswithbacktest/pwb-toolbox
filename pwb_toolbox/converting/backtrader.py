@@ -105,6 +105,14 @@ DERIVED_SERIES = {
     ),
 }
 
+#: Pine builtins that read straight across to a Backtrader expression.
+#: ``strategy.position_size`` is signed and in units on both sides, so the
+#: mapping is exact rather than approximate.
+BUILTIN_VALUES = {
+    "bar_index": "len(self)",
+    "strategy.position_size": "self.position.size",
+}
+
 INPUT_FUNCS = {
     "input",
     "input.int",
@@ -231,6 +239,15 @@ def _class_name(title: str, fallback: str = "ConvertedStrategy") -> str:
     return name
 
 
+def _slug(title) -> str:
+    """Turn an input's title into a Python identifier: 'Stop %' -> 'stop'."""
+    if not isinstance(title, str):
+        return ""
+    parts = re.findall(r"[A-Za-z0-9]+", title)
+    name = "_".join(parts).lower()
+    return f"p_{name}" if name[:1].isdigit() else name
+
+
 def _safe(name: str) -> str:
     if keyword.iskeyword(name) or name in _RESERVED or name.startswith("_"):
         return f"pine_{name}"
@@ -264,6 +281,7 @@ class _Generator:
         self.ignored = []
         self._counter = 0
         self._hoisted = {}  # construction source -> attribute name
+        self._inputs = {}  # input call signature -> param name
 
     # --- helpers -------------------------------------------------------------
 
@@ -408,18 +426,25 @@ class _Generator:
             return DERIVED_SERIES[name].format(i=index)
         if name in self.series:
             return f"self.{self.series[name]}[{index}]"
-        if name in self.param_names:
-            if index:
-                self._reject(f"{name}: a parameter has no bar history")
-            return f"self.p.{_safe(name)}"
+        # A computed local shadows a param of the same name. `width =
+        # input.float(2.0, "Width") / 100` names the param from the title and
+        # the local from the assignment, and they collide; the local is the one
+        # Pine means. Resolving to the param instead is silently wrong rather
+        # than loudly wrong, which is the worst way to be wrong.
         if name in self.scalars:
             if index:
                 self._reject(
                     f"{name}: history of a computed value needs a Backtrader line"
                 )
             return _safe(name)
-        if name == "bar_index":
-            return "len(self)"
+        if name in self.param_names:
+            if index:
+                self._reject(f"{name}: a parameter has no bar history")
+            return f"self.p.{_safe(name)}"
+        if name in BUILTIN_VALUES:
+            if index:
+                self._reject(f"{name}: history of this builtin is not supported")
+            return BUILTIN_VALUES[name]
         if _presentational_constant(name):
             # `col = up ? color.green : color.red` only ever feeds a plot, and
             # plots are dropped. Refusing the colour would report the strategy
@@ -430,6 +455,11 @@ class _Generator:
         return "None"
 
     def _value_call(self, call):
+        if call.func in INPUT_FUNCS:
+            # `stop = input.float(5.0, "Stop %") / 100` -- an input does not
+            # have to be the whole right-hand side to be a tunable param.
+            return self._register_input(call)
+
         if call.func in CROSSES:
             if len(call.args) != 2:
                 self._reject(f"{call.func} expects two arguments")
@@ -480,8 +510,7 @@ class _Generator:
 
     # --- statements ----------------------------------------------------------
 
-    def _collect_input(self, statement):
-        call = statement.value
+    def _input_default(self, call):
         default = None
         for arg in call.args:
             literal = _literal(arg)
@@ -495,8 +524,48 @@ class _Generator:
                 default = _literal(value)
         if call.func == "input.bool" and isinstance(default, (int, float)):
             default = bool(default)
-        self.params.append((statement.target, default))
-        self.param_names.add(statement.target)
+        return default
+
+    def _input_title(self, call):
+        """The input's display title, used to name a param that has no variable."""
+        for key, value in call.kwargs:
+            if key == "title":
+                return _literal(value)
+        for arg in call.args[1:]:
+            literal = _literal(arg)
+            if isinstance(literal, str):
+                return literal
+        return None
+
+    def _register_input(self, call, prefer=None):
+        """Turn an ``input.*`` call into a Backtrader param and return its handle.
+
+        Called both for `n = input.int(14)`, where the variable names the param,
+        and for an input buried in an expression such as
+        `stop = input.float(5.0, "Stop %") / 100`, where it does not and the
+        title has to supply the name instead.
+        """
+        default = self._input_default(call)
+        key = (call.func, repr(default), self._input_title(call))
+        if prefer is None and key in self._inputs:
+            return f"self.p.{_safe(self._inputs[key])}"
+
+        # `params` and `param_names` hold the Pine name; `_safe` is applied
+        # where it is written out, so applying it here too would double it.
+        name = prefer or _slug(self._input_title(call)) or "param"
+        if prefer is None:
+            candidate, suffix = name, 2
+            while candidate in self.param_names:
+                candidate, suffix = f"{name}_{suffix}", suffix + 1
+            name = candidate
+
+        self.params.append((name, default))
+        self.param_names.add(name)
+        self._inputs[key] = name
+        return f"self.p.{_safe(name)}"
+
+    def _collect_input(self, statement):
+        self._register_input(statement.value, prefer=statement.target)
 
     def _emit_statement(self, statement, indent):
         pad = "    " * indent

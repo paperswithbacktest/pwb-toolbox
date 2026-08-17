@@ -459,6 +459,96 @@ def test_unparsable_source_still_yields_runnable_code():
     assert cerebro.broker.getvalue() == 10_000.0  # a placeholder trades nothing
 
 
+def test_convert_accepts_an_input_nested_in_an_expression():
+    """`input.float(...) / 100` is how real scripts write a percentage."""
+    result = convert(
+        '//@version=6\nstrategy("S")\nstop = input.float(5.0, "Stop Percent") / 100\n'
+    )
+    assert result.ok, result.unsupported
+    assert ("stop_percent", 5) in result.params
+
+
+def test_nested_input_without_a_title_still_becomes_a_param():
+    result = convert('//@version=6\nstrategy("S")\nx = close * input.float(1.5)\n')
+    assert result.ok, result.unsupported
+    assert len(result.params) == 1
+
+
+def test_repeated_nested_input_becomes_one_param():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'a = input.float(2.0, "Mult") * 1\n'
+        'b = input.float(2.0, "Mult") * 2\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert len(result.params) == 1
+
+
+def test_nested_input_does_not_collide_with_an_existing_param():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'mult = input.int(1, "M")\n'
+        'x = close * input.float(2.0, "Mult")\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert [name for name, _ in result.params] == ["mult", "mult_2"]
+
+
+def test_nested_input_named_after_a_strategy_attribute_is_renamed():
+    """The rename that protects `position` must survive a title-derived name."""
+    result = convert(
+        '//@version=6\nstrategy("S")\nx = close * input.float(2.0, "Position")\n'
+    )
+    assert result.ok, result.unsupported
+    assert "'pine_position'" in result.code
+
+
+def test_convert_maps_strategy_position_size():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "if strategy.position_size == 0 and close > open\n"
+        '    strategy.entry("l", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self.position.size" in result.code
+
+
+def test_computed_local_shadows_a_param_of_the_same_name():
+    """The local, not the raw param, is what Pine means by `width` here.
+
+    Naming the param from the title makes it collide with the assignment
+    target. Resolving later references to the param silently used a threshold
+    100x too large -- wrong output rather than an error, so it is pinned.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'width = input.float(2.0, "Width") / 100\n'
+        'if close > 1 + width\n    strategy.entry("l", strategy.long)\n'
+    )
+    code = convert(source).code
+    assert "width = (self.p.width / 100)" in code
+    assert "(1 + width)" in code
+    assert "(1 + self.p.width)" not in code
+
+
+def test_generated_nested_input_param_is_overridable():
+    """A param recovered from inside an expression must still be tunable."""
+    source = (
+        '//@version=6\nstrategy("Band")\n'
+        'width = input.float(2.0, "Width") / 100\n'
+        "ma = ta.sma(close, 20)\n"
+        'if close > ma * (1 + width)\n    strategy.entry("l", strategy.long)\n'
+        "if close < ma\n    strategy.close()\n"
+    )
+    baseline, closed = _run(source)
+    assert closed > 0
+    tuned, _ = _run(source, width=25.0)
+    assert baseline != tuned
+
+
 def test_convert_ignores_drawing_constants():
     """A colour cannot change a trade, so it must not fail a conversion."""
     source = (
