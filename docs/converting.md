@@ -91,6 +91,9 @@ duplicate is pure waste.
 | `strategy.close`, `strategy.close_all`, plain `strategy.exit` | `self.close()` |
 | `strategy.position_size` | `self.position.size` |
 | `bar_index` | `len(self)` |
+| `var x = <literal>` | an attribute set once in `__init__` |
+| `x := value` | assignment, writing through to the attribute for a `var` |
+| `na(x)` | the NaN test `x != x` |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
 
 Pine inputs become real Backtrader params, so they stay tunable:
@@ -121,7 +124,8 @@ every later reference — that is what the Pine source means by the name.
 Reported in `result.unsupported`, never approximated:
 
 - `request.security` — multi-timeframe needs a second data feed and a resampling decision
-- `var` / `varip` — persistent state has to be designed onto the strategy
+- `varip` — updates on every tick, and a bar-close run has no ticks
+- `var x = <expression>` — only a literal initial value works; see below
 - arrays, matrices, maps, user-defined functions and types
 - `for` / `while` loops
 - tuple destructuring, e.g. `[macd, signal, hist] = ta.macd(...)`
@@ -136,6 +140,54 @@ cannot change a trade, so refusing one would fail a conversion over nothing.
 
 Both lists are also written into the generated class's docstring, so a
 converted file explains its own gaps without needing the original result object.
+
+## State that survives the bar
+
+`var` is how a strategy remembers something between bars — the price it got
+filled at, a stop level, a counter. Pine initialises a `var` once and keeps it;
+a Backtrader instance attribute already behaves that way, so that is what it
+becomes.
+
+```pinescript
+var float entryPrice = na
+var int trades = 0
+if na(entryPrice) and close > ma
+    strategy.entry("long", strategy.long)
+    entryPrice := close
+    trades := trades + 1
+```
+
+```python
+def __init__(self):
+    self.entryPrice = float('nan')
+    self.trades = 0
+
+def next(self):
+    if (self.entryPrice != self.entryPrice) and (self.data.close[0] > self._sma_1[0]):
+        self.buy()
+        self.entryPrice = self.data.close[0]
+        self.trades = (self.trades + 1)
+```
+
+`na(x)` lowers to the NaN test `x != x`, which is what pairs with
+`var float x = na` — the usual way a script spells "no position yet".
+
+A `var` named after something a `bt.Strategy` already owns is renamed, exactly
+as params are: `var position = 0` becomes `self.pine_position`, so it cannot
+quietly overwrite Backtrader's own `position`.
+
+Two limits, both reported rather than guessed at:
+
+- **The initial value must be a literal.** `var float x = close` means the
+  *first bar's* close, and `__init__` runs before there is a first bar. Numbers,
+  strings, booleans and `na` all work; anything reading a series does not.
+- **A `var` has no history.** `entryPrice[1]` needs a real line object. One
+  attribute holds one value.
+
+The test suite runs a converted `var` strategy through a real `cerebro` and
+checks the Pine counter matches the broker's own trade count. Compiling proves
+nothing here — a local assigned in `next()` compiles too, and would silently
+count to one and stay there.
 
 ## Source it cannot even parse
 

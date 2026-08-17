@@ -551,7 +551,9 @@ class Parser:
                 return Bool(True)
             if token.value == "false":
                 return Bool(False)
-            if token.value == "na":
+            # Bare `na` is the missing-value literal, but `na(x)` is the call
+            # that tests for it. Check for the paren before deciding.
+            if token.value == "na" and not self.at("OP", "("):
                 return Na()
             if self.at("OP", "("):
                 return self.parse_call(token.value)
