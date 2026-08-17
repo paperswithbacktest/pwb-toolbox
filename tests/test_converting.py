@@ -268,7 +268,7 @@ def _unsupported(source):
     "snippet, marker",
     [
         ("s = request.security(syminfo.tickerid, '1D', close)\n", "request.security"),
-        ("var count = 0\n", "var count"),
+        ("varip count = 0\n", "varip count"),
         ("for i = 0 to 10\n    x = close\n", "for"),
         ("[m, s, h] = ta.macd(close, 12, 26, 9)\n", "tuple destructuring"),
         ("a = array.new_float(0)\n", "array.new_float"),
@@ -315,8 +315,8 @@ def test_convert_notes_indicator_scripts_place_no_orders():
 
 
 def test_unsupported_items_appear_in_generated_docstring():
-    code = convert('//@version=5\nstrategy("S")\nvar c = 0\n').code
-    assert "Not translated" in code and "var c" in code
+    code = convert('//@version=5\nstrategy("S")\nvarip c = 0\n').code
+    assert "Not translated" in code and "varip c" in code
 
 
 def test_reserved_names_are_renamed_to_avoid_clobbering_strategy_attrs():
@@ -423,10 +423,15 @@ def test_convert_accepts_explicit_type_declarations(declaration):
 
 
 def test_type_declaration_does_not_hide_var():
-    """`var float x = na` is still persistent state, type annotation or not."""
+    """`var float x = na` is still persistent state, type annotation or not.
+
+    The type words are consumed before the assignment is read, so the risk is
+    that `var` gets consumed with them and the declaration silently becomes an
+    ordinary local -- recomputed every bar instead of carried across them.
+    """
     result = convert('//@version=6\nstrategy("S")\nvar float entryPrice = na\n')
-    assert not result.ok
-    assert any("entryPrice" in item for item in result.unsupported)
+    assert result.ok, result.unsupported
+    assert "self.entryPrice = float('nan')" in result.code.split("def next")[0]
 
 
 @pytest.mark.parametrize(
@@ -509,6 +514,125 @@ def test_parsing_resumes_after_a_user_defined_function():
 def test_a_plain_call_is_not_mistaken_for_a_function_declaration():
     result = convert('//@version=6\nstrategy("S")\nx = ta.sma(close, 10)\n')
     assert result.ok, result.unsupported
+
+
+# --- var: state that survives the bar ----------------------------------------
+
+STATE_STRATEGY = """//@version=6
+strategy("Stop Tracker")
+stopPct = input.float(2.0, "Stop Percent") / 100
+var float entryPrice = na
+var int trades = 0
+ma = ta.sma(close, 20)
+if na(entryPrice) and close > ma
+    strategy.entry("long", strategy.long)
+    entryPrice := close
+    trades := trades + 1
+if not na(entryPrice) and close < entryPrice * (1 - stopPct)
+    strategy.close("long")
+    entryPrice := na
+"""
+
+
+@pytest.mark.parametrize(
+    "declaration, expected",
+    [
+        ("var float x = na", "self.x = float('nan')"),
+        ("var int n = 0", "self.n = 0"),
+        ("var bool flag = false", "self.flag = False"),
+        ("var float lowest = -1.5", "self.lowest = -1.5"),
+        ('var string tag = "a"', "self.tag = 'a'"),
+    ],
+)
+def test_var_becomes_an_attribute_initialised_in_init(declaration, expected):
+    result = convert('//@version=6\nstrategy("S")\n' + declaration + "\n")
+    assert result.ok, result.unsupported
+    assert expected in result.code.split("def next")[0]
+
+
+def test_var_named_after_a_strategy_attribute_is_renamed():
+    """`var position = 0` must not clobber `self.position`."""
+    result = convert('//@version=6\nstrategy("S")\nvar int position = 0\n')
+    assert result.ok, result.unsupported
+    assert "self.pine_position = 0" in result.code
+
+
+def test_var_reassignment_writes_through_to_the_attribute():
+    source = (
+        '//@version=6\nstrategy("S")\nvar int n = 0\n'
+        "if close > open\n    n := n + 1\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self.n = (self.n + 1)" in result.code.split("def next")[1]
+
+
+def test_var_with_a_non_literal_initialiser_is_reported():
+    """`var float x = close` means the first bar's close; __init__ has no bar."""
+    result = convert('//@version=6\nstrategy("S")\nvar float x = close\n')
+    assert not result.ok
+    assert any("literal initial value" in item for item in result.unsupported)
+
+
+def test_varip_is_still_refused():
+    """varip updates intrabar; a bar-close run has no ticks to update on."""
+    result = convert('//@version=6\nstrategy("S")\nvarip int n = 0\n')
+    assert not result.ok
+    assert any("intrabar" in item for item in result.unsupported)
+
+
+def test_var_history_access_is_reported():
+    source = (
+        '//@version=6\nstrategy("S")\nvar float x = na\n'
+        "if close > x[1]\n    strategy.close()\n"
+    )
+    result = convert(source)
+    assert not result.ok
+    assert any("not a series with history" in item for item in result.unsupported)
+
+
+def test_na_call_tests_for_the_missing_value():
+    result = convert(
+        '//@version=6\nstrategy("S")\nvar float x = na\n'
+        "if na(x)\n    strategy.close()\n"
+    )
+    assert result.ok, result.unsupported
+    assert "(self.x != self.x)" in result.code
+
+
+def test_bare_na_is_still_the_literal():
+    result = convert('//@version=6\nstrategy("S")\nvar float x = na\nx := na\n')
+    assert result.ok, result.unsupported
+    assert "self.x = float('nan')" in result.code.split("def next")[1]
+
+
+def test_generated_var_state_survives_across_bars():
+    """The whole point: a counter that resets each bar has not been converted.
+
+    Compiling proves nothing here -- a local assigned in `next()` would also
+    compile, and would silently count to one and stay there.
+    """
+    result = convert(STATE_STRATEGY)
+    assert result.ok, result.unsupported
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+    strategy = cerebro.run()[0]
+
+    closed = strategy.analyzers.trades.get_analysis().get("total", {}).get("total", 0)
+    assert closed > 1, "the strategy has to trade more than once to prove anything"
+    assert strategy.trades == closed, "the Pine counter must match the real trade count"
+
+
+def test_generated_var_strategy_responds_to_its_stop_param():
+    tight, tight_trades = _run(STATE_STRATEGY, stop_percent=2.0)
+    loose, loose_trades = _run(STATE_STRATEGY, stop_percent=8.0)
+    assert tight_trades != loose_trades
 
 
 def test_list_literal_in_an_argument_parses():

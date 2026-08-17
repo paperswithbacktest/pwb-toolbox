@@ -18,11 +18,16 @@ What is deliberately not translated
 -----------------------------------
 
 Anything whose Backtrader equivalent would be a guess is reported rather than
-emitted: multi-timeframe ``request.security``, ``var``/``varip`` persistence,
+emitted: multi-timeframe ``request.security``, ``varip``'s intrabar updates,
 arrays and matrices, user-defined functions, loops, and ``strategy.exit`` with
 stops or limits attached. Presentational calls (``plot``, ``bgcolor``,
 ``label.new``) are dropped, but reported separately as *ignored* -- they change
 nothing about how the strategy trades.
+
+``var`` is the exception that is *not* a guess: Pine initialises it once and
+keeps it across bars, which is what an instance attribute already does, so it
+becomes one. Only a literal initial value works -- ``var x = close`` means the
+first bar's close and ``__init__`` runs before there is a first bar.
 
 A conversion with a non-empty ``unsupported`` list is not a working port. It is
 a starting point plus a list of what you still have to write yourself.
@@ -283,6 +288,7 @@ class _Generator:
         self._counter = 0
         self._hoisted = {}  # construction source -> attribute name
         self._inputs = {}  # input call signature -> param name
+        self.state = {}  # pine `var` name -> attribute name on the strategy
 
     # --- helpers -------------------------------------------------------------
 
@@ -382,7 +388,9 @@ class _Generator:
         if isinstance(node, Bool):
             return "True" if node.value else "False"
         if isinstance(node, Na):
-            self._ignore("na literal converted to float('nan')")
+            # Not reported: NaN is a faithful rendering of `na`, and it is
+            # plain to read in the output. Since every `var` initialised to
+            # `na` would otherwise file a note, reporting it is pure noise.
             return "float('nan')"
 
         if isinstance(node, Name):
@@ -430,6 +438,12 @@ class _Generator:
             return DERIVED_SERIES[name].format(i=index)
         if name in self.series:
             return f"self.{self.series[name]}[{index}]"
+        if name in self.state:
+            if index:
+                self._reject(
+                    f"{name}: a var holds one value, not a series with history"
+                )
+            return f"self.{self.state[name]}"
         # A computed local shadows a param of the same name. `width =
         # input.float(2.0, "Width") / 100` names the param from the title and
         # the local from the assignment, and they collide; the local is the one
@@ -503,6 +517,16 @@ class _Generator:
             }[call.func]
             inner = ", ".join(self._value_expr(a) for a in call.args)
             return f"{mapped}({inner})"
+
+        if call.func == "na":
+            # `x != x` is the NaN test, matching how nz() below already spells
+            # it. Pairs with `var float x = na`, which is how most strategies
+            # mark "no position yet".
+            if len(call.args) != 1:
+                self._reject("na() expects one argument")
+                return "None"
+            inner = self._value_expr(call.args[0])
+            return f"({inner} != {inner})"
 
         if call.func == "nz":
             inner = self._value_expr(call.args[0]) if call.args else "0"
@@ -614,11 +638,18 @@ class _Generator:
         self._reject(f"statement of type {type(statement).__name__} is not supported")
 
     def _emit_assign(self, statement, indent, pad):
-        if statement.qualifier in ("var", "varip"):
+        if statement.qualifier == "varip":
+            # `var` survives the bar; `varip` also survives *within* a bar, and
+            # updates on every tick. A bar-close backtest has no ticks, so the
+            # two are only equivalent by accident. Say so rather than guess.
             self._reject(
-                f"{statement.qualifier} {statement.target}: persistent variables "
-                "need explicit state on the Backtrader strategy"
+                f"varip {statement.target}: varip updates intrabar, which a "
+                "bar-close Backtrader run has no equivalent for"
             )
+            return
+
+        if statement.qualifier == "var":
+            self._declare_state(statement)
             return
 
         if isinstance(statement.value, Call) and statement.value.func in INPUT_FUNCS:
@@ -637,6 +668,14 @@ class _Generator:
                 self.series[statement.target] = handle[len("self.") :]
             return
 
+        if statement.qualifier == ":=" and statement.target in self.state:
+            # Writing to persistent state. Unlike a local, this has to survive
+            # the bar, so it assigns the attribute rather than a name in next().
+            value = self._value_expr(statement.value)
+            attribute = self.state[statement.target]
+            self.next_lines.append(f"{pad}self.{attribute} = {value}")
+            return
+
         if statement.qualifier == ":=" and statement.target not in self.scalars:
             self._reject(
                 f"{statement.target}: reassignment of a value that was not "
@@ -647,6 +686,37 @@ class _Generator:
         value = self._value_expr(statement.value)
         self.scalars.add(statement.target)
         self.next_lines.append(f"{pad}{_safe(statement.target)} = {value}")
+
+    def _declare_state(self, statement):
+        """Turn `var x = 0` into an attribute assigned once in ``__init__``.
+
+        Pine initialises a ``var`` on the first bar and keeps it from then on,
+        which is exactly what an instance attribute does. Only a literal
+        initial value is accepted: ``var float x = close`` means the first
+        bar's close, and ``__init__`` runs before there is a first bar.
+        """
+        initial = self._state_initial(statement.value)
+        if initial is None:
+            self._reject(
+                f"var {statement.target}: only a literal initial value is "
+                "supported, because __init__ runs before the first bar"
+            )
+            return
+        attribute = _safe(statement.target)
+        self.state[statement.target] = attribute
+        self.init_lines.append(f"self.{attribute} = {initial}")
+
+    def _state_initial(self, node):
+        """Render a ``var`` initialiser, or None when it is not a literal."""
+        if isinstance(node, Na):
+            return "float('nan')"
+        if isinstance(node, Unary) and node.op == "-":
+            inner = _literal(node.operand)
+            if isinstance(inner, (int, float)) and not isinstance(inner, bool):
+                return repr(-inner)
+            return None
+        literal = _literal(node)
+        return None if literal is None else repr(literal)
 
     def _emit_expr_statement(self, expr, pad):
         if not isinstance(expr, Call):
