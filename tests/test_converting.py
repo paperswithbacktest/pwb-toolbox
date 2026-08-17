@@ -397,3 +397,229 @@ def test_generated_history_access_runs():
     )
     _, closed = _run(source)
     assert closed > 0
+
+
+# --- regressions found by converting real published scripts ------------------
+#
+# Everything below was hit by running the converter over scripts collected from
+# GitHub rather than over fixtures written here.
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "float entryPrice = na",
+        "int n = 5",
+        "bool flag = true",
+        "string label = 'x'",
+        "series float x = 1.0",
+        "simple int n = 5",
+    ],
+)
+def test_convert_accepts_explicit_type_declarations(declaration):
+    """Pine lets a declaration name its type; that used to be a hard crash."""
+    result = convert('//@version=6\nstrategy("S")\n' + declaration + "\n")
+    assert result.ok, result.unsupported
+
+
+def test_type_declaration_does_not_hide_var():
+    """`var float x = na` is still persistent state, type annotation or not."""
+    result = convert('//@version=6\nstrategy("S")\nvar float entryPrice = na\n')
+    assert not result.ok
+    assert any("entryPrice" in item for item in result.unsupported)
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    ["x = float(close)\n", "line = 5\n", "color = 3\n"],
+)
+def test_type_words_are_only_consumed_when_they_are_types(snippet):
+    """`float(...)` is a cast and `line` is a legal name -- neither is a type here."""
+    parse('//@version=6\nstrategy("S")\n' + snippet)
+
+
+def test_convert_reports_a_parse_failure_instead_of_raising():
+    """Raising would kill a loop over a corpus on its first odd script."""
+    result = convert('//@version=6\nstrategy("S")\nx = = =\n')
+    assert not result.ok
+    assert any("could not parse" in item for item in result.unsupported)
+
+
+def test_unparsable_source_still_yields_runnable_code():
+    """`convert` promises a result that always carries code. Hold it to that."""
+    result = convert('//@version=6\nstrategy("S")\nx = = =\n')
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    assert cerebro.run()
+    assert cerebro.broker.getvalue() == 10_000.0  # a placeholder trades nothing
+
+
+def test_convert_accepts_an_input_nested_in_an_expression():
+    """`input.float(...) / 100` is how real scripts write a percentage."""
+    result = convert(
+        '//@version=6\nstrategy("S")\nstop = input.float(5.0, "Stop Percent") / 100\n'
+    )
+    assert result.ok, result.unsupported
+    assert ("stop_percent", 5) in result.params
+
+
+@pytest.mark.parametrize("literal", ["#00c853", "#ff0000", "#00c85380"])
+def test_hex_colour_literals_are_presentational_not_syntax_errors(literal):
+    """`#00c853` broke the lexer outright -- the commonest cause in the corpus."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"c = close > open ? {literal} : #000000\n"
+        "plot(close, color=c)\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert any(literal in item for item in result.ignored)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "f(x) =>",
+        "atan2(series float y, series float x) =>",
+        "ema(series float src, simple int period=0) =>",
+    ],
+)
+def test_user_defined_functions_are_reported_not_fatal(declaration):
+    """Out of scope to translate, but refusing to parse tells the caller less."""
+    source = '//@version=6\nstrategy("S")\n' + declaration + "\n    close\ny = close\n"
+    result = convert(source)
+    assert not result.ok
+    assert any("user-defined function" in item for item in result.unsupported)
+    assert not any("could not parse" in item for item in result.unsupported)
+
+
+def test_parsing_resumes_after_a_user_defined_function():
+    program = parse(
+        '//@version=6\nstrategy("S")\nf(x) =>\n    x * 2\ny = ta.sma(close, 10)\n'
+    )
+    assert isinstance(program.body[-1], Assign)
+    assert program.body[-1].target == "y"
+
+
+def test_a_plain_call_is_not_mistaken_for_a_function_declaration():
+    result = convert('//@version=6\nstrategy("S")\nx = ta.sma(close, 10)\n')
+    assert result.ok, result.unsupported
+
+
+def test_list_literal_in_an_argument_parses():
+    """`options=[...]` is a dropdown hint; it blocked 9 of 17 corpus strategies."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'ma = input.string("EMA", "Type", options=["EMA", "SMA", "WMA"])\n'
+    )
+    assert result.ok, result.unsupported
+
+
+def test_list_literal_does_not_break_history_or_destructuring():
+    """`[` is a list only in prefix position -- indexing is postfix."""
+    assert convert(
+        '//@version=6\nstrategy("S")\nif close > close[1]\n    strategy.close()\n'
+    ).ok
+    destructured = convert(
+        '//@version=6\nstrategy("S")\n[m, s, h] = ta.macd(close, 12, 26, 9)\n'
+    )
+    assert any("tuple destructuring" in item for item in destructured.unsupported)
+
+
+def test_nested_input_without_a_title_still_becomes_a_param():
+    result = convert('//@version=6\nstrategy("S")\nx = close * input.float(1.5)\n')
+    assert result.ok, result.unsupported
+    assert len(result.params) == 1
+
+
+def test_repeated_nested_input_becomes_one_param():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'a = input.float(2.0, "Mult") * 1\n'
+        'b = input.float(2.0, "Mult") * 2\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert len(result.params) == 1
+
+
+def test_nested_input_does_not_collide_with_an_existing_param():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'mult = input.int(1, "M")\n'
+        'x = close * input.float(2.0, "Mult")\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert [name for name, _ in result.params] == ["mult", "mult_2"]
+
+
+def test_nested_input_named_after_a_strategy_attribute_is_renamed():
+    """The rename that protects `position` must survive a title-derived name."""
+    result = convert(
+        '//@version=6\nstrategy("S")\nx = close * input.float(2.0, "Position")\n'
+    )
+    assert result.ok, result.unsupported
+    assert "'pine_position'" in result.code
+
+
+def test_convert_maps_strategy_position_size():
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "if strategy.position_size == 0 and close > open\n"
+        '    strategy.entry("l", strategy.long)\n'
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert "self.position.size" in result.code
+
+
+def test_computed_local_shadows_a_param_of_the_same_name():
+    """The local, not the raw param, is what Pine means by `width` here.
+
+    Naming the param from the title makes it collide with the assignment
+    target. Resolving later references to the param silently used a threshold
+    100x too large -- wrong output rather than an error, so it is pinned.
+    """
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        'width = input.float(2.0, "Width") / 100\n'
+        'if close > 1 + width\n    strategy.entry("l", strategy.long)\n'
+    )
+    code = convert(source).code
+    assert "width = (self.p.width / 100)" in code
+    assert "(1 + width)" in code
+    assert "(1 + self.p.width)" not in code
+
+
+def test_generated_nested_input_param_is_overridable():
+    """A param recovered from inside an expression must still be tunable."""
+    source = (
+        '//@version=6\nstrategy("Band")\n'
+        'width = input.float(2.0, "Width") / 100\n'
+        "ma = ta.sma(close, 20)\n"
+        'if close > ma * (1 + width)\n    strategy.entry("l", strategy.long)\n'
+        "if close < ma\n    strategy.close()\n"
+    )
+    baseline, closed = _run(source)
+    assert closed > 0
+    tuned, _ = _run(source, width=25.0)
+    assert baseline != tuned
+
+
+def test_convert_ignores_drawing_constants():
+    """A colour cannot change a trade, so it must not fail a conversion."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "ema = ta.sma(close, 200)\n"
+        "col = close > ema ? color.green : color.red\n"
+        "plot(ema, color=col)\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert any("color.green" in item for item in result.ignored)

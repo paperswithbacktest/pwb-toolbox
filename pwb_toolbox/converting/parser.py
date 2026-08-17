@@ -22,6 +22,7 @@ from .nodes import (
     ExprStmt,
     If,
     Index,
+    ListLit,
     Na,
     Name,
     Num,
@@ -38,6 +39,7 @@ TAB_WIDTH = 4
 _VERSION_RE = re.compile(r"^\s*//\s*@version\s*=\s*(\d+)", re.MULTILINE)
 _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 _NUMBER_RE = re.compile(r"\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+")
+_HEX_COLOR_RE = re.compile(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\b")
 
 #: Longest first, so ``==`` never lexes as two ``=``.
 _OPERATORS = (
@@ -66,6 +68,30 @@ _OPERATORS = (
 
 _COMPARISONS = {"==", "!=", "<", "<=", ">", ">="}
 _BLOCK_KEYWORDS = {"for", "while"}
+
+#: Words that may precede the name in a declaration, as in
+#: ``float entryPrice = na`` or ``series int n = 0``. Pine allows a type, a
+#: type qualifier, or both. None of it changes what the assignment means to
+#: Backtrader, so it is consumed and dropped -- but only when what follows
+#: really is a declaration, since ``int(x)`` and ``float(x)`` are also casts.
+_TYPE_WORDS = {
+    "array",
+    "bool",
+    "box",
+    "color",
+    "const",
+    "float",
+    "int",
+    "label",
+    "line",
+    "linefill",
+    "map",
+    "matrix",
+    "series",
+    "simple",
+    "string",
+    "table",
+}
 
 
 class PineSyntaxError(SyntaxError):
@@ -154,6 +180,15 @@ def tokenize(source: str) -> list:
                     raise PineSyntaxError(f"unterminated string on line {lineno}")
                 tokens.append(Token("STRING", "".join(buf), lineno))
                 i = end + 1
+                continue
+
+            # `#00c853` is a colour literal, not a comment and not an operator.
+            # It only ever reaches a plot, so it lexes as a NAME and is handled
+            # downstream with the rest of the drawing constants.
+            match = _HEX_COLOR_RE.match(line, i)
+            if match:
+                tokens.append(Token("NAME", match.group(), lineno))
+                i = match.end()
                 continue
 
             match = _NUMBER_RE.match(line, i)
@@ -271,6 +306,33 @@ class Parser:
         text = "\n".join(self.lines[start_line - 1 : end_line]).strip()
         return Unsupported(kind=kind, text=text)
 
+    def _at_function_declaration(self) -> bool:
+        """True when the statement is `name(...) =>`, with any parameter list.
+
+        Scans for the `=>` past a balanced parameter list rather than trying to
+        parse the parameters, which may carry types and defaults.
+        """
+        if not self.at("NAME") or self.tokens[self.pos + 1].kind != "OP":
+            return False
+        if self.tokens[self.pos + 1].value != "(":
+            return False
+        index, depth = self.pos + 1, 0
+        while index < len(self.tokens):
+            token = self.tokens[index]
+            if token.kind == "OP" and token.value == "(":
+                depth += 1
+            elif token.kind == "OP" and token.value == ")":
+                depth -= 1
+                if depth == 0:
+                    nxt = (
+                        self.tokens[index + 1] if index + 1 < len(self.tokens) else None
+                    )
+                    return nxt is not None and nxt.kind == "OP" and nxt.value == "=>"
+            elif token.kind in ("NEWLINE", "EOF"):
+                return False
+            index += 1
+        return False
+
     def parse_statement(self):
         token = self.current
 
@@ -279,6 +341,12 @@ class Parser:
 
         if token.kind == "NAME" and token.value == "if":
             return self.parse_if()
+
+        # `f(x) =>` declares a function. Translating one is out of scope, but
+        # failing to parse it is not the same as reporting it: the rest of the
+        # script still has plenty worth telling the caller about.
+        if self._at_function_declaration():
+            return self._skip_block("user-defined function", token.line)
 
         # `[a, b] = ta.macd(...)` -- tuple destructuring.
         if token.kind == "OP" and token.value == "[":
@@ -290,6 +358,8 @@ class Parser:
             if nxt.kind == "NAME":
                 qualifier = token.value
                 self.advance()
+
+        self._skip_declared_type()
 
         if self.at("NAME"):
             nxt = self.tokens[self.pos + 1]
@@ -307,6 +377,31 @@ class Parser:
         value = self.parse_expression()
         self.expect("NEWLINE")
         return ExprStmt(value)
+
+    def _skip_declared_type(self):
+        """Consume a type annotation such as the ``float`` in ``float x = na``.
+
+        Only a run of type words followed by ``name =`` counts, so the cast
+        ``float(x)`` and a variable that happens to be called ``color`` are
+        both left alone.
+        """
+        end = self.pos
+        while self.tokens[end].kind == "NAME" and self.tokens[end].value in _TYPE_WORDS:
+            end += 1
+
+        # Back off one word at a time: the variable itself may be named after a
+        # type, as in `string label = "x"`, and it must survive the scan.
+        while end > self.pos:
+            if end + 1 < len(self.tokens):
+                name, operator = self.tokens[end], self.tokens[end + 1]
+                if (
+                    name.kind == "NAME"
+                    and operator.kind == "OP"
+                    and operator.value in ("=", ":=")
+                ):
+                    self.pos = end
+                    return
+            end -= 1
 
     def parse_tuple_assign(self):
         self.expect("OP", "[")
@@ -437,6 +532,19 @@ class Parser:
             node = self.parse_expression()
             self.expect("OP", ")")
             return node
+        if token.kind == "OP" and token.value == "[":
+            # A list in expression position, not a history index -- indexing is
+            # postfix and never reaches here.
+            self.advance()
+            items = []
+            while not self.at("OP", "]"):
+                items.append(self.parse_expression())
+                if self.at("OP", ","):
+                    self.advance()
+                elif not self.at("OP", "]"):
+                    break
+            self.expect("OP", "]")
+            return ListLit(tuple(items))
         if token.kind == "NAME":
             self.advance()
             if token.value == "true":

@@ -27,6 +27,18 @@ class Na:
 
 
 @dataclass(frozen=True)
+class ListLit:
+    """A bracketed list, as in ``options=["EMA", "SMA"]``.
+
+    Pine calls these arrays. Nothing here builds one; they turn up as the
+    ``options`` of an input, where they describe a dropdown and say nothing
+    about how the strategy trades.
+    """
+
+    items: tuple = ()
+
+
+@dataclass(frozen=True)
 class Name:
     """An identifier, possibly dotted (``close``, ``ta.sma``, ``strategy.long``)."""
 

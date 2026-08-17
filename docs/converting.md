@@ -77,6 +77,7 @@ duplicate is pure waste.
 | --- | --- |
 | `strategy("T")` / `indicator("T")` | class name and docstring |
 | `input.int/float/bool/string(...)` | entries in `params` |
+| `float x = ...`, `series int n = ...` | the type annotation is dropped |
 | `ta.sma/ema/wma/rma/rsi/stdev/highest/lowest/atr/tr` | `bt.indicators.*` |
 | `ta.crossover/crossunder/cross` | `CrossOver` plus a direction test |
 | `ta.change(src, n)` | `src[0] - src[-n]` |
@@ -88,6 +89,8 @@ duplicate is pure waste.
 | `if` / `else if` / `else` | the same, inside `next()` |
 | `strategy.entry(..., strategy.long/short, qty=)` | `self.buy(size=)` / `self.sell(size=)` |
 | `strategy.close`, `strategy.close_all`, plain `strategy.exit` | `self.close()` |
+| `strategy.position_size` | `self.position.size` |
+| `bar_index` | `len(self)` |
 | `math.abs/max/min/round`, `nz` | the Python equivalents |
 
 Pine inputs become real Backtrader params, so they stay tunable:
@@ -95,6 +98,23 @@ Pine inputs become real Backtrader params, so they stay tunable:
 ```python
 cerebro.addstrategy(DualMACross, fast=3, slow=40)
 ```
+
+An input does not have to be the whole right-hand side. The percentage idiom
+works too, and the param is named from the input's title when there is no
+variable to take the name from:
+
+```pinescript
+stop = input.float(5.0, "Stop Percent") / 100
+```
+
+```python
+params = (('stop_percent', 5),)
+...
+stop = (self.p.stop_percent / 100)
+```
+
+Where a title-derived name collides with a variable, the computed local wins
+every later reference — that is what the Pine source means by the name.
 
 ## What is refused
 
@@ -110,10 +130,28 @@ Reported in `result.unsupported`, never approximated:
 
 Reported separately in `result.ignored`, because dropping them changes nothing
 about how the strategy trades: `plot`, `plotshape`, `bgcolor`, `hline`, `fill`,
-`alertcondition`, `label.new`, `line.new`, and friends.
+`alertcondition`, `label.new`, `line.new`, and friends — along with the drawing
+constants they consume, such as `color.green` and `shape.triangleup`. A colour
+cannot change a trade, so refusing one would fail a conversion over nothing.
 
 Both lists are also written into the generated class's docstring, so a
 converted file explains its own gaps without needing the original result object.
+
+## Source it cannot even parse
+
+`convert` does not raise on malformed or unrecognised syntax. It returns a
+result like any other, with the parse error in `unsupported` and a placeholder
+strategy as `code`:
+
+```python
+result = convert(broken_source)
+result.ok            # False
+result.unsupported   # ["could not parse: expected 'NEWLINE' but found 'x' on line 32"]
+```
+
+This matters for the corpus loop at the top of this page. Raising would kill
+that loop on its first odd script and tell you nothing about the rest — which is
+exactly what the module exists to avoid.
 
 ## A known simplification
 
