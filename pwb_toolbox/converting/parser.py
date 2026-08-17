@@ -67,6 +67,30 @@ _OPERATORS = (
 _COMPARISONS = {"==", "!=", "<", "<=", ">", ">="}
 _BLOCK_KEYWORDS = {"for", "while"}
 
+#: Words that may precede the name in a declaration, as in
+#: ``float entryPrice = na`` or ``series int n = 0``. Pine allows a type, a
+#: type qualifier, or both. None of it changes what the assignment means to
+#: Backtrader, so it is consumed and dropped -- but only when what follows
+#: really is a declaration, since ``int(x)`` and ``float(x)`` are also casts.
+_TYPE_WORDS = {
+    "array",
+    "bool",
+    "box",
+    "color",
+    "const",
+    "float",
+    "int",
+    "label",
+    "line",
+    "linefill",
+    "map",
+    "matrix",
+    "series",
+    "simple",
+    "string",
+    "table",
+}
+
 
 class PineSyntaxError(SyntaxError):
     """Raised when the source cannot be lexed or parsed at all."""
@@ -291,6 +315,8 @@ class Parser:
                 qualifier = token.value
                 self.advance()
 
+        self._skip_declared_type()
+
         if self.at("NAME"):
             nxt = self.tokens[self.pos + 1]
             if nxt.kind == "OP" and nxt.value in ("=", ":="):
@@ -307,6 +333,31 @@ class Parser:
         value = self.parse_expression()
         self.expect("NEWLINE")
         return ExprStmt(value)
+
+    def _skip_declared_type(self):
+        """Consume a type annotation such as the ``float`` in ``float x = na``.
+
+        Only a run of type words followed by ``name =`` counts, so the cast
+        ``float(x)`` and a variable that happens to be called ``color`` are
+        both left alone.
+        """
+        end = self.pos
+        while self.tokens[end].kind == "NAME" and self.tokens[end].value in _TYPE_WORDS:
+            end += 1
+
+        # Back off one word at a time: the variable itself may be named after a
+        # type, as in `string label = "x"`, and it must survive the scan.
+        while end > self.pos:
+            if end + 1 < len(self.tokens):
+                name, operator = self.tokens[end], self.tokens[end + 1]
+                if (
+                    name.kind == "NAME"
+                    and operator.kind == "OP"
+                    and operator.value in ("=", ":=")
+                ):
+                    self.pos = end
+                    return
+            end -= 1
 
     def parse_tuple_assign(self):
         self.expect("OP", "[")

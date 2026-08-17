@@ -77,6 +77,7 @@ duplicate is pure waste.
 | --- | --- |
 | `strategy("T")` / `indicator("T")` | class name and docstring |
 | `input.int/float/bool/string(...)` | entries in `params` |
+| `float x = ...`, `series int n = ...` | the type annotation is dropped |
 | `ta.sma/ema/wma/rma/rsi/stdev/highest/lowest/atr/tr` | `bt.indicators.*` |
 | `ta.crossover/crossunder/cross` | `CrossOver` plus a direction test |
 | `ta.change(src, n)` | `src[0] - src[-n]` |
@@ -110,10 +111,28 @@ Reported in `result.unsupported`, never approximated:
 
 Reported separately in `result.ignored`, because dropping them changes nothing
 about how the strategy trades: `plot`, `plotshape`, `bgcolor`, `hline`, `fill`,
-`alertcondition`, `label.new`, `line.new`, and friends.
+`alertcondition`, `label.new`, `line.new`, and friends — along with the drawing
+constants they consume, such as `color.green` and `shape.triangleup`. A colour
+cannot change a trade, so refusing one would fail a conversion over nothing.
 
 Both lists are also written into the generated class's docstring, so a
 converted file explains its own gaps without needing the original result object.
+
+## Source it cannot even parse
+
+`convert` does not raise on malformed or unrecognised syntax. It returns a
+result like any other, with the parse error in `unsupported` and a placeholder
+strategy as `code`:
+
+```python
+result = convert(broken_source)
+result.ok            # False
+result.unsupported   # ["could not parse: expected 'NEWLINE' but found 'x' on line 32"]
+```
+
+This matters for the corpus loop at the top of this page. Raising would kill
+that loop on its first odd script and tell you nothing about the rest — which is
+exactly what the module exists to avoid.
 
 ## A known simplification
 

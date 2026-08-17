@@ -397,3 +397,76 @@ def test_generated_history_access_runs():
     )
     _, closed = _run(source)
     assert closed > 0
+
+
+# --- regressions found by converting real published scripts ------------------
+#
+# Everything below was hit by running the converter over scripts collected from
+# GitHub rather than over fixtures written here.
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "float entryPrice = na",
+        "int n = 5",
+        "bool flag = true",
+        "string label = 'x'",
+        "series float x = 1.0",
+        "simple int n = 5",
+    ],
+)
+def test_convert_accepts_explicit_type_declarations(declaration):
+    """Pine lets a declaration name its type; that used to be a hard crash."""
+    result = convert('//@version=6\nstrategy("S")\n' + declaration + "\n")
+    assert result.ok, result.unsupported
+
+
+def test_type_declaration_does_not_hide_var():
+    """`var float x = na` is still persistent state, type annotation or not."""
+    result = convert('//@version=6\nstrategy("S")\nvar float entryPrice = na\n')
+    assert not result.ok
+    assert any("entryPrice" in item for item in result.unsupported)
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    ["x = float(close)\n", "line = 5\n", "color = 3\n"],
+)
+def test_type_words_are_only_consumed_when_they_are_types(snippet):
+    """`float(...)` is a cast and `line` is a legal name -- neither is a type here."""
+    parse('//@version=6\nstrategy("S")\n' + snippet)
+
+
+def test_convert_reports_a_parse_failure_instead_of_raising():
+    """Raising would kill a loop over a corpus on its first odd script."""
+    result = convert('//@version=6\nstrategy("S")\nx = = =\n')
+    assert not result.ok
+    assert any("could not parse" in item for item in result.unsupported)
+
+
+def test_unparsable_source_still_yields_runnable_code():
+    """`convert` promises a result that always carries code. Hold it to that."""
+    result = convert('//@version=6\nstrategy("S")\nx = = =\n')
+    namespace = {}
+    exec(compile(result.code, "<converted>", "exec"), namespace)
+
+    cerebro = bt.Cerebro()
+    cerebro.adddata(bt.feeds.PandasData(dataname=_price_frame()))
+    cerebro.addstrategy(namespace[result.class_name])
+    cerebro.broker.setcash(10_000.0)
+    assert cerebro.run()
+    assert cerebro.broker.getvalue() == 10_000.0  # a placeholder trades nothing
+
+
+def test_convert_ignores_drawing_constants():
+    """A colour cannot change a trade, so it must not fail a conversion."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        "ema = ta.sma(close, 200)\n"
+        "col = close > ema ? color.green : color.red\n"
+        "plot(ema, color=col)\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert any("color.green" in item for item in result.ignored)

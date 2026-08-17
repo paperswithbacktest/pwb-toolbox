@@ -118,7 +118,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (440 tests, ~28s cold / ~9s warm)
+pytest tests/ -v                  # full suite (453 tests, ~28s cold / ~9s warm)
 pytest tests/test_optimal_limit_order.py -v
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs

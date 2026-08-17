@@ -50,7 +50,7 @@ from .nodes import (
     Unary,
     Unsupported,
 )
-from .parser import parse
+from .parser import PineSyntaxError, parse
 
 
 @dataclass(frozen=True)
@@ -135,6 +135,36 @@ PRESENTATIONAL = {
     "table.new",
     "table.cell",
 }
+
+#: Namespaces holding nothing but drawing constants -- `color.green`,
+#: `shape.triangleup`, `location.belowbar`. They reach the generator only when
+#: a script names one before handing it to a plot, and a plot is dropped, so
+#: none of them can change how a strategy trades.
+PRESENTATIONAL_NAMESPACES = (
+    "color.",
+    "display.",
+    "extend.",
+    "font.",
+    "format.",
+    "hline.",
+    "label.style_",
+    "line.style_",
+    "location.",
+    "plot.style_",
+    "position.",
+    "scale.",
+    "shape.",
+    "size.",
+    "text.",
+    "xloc.",
+    "yloc.",
+)
+
+
+def _presentational_constant(name: str) -> bool:
+    """True for a drawing constant such as ``color.green``."""
+    return name.startswith(PRESENTATIONAL_NAMESPACES)
+
 
 _BINARY_OPS = {
     "and": "and",
@@ -390,6 +420,12 @@ class _Generator:
             return _safe(name)
         if name == "bar_index":
             return "len(self)"
+        if _presentational_constant(name):
+            # `col = up ? color.green : color.red` only ever feeds a plot, and
+            # plots are dropped. Refusing the colour would report the strategy
+            # as unconvertible over something that cannot affect a trade.
+            self._ignore(f"{name} dropped: presentational only")
+            return "None"
         self._reject(f"unknown identifier {name!r}")
         return "None"
 
@@ -662,13 +698,51 @@ class _Generator:
         return "\n".join(out) + "\n"
 
 
+def _unparsable(message: str, class_name: str | None) -> ConversionResult:
+    """Build the result for source that could not be parsed at all.
+
+    Still emits a class, so callers writing one file per script get a file
+    that says what went wrong rather than a traceback. It inherits from
+    ``bt.Strategy`` and does nothing, and ``ok`` is False.
+    """
+    name = class_name or "UnconvertedStrategy"
+    code = (
+        "import backtrader as bt\n"
+        "\n"
+        "\n"
+        f"class {name}(bt.Strategy):\n"
+        '    """PineScript that pwb_toolbox.converting could not parse.\n'
+        "\n"
+        f"    {message}\n"
+        "\n"
+        "    This class is a placeholder -- it trades nothing.\n"
+        '    """\n'
+        "\n"
+        "    def next(self):\n"
+        "        pass\n"
+    )
+    return ConversionResult(
+        code=code,
+        class_name=name,
+        unsupported=[f"could not parse: {message}"],
+    )
+
+
 def convert(source: str, class_name: str | None = None) -> ConversionResult:
     """Convert PineScript source into a Backtrader strategy.
 
     The result always carries generated code; check ``result.ok`` (or read
     ``result.unsupported``) before trusting it to be a faithful port.
+
+    Source this converter cannot even parse is reported the same way as source
+    it can parse but not translate. Raising here would break the promise above
+    and, worse, would kill a loop over a corpus on its first odd script -- the
+    very thing this module exists to survive.
     """
-    program = parse(source)
+    try:
+        program = parse(source)
+    except PineSyntaxError as error:
+        return _unparsable(str(error), class_name)
     generator = _Generator(program, class_name=class_name)
     code = generator.generate()
     return ConversionResult(
