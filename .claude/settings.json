@@ -1,4 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python3 .claude/skills/ui-ux-pro-max/scripts/search.py:*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

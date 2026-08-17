@@ -7,6 +7,7 @@ correlated series) we assert exact numbers; for functions where hand-deriving
 an exact result is error-prone, we assert well-understood relationships on
 synthetic data instead (e.g. "the wilder series has the lower Sharpe").
 """
+
 import math
 import random
 

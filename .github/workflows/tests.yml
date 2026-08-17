@@ -20,3 +20,25 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+
+  # Separate from `test` on purpose: as a step there, whichever ran first
+  # would mask the other's result, and a formatting nit would hide a real
+  # test failure.
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Reads the pin from requirements-dev.txt rather than repeating it, so
+      # the two cannot drift and disagree about what "formatted" means.
+      - name: Install black
+        run: pip install "$(grep '^black==' requirements-dev.txt)"
+
+      # Scoped to the code this repo owns. pwb_toolbox_legacy/ is superseded
+      # and kept as-is; .claude/skills/ is vendored and tracks upstream.
+      - name: Check formatting
+        run: black --check --diff pwb_toolbox/ tools/ tests/

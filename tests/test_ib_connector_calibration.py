@@ -4,6 +4,7 @@
 that call into `ib_insync` are tested against a mocked `IB` client so no live
 TWS/Gateway connection is required.
 """
+
 import random
 from types import SimpleNamespace
 from unittest.mock import MagicMock

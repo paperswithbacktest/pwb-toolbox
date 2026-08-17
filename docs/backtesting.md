@@ -326,7 +326,8 @@ The backtesting package is composed of a few focused modules:
 - `base_strategy` – common bookkeeping and helpers used by all provided
   strategies.
 - `commission` – cost models for simulating broker commissions and spreads.
-- `indicators` – reusable signal and technical indicator implementations.
+- `indicators` – reusable signal and technical indicator implementations,
+  including `StochasticRsi` and `EmaRsiStochRsiSignal` (see below).
 - `optimization_engine` – genetic‑algorithm tooling for parameter searches.
 - `portfolio` – utilities for combining the results of several strategies and
   producing performance reports.
@@ -359,3 +360,70 @@ with different rebalancing rules and signal expectations:
   bottom deciles of a signal distribution.
 - **WeightedAllocationPortfolio** – turns user‑provided weights into integer
   share positions under a leverage constraint.
+## Indicators
+
+### `StochasticRsi`
+
+The Stochastic oscillator applied to RSI rather than to price. backtrader ships
+`Stochastic` and `RSI` but no Stochastic RSI, so this builds it from `RSI` plus
+`Highest`/`Lowest` over the RSI line. Lines: `percK`, `percD`, and `rsi` (the
+underlying RSI, exposed so callers needing plain RSI do not compute a second).
+
+A degenerate window — where RSI has not moved across the lookback — is treated
+as flat and reports 0 rather than dividing by (nearly) nothing. The guard is an
+epsilon, not an exact zero test: Wilder smoothing decays average gain and loss
+at the same rate, so a constant price holds RSI fixed only to within float
+rounding, around `1e-14`. An exact test misses that, and dividing by the
+residue inflates it back across the full 0–100 range, reporting a maximal
+reading for a price that never moved.
+
+### `EmaRsiStochRsiSignal`
+
+Emits the `entry`/`exit` line pair that `EqualWeightEntryExitPortfolio` and the
+other signal-driven strategies consume, so it drops straight in:
+
+```python
+import backtrader as bt
+from pwb_toolbox.backtesting import EmaRsiStochRsiSignal, EqualWeightEntryExitPortfolio
+
+cerebro.addstrategy(
+    EqualWeightEntryExitPortfolio,
+    total_days=len(prices),
+    indicator_cls=EmaRsiStochRsiSignal,
+    indicator_kwargs={"ema_period": 20, "oversold": 30.0},
+)
+```
+
+Each indicator does a different job: the EMA decides whether to be long at all,
+StochRSI picks the moment, RSI confirms momentum agrees.
+
+Long entry requires all of — %K crossing above %D, %K below `oversold` at the
+cross, RSI rising (`require_rsi_rising`), and a rising EMA (`trend_filter`).
+Exit is %K crossing below %D while above `overbought`.
+
+Two things are worth knowing before tuning it.
+
+**"EMA rising" and "close above the EMA" are the same test.** Expanding the
+recursion gives `EMA_t - EMA_{t-1} = alpha * (close_t - EMA_{t-1})`, so the EMA
+rises exactly when the close sits above the previous bar's EMA — they agreed on
+all 2981 bars measured. Only `trend_lookback` makes the filter genuinely
+different: 1 is that identity, higher values demand a more sustained move.
+
+**`exit_on_trend_break` defaults to off,** which is both the Pine original's
+behaviour and the better-behaved one. Since entry needs a rising EMA, a single
+down bar breaks the trend and closes the position right after opening it. On an
+8-asset simulated basket, enabling it cut the average hold from 20.4 to 5.5
+bars, doubled the trade count, and dropped the win rate from 64% to 47%. For
+protective stops prefer `risk_models`, which is built for that.
+
+Entry is deliberately strict — a cross, a zone, momentum and trend at once.
+Across eight simulated paths (11.7k bars) roughly 11% of bullish %K/%D crosses
+survived all four filters, so on a single instrument it trades rarely by
+design; it is meant for a basket. Raise `oversold` or clear
+`require_rsi_rising` to loosen it.
+
+Note that the accompanying tests validate the *arithmetic* (against an
+independent pandas implementation) and the *plumbing*, not profitability. They
+run on simulated random walks, which by construction contain no edge to find —
+any timing rule underperforms buy-and-hold there. Whether the signal has an
+edge is a question only real data can answer.

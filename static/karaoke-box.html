@@ -1,0 +1,2357 @@
+<title>Karaoke Box</title>
+<style>
+/* ============================================================
+   Karaoke Box — tokens
+   Light  = the laminated songbook, flat on a table
+   Dark   = the room itself, dim and warm
+   Screen = always a lit monitor, in both themes. A screen is a screen.
+   ============================================================ */
+:root{
+  --ground:#E9E7EA;
+  --ground-2:#F5F3F7;
+  --ground-3:#DFDCE4;
+  --edge:#CFCBD8;
+  --edge-soft:#DDD9E3;
+  --ink:#1B1822;
+  --ink-2:#59536A;
+  --ink-3:#8A8497;
+  --accent:#C82848;
+  --accent-ink:#FFF;
+  --accent-soft:rgba(200,40,72,.10);
+  --shadow:0 1px 2px rgba(27,24,34,.06), 0 12px 32px -18px rgba(27,24,34,.35);
+  --room-glow:radial-gradient(120% 90% at 50% -20%, rgba(255,179,71,.13), transparent 62%);
+
+  /* screen — identical in every theme */
+  --screen:#0D1014;
+  --screen-2:#141922;
+  --screen-edge:#05070A;
+  --screen-ink:#ECE8F2;
+  --screen-dim:#4E5567;
+  --screen-dimmer:#333A48;
+  --wipe-a:#FF4D6D;
+  --wipe-b:#FFB347;
+  --wipe-c:#35D6C0;   /* the second singer, cool against A's warm sweep */
+  --wipe-d:#7AA7FF;
+
+  --font-display:"Bodoni 72","Bodoni MT",Didot,"Playfair Display",Georgia,"Times New Roman",serif;
+  --font-lyric:"Arial Black","Helvetica Neue",Helvetica,Impact,system-ui,sans-serif;
+  --font-ui:"Avenir Next",Avenir,"Segoe UI",system-ui,-apple-system,sans-serif;
+  --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+
+  --r-sm:6px; --r-md:12px; --r-lg:20px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#151119;
+    --ground-2:#1D1824;
+    --ground-3:#241E2D;
+    --edge:#332B3D;
+    --edge-soft:#2A2333;
+    --ink:#F0EBF5;
+    --ink-2:#ADA3BC;
+    --ink-3:#7B7189;
+    --accent:#FF6B84;
+    --accent-ink:#1B1822;
+    --accent-soft:rgba(255,107,132,.13);
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 18px 44px -20px rgba(0,0,0,.85);
+    --room-glow:radial-gradient(120% 90% at 50% -20%, rgba(255,109,77,.14), transparent 62%);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#151119;
+  --ground-2:#1D1824;
+  --ground-3:#241E2D;
+  --edge:#332B3D;
+  --edge-soft:#2A2333;
+  --ink:#F0EBF5;
+  --ink-2:#ADA3BC;
+  --ink-3:#7B7189;
+  --accent:#FF6B84;
+  --accent-ink:#1B1822;
+  --accent-soft:rgba(255,107,132,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 18px 44px -20px rgba(0,0,0,.85);
+  --room-glow:radial-gradient(120% 90% at 50% -20%, rgba(255,109,77,.14), transparent 62%);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--ground);
+  background-image:var(--room-glow);
+  background-repeat:no-repeat;
+  color:var(--ink);
+  font-family:var(--font-ui);
+  font-size:15px;
+  line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+.wrap{max-width:1080px;margin:0 auto;padding:28px 20px 64px;display:flex;flex-direction:column;gap:22px}
+
+/* ---------- header ---------- */
+.masthead{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.brand{display:flex;flex-direction:column;gap:2px}
+.eyebrow{
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink-3);
+}
+.wordmark{
+  font-family:var(--font-display);font-weight:700;
+  font-size:clamp(2rem,5.2vw,3rem);line-height:.95;letter-spacing:-.02em;margin:0;
+}
+.wordmark em{font-style:italic;color:var(--accent)}
+.remote{
+  display:flex;align-items:center;gap:10px;
+  border:1px solid var(--edge);border-radius:999px;
+  padding:7px 8px 7px 14px;background:var(--ground-2);
+  box-shadow:var(--shadow);
+}
+.remote-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3)}
+.remote-digits{
+  font-family:var(--font-mono);font-size:17px;font-weight:700;letter-spacing:.14em;
+  background:var(--screen);color:var(--wipe-b);
+  padding:3px 10px;border-radius:var(--r-sm);min-width:64px;text-align:center;
+  font-variant-numeric:tabular-nums;
+}
+
+/* ---------- the monitor ---------- */
+.monitor{
+  position:relative;border-radius:var(--r-lg);
+  background:linear-gradient(180deg,var(--screen-2),var(--screen));
+  border:1px solid var(--screen-edge);
+  box-shadow:0 0 0 1px rgba(255,255,255,.04) inset, 0 30px 60px -28px rgba(0,0,0,.7);
+  overflow:hidden;
+  padding:20px;
+  display:flex;flex-direction:column;gap:14px;
+  min-height:340px;
+}
+.monitor::after{ /* scanlines */
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(180deg,rgba(255,255,255,.028) 0 1px,transparent 1px 3px);
+  mix-blend-mode:screen;
+}
+.mon-top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.now-playing{display:flex;flex-direction:column;gap:1px;min-width:0}
+.np-code{font-family:var(--font-mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--screen-dim)}
+.np-title{font-family:var(--font-display);font-size:19px;font-weight:700;color:var(--screen-ink);line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np-credit{font-size:12px;color:var(--screen-dim)}
+.mon-meters{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11px;color:var(--screen-dim)}
+.chip{
+  border:1px solid rgba(255,255,255,.09);border-radius:var(--r-sm);
+  padding:4px 9px;letter-spacing:.08em;text-transform:uppercase;
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.chip.live{color:var(--wipe-b);border-color:rgba(255,179,71,.35);background:rgba(255,179,71,.08)}
+.chip.score{color:#7CE7A8;border-color:rgba(124,231,168,.35);background:rgba(124,231,168,.08)}
+.chip.score b{font-weight:700;font-variant-numeric:tabular-nums}
+.chip[hidden]{display:none}
+
+/* pitch ribbon: the tune as bars, your voice as dots along it */
+.scorebar{display:flex;flex-direction:column;gap:5px}
+.scorebar[hidden]{display:none}
+.ribbon{
+  width:100%;height:76px;display:block;
+  background:rgba(255,255,255,.022);
+  border:1px solid rgba(255,255,255,.06);border-radius:var(--r-md);
+}
+.scoremeta{
+  display:flex;justify-content:space-between;gap:12px;
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--screen-dimmer);
+}
+.octave-note{opacity:.75;white-space:nowrap}
+
+.result{
+  display:flex;align-items:center;gap:18px;
+  border:1px solid rgba(124,231,168,.25);border-radius:var(--r-md);
+  background:rgba(124,231,168,.06);padding:12px 16px;
+}
+.result[hidden]{display:none}
+.result-score{display:flex;align-items:baseline;gap:4px;flex:none}
+.result-score b{
+  font-family:var(--font-display);font-size:40px;font-weight:700;
+  color:#7CE7A8;line-height:1;font-variant-numeric:tabular-nums;
+}
+.result-score span{
+  font-family:var(--font-display);font-size:17px;color:var(--screen-dimmer);
+  font-variant-numeric:tabular-nums;
+}
+.result-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.result-body strong{font-family:var(--font-display);font-size:18px;color:var(--screen-ink)}
+.result-body span{font-size:12px;color:var(--screen-dim)}
+
+/* lyric field */
+.field{flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;padding:8px 2px 4px;position:relative}
+
+/* Each singer gets a lane. Solo mode runs lane A alone and hides the badge,
+   so the layout is the same one the page has always had. */
+.lane{display:flex;align-items:flex-start;gap:12px;--w1:var(--wipe-a);--w2:var(--wipe-b)}
+.lane[data-part="b"]{--w1:var(--wipe-c);--w2:var(--wipe-d)}
+.lane-body{flex:1;min-width:0;position:relative}
+.lane[hidden]{display:none}
+.part{
+  display:none;font-family:var(--font-mono);font-size:12px;font-weight:700;
+  letter-spacing:.06em;line-height:1;cursor:pointer;flex:none;margin-top:.35em;
+  width:30px;height:26px;border-radius:var(--r-sm);
+  background:transparent;color:var(--w1);
+  border:1px solid color-mix(in srgb, var(--w1) 45%, transparent);
+  transition:opacity .14s ease,background .14s ease;
+}
+.field.duet .part{display:block}
+.part:hover{background:color-mix(in srgb, var(--w1) 14%, transparent)}
+.part[aria-pressed="true"]{opacity:.34;text-decoration:line-through}
+.ball{
+  position:absolute;width:13px;height:13px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#fff,var(--w1) 62%,rgba(0,0,0,.55));
+  box-shadow:0 0 14px color-mix(in srgb, var(--w1) 62%, transparent);
+  left:0;top:0;opacity:0;pointer-events:none;
+  transform:translate(-50%,-50%);
+}
+/* the waiting singer's next line, held but not yet sweeping */
+.lane.idle .line-base{opacity:.55}
+.line{position:relative;min-height:1.1em;overflow:hidden}
+.line-inner{position:relative;display:inline-block;white-space:nowrap;transform-origin:left center}
+.line-base,.line-fill{
+  font-family:var(--font-lyric);font-weight:900;
+  font-size:var(--lyric-size,clamp(1.6rem,5.6vw,3.4rem));
+  line-height:1.16;letter-spacing:-.005em;white-space:pre;
+  display:inline-block;
+}
+.line-base{color:var(--screen-dim)}
+.line-fill{
+  position:absolute;inset:0;
+  background:linear-gradient(90deg,var(--w1,var(--wipe-a)),var(--w2,var(--wipe-b)));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  clip-path:inset(0 calc(100% - var(--wipe,0px)) 0 0);
+  filter:drop-shadow(0 0 12px rgba(255,109,90,.32));
+}
+.lane[data-part="b"] .line-fill{filter:drop-shadow(0 0 12px rgba(70,180,220,.32))}
+/* two lanes need to share the height one used to have */
+.field.duet .line-base,.field.duet .line-fill{font-size:var(--lyric-duet,clamp(1.15rem,3.7vw,2.3rem))}
+/* in duet the two lanes already show what is coming, so the look-ahead is noise */
+.field.duet .line.next{display:none}
+/* the next line has no wipe, so it is free to wrap */
+.line.next{overflow:visible}
+.line.next .line-inner{display:block;white-space:normal}
+.line.next .line-base{
+  color:var(--screen-dimmer);font-size:var(--next-size,clamp(1.05rem,3.1vw,1.7rem));
+  white-space:normal;display:block;
+}
+.line.next .line-fill{display:none}
+.sub{font-size:13px;color:var(--screen-dim);font-family:var(--font-ui);font-style:italic;letter-spacing:.01em}
+.cue{
+  font-family:var(--font-mono);font-size:12px;letter-spacing:.24em;text-transform:uppercase;
+  color:var(--screen-dimmer);min-height:1.3em;
+}
+.cue b{color:var(--wipe-b);font-weight:700}
+
+.mon-bottom{display:flex;align-items:center;gap:14px}
+.progress{
+  flex:1;height:4px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;position:relative;
+}
+.progress i{
+  display:block;height:100%;width:0;
+  background:linear-gradient(90deg,var(--wipe-a),var(--wipe-b));
+  border-radius:999px;
+}
+.chordrail{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:12px}
+.chordrail .cur{color:var(--wipe-b);font-weight:700;letter-spacing:.06em;min-width:34px;text-align:right}
+.chordrail .nxt{color:var(--screen-dimmer);min-width:34px}
+.chordrail .arrow{color:var(--screen-dimmer)}
+
+/* ---------- transport ---------- */
+.transport{
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  background:var(--ground-2);border:1px solid var(--edge);border-radius:var(--r-lg);
+  padding:12px 16px;box-shadow:var(--shadow);
+}
+.btn{
+  font:inherit;font-weight:600;cursor:pointer;
+  border:1px solid var(--edge);background:var(--ground-3);color:var(--ink);
+  border-radius:999px;padding:9px 18px;
+  transition:transform .12s ease,background .15s ease,border-color .15s ease;
+}
+.btn:hover{border-color:var(--ink-3)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);min-width:118px}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.ghost{background:transparent}
+.knobs{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-left:auto}
+.knob{display:flex;flex-direction:column;gap:3px;min-width:118px}
+.knob label{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);
+  display:flex;justify-content:space-between;gap:8px;
+}
+.knob label span{color:var(--ink-2);font-variant-numeric:tabular-nums}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:18px;background:transparent;cursor:pointer;margin:0;
+}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--edge);border-radius:999px}
+input[type=range]::-moz-range-track{height:3px;background:var(--edge);border-radius:999px}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);
+  border:2px solid var(--ground-2);margin-top:-5.5px;
+}
+input[type=range]::-moz-range-thumb{
+  width:12px;height:12px;border-radius:50%;background:var(--accent);border:2px solid var(--ground-2);
+}
+.toggle{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-2);cursor:pointer;user-select:none}
+.toggle input{accent-color:var(--accent);width:15px;height:15px;cursor:pointer}
+
+/* ---------- panes ---------- */
+.panes{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;align-items:start}
+.stack{display:flex;flex-direction:column;gap:22px;min-width:0}
+@media (max-width:880px){.panes{grid-template-columns:1fr}}
+
+/* leaderboard */
+.board-who{
+  display:flex;align-items:center;gap:10px;padding:12px 18px;
+  border-bottom:1px solid var(--edge-soft);
+}
+.board-who label{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-3);white-space:nowrap;
+}
+.board-who input{
+  font:inherit;font-size:14px;flex:1;min-width:0;
+  background:var(--ground);color:var(--ink);
+  border:1px solid var(--edge);border-radius:var(--r-sm);padding:6px 10px;
+}
+.btn.small{padding:6px 12px;font-size:13px}
+.board-link{
+  display:flex;align-items:center;gap:10px;padding:11px 18px;
+  border-bottom:1px solid var(--edge-soft);
+}
+.board-link label{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink-3);white-space:nowrap;
+}
+.board-link input{
+  font:inherit;font-size:13px;flex:1;min-width:0;
+  background:var(--ground);color:var(--ink);
+  border:1px solid var(--edge);border-radius:var(--r-sm);padding:6px 10px;
+}
+.board-status{
+  margin:0;padding:9px 18px;font-size:12px;line-height:1.5;
+  border-bottom:1px solid var(--edge-soft);color:var(--ink-2);
+}
+.board-status[hidden]{display:none}
+.board-status.ok{color:#2E9E62}
+.board-status.bad{color:var(--accent)}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .board-status.ok{color:#7CE7A8}
+}
+:root[data-theme="dark"] .board-status.ok{color:#7CE7A8}
+.board{list-style:none;margin:0;padding:6px 6px 10px;display:flex;flex-direction:column;gap:1px}
+.board li{
+  display:grid;grid-template-columns:auto auto 1fr auto;gap:12px;align-items:baseline;
+  padding:9px 12px;border-radius:var(--r-md);
+}
+.board li.fresh{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.bd-pos{
+  font-family:var(--font-mono);font-size:11px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;min-width:18px;
+}
+.bd-score{
+  font-family:var(--font-display);font-size:20px;font-weight:700;
+  font-variant-numeric:tabular-nums;min-width:34px;
+}
+.bd-main{min-width:0;display:flex;flex-direction:column;gap:0}
+.bd-title{font-size:14px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bd-sub{font-size:11.5px;color:var(--ink-3)}
+.bd-when{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);white-space:nowrap}
+.board-empty{padding:14px 14px 16px;margin:0;font-size:12.5px;color:var(--ink-3);line-height:1.6}
+
+.best-flag{
+  display:inline-block;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:#7CE7A8;
+  border:1px solid rgba(124,231,168,.4);border-radius:999px;padding:2px 8px;margin-left:8px;
+}
+.tk-best{
+  display:block;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
+.pane{
+  background:var(--ground-2);border:1px solid var(--edge);border-radius:var(--r-lg);
+  box-shadow:var(--shadow);overflow:hidden;
+}
+.pane-head{
+  padding:14px 18px;border-bottom:1px solid var(--edge-soft);
+  display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+}
+.pane-head h2{margin:0;font-family:var(--font-display);font-size:18px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+.pane-head p{margin:0;font-size:12px;color:var(--ink-3);text-align:right}
+@media (max-width:460px){
+  .pane-head{flex-direction:column;align-items:flex-start;gap:2px}
+  .pane-head p{text-align:left}
+}
+
+/* songbook */
+.book{list-style:none;margin:0;padding:6px}
+.book li{margin:0}
+.track{
+  width:100%;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;
+  background:none;border:0;border-radius:var(--r-md);padding:11px 12px;
+  font:inherit;color:inherit;text-align:left;cursor:pointer;
+  transition:background .14s ease;
+}
+.track:hover{background:var(--accent-soft)}
+.track[aria-current="true"]{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.tk-code{
+  font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;letter-spacing:.06em;
+}
+.track[aria-current="true"] .tk-code{color:var(--accent)}
+.tk-main{min-width:0;display:flex;flex-direction:column;gap:1px}
+.tk-title{
+  display:block;font-family:var(--font-display);font-size:17px;font-weight:700;
+  line-height:1.25;letter-spacing:-.01em;
+}
+.tk-credit{display:block;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-meta{
+  font-family:var(--font-mono);font-size:11px;color:var(--ink-3);text-align:right;
+  font-variant-numeric:tabular-nums;line-height:1.5;white-space:nowrap;
+}
+.tk-meta b{display:block;font-weight:400;color:var(--ink-2)}
+
+/* your own */
+.compose{padding:16px 18px 18px;display:flex;flex-direction:column;gap:14px}
+textarea{
+  font:inherit;font-size:14px;line-height:1.7;width:100%;min-height:170px;resize:vertical;
+  background:var(--ground);color:var(--ink);
+  border:1px solid var(--edge);border-radius:var(--r-md);padding:12px 14px;
+}
+textarea::placeholder{color:var(--ink-3)}
+.vibes{display:flex;gap:8px;flex-wrap:wrap}
+.vibe{
+  position:relative;font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  border:1px solid var(--edge);border-radius:999px;padding:7px 13px;cursor:pointer;color:var(--ink-2);
+  transition:border-color .14s ease,color .14s ease,background .14s ease;
+}
+.vibe:hover{border-color:var(--ink-3)}
+.vibe input{position:absolute;opacity:0;inset:0;cursor:pointer;margin:0}
+.vibe:has(input:checked){background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.vibe:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.titlefield{
+  font:inherit;font-size:14px;width:100%;
+  background:var(--ground);color:var(--ink);
+  border:1px solid var(--edge);border-radius:var(--r-md);padding:9px 14px;
+}
+.titlefield::placeholder{color:var(--ink-3)}
+.compose-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* saved tracks sit under the printed ones, marked as yours */
+.book-divider{
+  display:flex;align-items:center;gap:10px;padding:12px 14px 6px;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--ink-3);
+}
+.book-divider::after{content:"";flex:1;height:1px;background:var(--edge-soft)}
+/* the remove control is a sibling of the track button, never nested inside it */
+.book li.mine{display:flex;align-items:center;gap:2px;padding-right:8px}
+.book li.mine .track{flex:1;min-width:0}
+.tk-drop{
+  font:inherit;font-size:15px;line-height:1;cursor:pointer;
+  background:none;border:1px solid transparent;border-radius:50%;
+  width:26px;height:26px;flex:none;color:var(--ink-3);
+  transition:color .14s ease,border-color .14s ease;
+}
+.tk-drop:hover{color:var(--accent);border-color:var(--edge)}
+.book-empty{padding:10px 14px 14px;font-size:12px;color:var(--ink-3);margin:0}
+.hint{font-size:12px;color:var(--ink-3);line-height:1.6;margin:0}
+.hint code{
+  font-family:var(--font-mono);font-size:11px;background:var(--ground-3);
+  padding:1px 5px;border-radius:4px;color:var(--ink-2);
+}
+.said{font-size:12px;color:var(--accent);min-height:1.4em}
+
+footer{
+  border-top:1px solid var(--edge-soft);padding-top:18px;
+  display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  font-size:12px;color:var(--ink-3);
+}
+footer kbd{
+  font-family:var(--font-mono);font-size:11px;border:1px solid var(--edge);
+  border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--ink-2);background:var(--ground-2);
+}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:.001ms !important;transition-duration:.001ms !important}
+}
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="brand">
+      <span class="eyebrow" id="trackCount">Room 07 &middot; six tracks loaded</span>
+      <h1 class="wordmark">Karaoke <em>Box</em></h1>
+    </div>
+    <div class="remote">
+      <span class="remote-label">Punch a code</span>
+      <span class="remote-digits" id="remoteDigits">— — —</span>
+    </div>
+  </header>
+
+  <section class="monitor" aria-label="Lyric monitor">
+    <div class="mon-top">
+      <div class="now-playing">
+        <span class="np-code" id="npCode">001</span>
+        <span class="np-title" id="npTitle">Twinkle, Twinkle, Little Star</span>
+        <span class="np-credit" id="npCredit">Traditional &middot; public domain</span>
+      </div>
+      <div class="mon-meters">
+        <span class="chip" id="mBar">BAR 0</span>
+        <span class="chip" id="mKey">KEY C</span>
+        <span class="chip" id="mBpm">104 BPM</span>
+        <span class="chip score" id="mScoreWrap" hidden>SCORE <b id="mScore">0</b></span>
+        <span class="chip live" id="mState">READY</span>
+      </div>
+    </div>
+
+    <div class="scorebar" id="scorebar" hidden>
+      <canvas class="ribbon" id="ribbon" aria-hidden="true"></canvas>
+      <div class="scoremeta">
+        <span id="scoreNote">Sing — the bars are the tune, the dots are you.</span>
+        <span class="octave-note">octave-forgiving</span>
+      </div>
+    </div>
+
+    <div class="result" id="result" hidden role="status">
+      <div class="result-score"><b id="resultScore">0</b><span>/ 100</span></div>
+      <div class="result-body">
+        <strong id="resultRank">—</strong><span class="best-flag" id="resultFlag" hidden></span>
+        <span id="resultDetail"></span>
+      </div>
+    </div>
+
+    <div class="field" id="field">
+      <div class="lane" id="laneA" data-part="a">
+        <button class="part" id="partA" type="button" aria-pressed="false">A</button>
+        <div class="lane-body">
+          <div class="ball" id="ballA"></div>
+          <div class="line">
+            <span class="line-inner">
+              <span class="line-base" id="baseA"></span>
+              <span class="line-fill" id="fillA" aria-hidden="true"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="lane" id="laneB" data-part="b" hidden>
+        <button class="part" id="partB" type="button" aria-pressed="false">B</button>
+        <div class="lane-body">
+          <div class="ball" id="ballB"></div>
+          <div class="line">
+            <span class="line-inner">
+              <span class="line-base" id="baseB"></span>
+              <span class="line-fill" id="fillB" aria-hidden="true"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="sub" id="subCur"></div>
+      <div class="line next" id="lineNext"><span class="line-inner"><span class="line-base" id="baseNext"></span></span></div>
+      <div class="cue" id="cue">Press play &mdash; the guide melody sings the first pass with you</div>
+    </div>
+
+    <div class="mon-bottom">
+      <div class="progress"><i id="progressBar"></i></div>
+      <div class="chordrail">
+        <span class="cur" id="chordCur">—</span>
+        <span class="arrow">→</span>
+        <span class="nxt" id="chordNext">—</span>
+      </div>
+    </div>
+    <p class="sr" role="status" aria-live="polite" id="announcer"></p>
+  </section>
+
+  <section class="transport" aria-label="Transport">
+    <button class="btn primary" id="btnPlay">Play</button>
+    <button class="btn ghost" id="btnRestart">Restart</button>
+    <label class="toggle"><input type="checkbox" id="optLoop"> Loop</label>
+    <label class="toggle"><input type="checkbox" id="optDrums" checked> Beat</label>
+    <label class="toggle"><input type="checkbox" id="optDuet"> Duet</label>
+    <label class="toggle"><input type="checkbox" id="optScore"> Score me</label>
+
+    <div class="knobs">
+      <div class="knob">
+        <label for="kGuide">Guide melody <span id="vGuide">80%</span></label>
+        <input type="range" id="kGuide" min="0" max="100" value="80">
+      </div>
+      <div class="knob">
+        <label for="kTempo">Tempo <span id="vTempo">100%</span></label>
+        <input type="range" id="kTempo" min="55" max="145" value="100">
+      </div>
+      <div class="knob">
+        <label for="kKey">Key <span id="vKey">±0</span></label>
+        <input type="range" id="kKey" min="-6" max="6" value="0">
+      </div>
+    </div>
+  </section>
+
+  <div class="panes">
+    <div class="stack">
+    <section class="pane" aria-label="Songbook">
+      <div class="pane-head">
+        <h2>The songbook</h2>
+        <p>Click a row, or type its code</p>
+      </div>
+      <ul class="book" id="book"></ul>
+    </section>
+
+    <section class="pane" aria-label="Leaderboard">
+      <div class="pane-head">
+        <h2>Leaderboard</h2>
+        <p id="boardWhere">Best runs, this browser</p>
+      </div>
+      <div class="board-who">
+        <label for="singerIn">Singing as</label>
+        <input type="text" id="singerIn" maxlength="18" placeholder="You" autocomplete="off">
+        <button class="btn ghost small" id="btnClearBoard">Clear</button>
+      </div>
+      <div class="board-link">
+        <label for="boardUrl">Shared board</label>
+        <input type="text" id="boardUrl" autocomplete="off" spellcheck="false"
+               placeholder="http://192.168.1.5:8770 — blank keeps scores in this browser only">
+        <button class="btn ghost small" id="btnConnect">Connect</button>
+      </div>
+      <p class="board-status" id="boardStatus" hidden></p>
+      <ol class="board" id="board"></ol>
+    </section>
+    </div>
+
+    <section class="pane" aria-label="Your own lyrics">
+      <div class="pane-head">
+        <h2>Your own words</h2>
+        <p>Any lyrics, scored on the spot</p>
+      </div>
+      <div class="compose">
+        <textarea id="lyricsIn" spellcheck="false" placeholder="Paste or type lyrics — one line per line.
+
+The lights go down, the room gets small,
+someone puts a mic in my hand…"></textarea>
+        <div class="vibes" role="radiogroup" aria-label="Vibe">
+          <label class="vibe">Anthem<input type="radio" name="vibe" value="anthem" checked></label>
+          <label class="vibe">Ballad<input type="radio" name="vibe" value="ballad"></label>
+          <label class="vibe">Blues<input type="radio" name="vibe" value="blues"></label>
+          <label class="vibe">Chant<input type="radio" name="vibe" value="chant"></label>
+        </div>
+        <input type="text" id="titleIn" class="titlefield" maxlength="60"
+               placeholder="Title it (optional — otherwise I use the first line)">
+        <div class="compose-actions">
+          <button class="btn primary" id="btnQueue">Queue it up</button>
+          <button class="btn" id="btnSave">Save to songbook</button>
+          <button class="btn ghost" id="btnShare">Copy share link</button>
+        </div>
+        <span class="said" id="said"></span>
+        <p class="hint">
+          <b>Queue it up</b> plays it once; <b>Save to songbook</b> gives it a track number and
+          keeps it in this browser. Syllables are split automatically &mdash; to take control,
+          hyphen&#8203;ate a word yourself (<code>ex-tra-or-di-nar-y</code>) and those splits win.
+          The melody comes from your text, so the same lyrics always return as the same tune.
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <span><kbd>space</kbd> play &middot; <kbd>R</kbd> restart &middot; <kbd>0</kbd>–<kbd>9</kbd> punch a track code</span>
+    <span>Backing built live with oscillators &mdash; no audio files, nothing loaded from the network.</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   1. SONGBOOK
+   note = [midi, beats, text]
+     midi 0        -> rest
+     text null     -> melisma: the previous syllable keeps going
+   Every line is an exact number of bars, so nothing drifts.
+   ============================================================ */
+
+var SONGS = [
+{
+  code:"001", title:"Twinkle, Twinkle, Little Star", credit:"Traditional · public domain",
+  keyName:"C", bpm:104, beatsPerBar:4, level:"Easy",
+  duet:{parts:["a","b","a","b","both","both"]},
+  lines:[
+    {n:[[60,1,"Twin-"],[60,1,"kle "],[67,1,"twin-"],[67,1,"kle "],[69,1,"lit-"],[69,1,"tle "],[67,2,"star, "]]},
+    {n:[[65,1,"How "],[65,1,"I "],[64,1,"won-"],[64,1,"der "],[62,1,"what "],[62,1,"you "],[60,2,"are! "]]},
+    {n:[[67,1,"Up "],[67,1,"a-"],[65,1,"bove "],[65,1,"the "],[64,1,"world "],[64,1,"so "],[62,2,"high, "]]},
+    {n:[[67,1,"Like "],[67,1,"a "],[65,1,"dia-"],[65,1,"mond "],[64,1,"in "],[64,1,"the "],[62,2,"sky. "]]},
+    {n:[[60,1,"Twin-"],[60,1,"kle "],[67,1,"twin-"],[67,1,"kle "],[69,1,"lit-"],[69,1,"tle "],[67,2,"star, "]]},
+    {n:[[65,1,"How "],[65,1,"I "],[64,1,"won-"],[64,1,"der "],[62,1,"what "],[62,1,"you "],[60,2,"are! "]]}
+  ],
+  chords:[["C",4],["F",2],["C",2],["F",2],["C",2],["G",2],["C",2],["C",2],["F",2],["C",2],["G",2],
+          ["C",2],["F",2],["C",2],["G",2],["C",4],["F",2],["C",2],["F",2],["C",2],["G",2],["C",2]]
+},
+{
+  code:"002", title:"Row, Row, Row Your Boat", credit:"Traditional round · public domain",
+  keyName:"C", bpm:114, beatsPerBar:3, feel:"compound", level:"Easy",
+  duet:{round:6},   /* a true canon: B enters two bars behind A */
+  lines:[
+    {n:[[60,1.5,"Row, "],[60,1.5,"row, "],[60,1,"row "],[62,.5,"your "],[64,1.5,"boat, "]]},
+    {n:[[64,1,"Gent-"],[62,.5,"ly "],[64,1,"down "],[65,.5,"the "],[67,3,"stream. "]]},
+    {n:[[72,.5,"Mer-"],[72,.5,"ri-"],[72,.5,"ly, "],[67,.5,"mer-"],[67,.5,"ri-"],[67,.5,"ly, "],
+        [64,.5,"mer-"],[64,.5,"ri-"],[64,.5,"ly, "],[60,.5,"mer-"],[60,.5,"ri-"],[60,.5,"ly, "]]},
+    {n:[[67,1,"Life "],[65,.5,"is "],[64,1,"but "],[62,.5,"a "],[60,3,"dream. "]]}
+  ],
+  chords:[["C",3],["C",3],["C",3],["G",3],["C",3],["C",3],["G",3],["C",3]]
+},
+{
+  code:"003", title:"Frère Jacques", credit:"Traditional round · public domain",
+  keyName:"C", bpm:112, beatsPerBar:4, level:"Easy",
+  duet:{round:8},   /* the classic four-part round, taken as two */
+  lines:[
+    {sub:"Are you sleeping,", n:[[60,1,"Frè-"],[62,1,"re "],[64,1,"Jac-"],[60,1,"ques, "]]},
+    {sub:"are you sleeping,", n:[[60,1,"Frè-"],[62,1,"re "],[64,1,"Jac-"],[60,1,"ques, "]]},
+    {sub:"Brother John?", n:[[64,1,"Dor-"],[65,1,"mez-"],[67,2,"vous? "]]},
+    {sub:"Brother John?", n:[[64,1,"Dor-"],[65,1,"mez-"],[67,2,"vous? "]]},
+    {sub:"Morning bells are ringing,", n:[[67,.5,"Son-"],[69,.5,"nez "],[67,.5,"les "],[65,.5,"ma-"],[64,1,"ti-"],[60,1,"nes, "]]},
+    {sub:"morning bells are ringing,", n:[[67,.5,"Son-"],[69,.5,"nez "],[67,.5,"les "],[65,.5,"ma-"],[64,1,"ti-"],[60,1,"nes, "]]},
+    {sub:"Ding dang dong.", n:[[60,1,"Din, "],[55,1,"dan, "],[60,2,"don. "]]},
+    {sub:"Ding dang dong.", n:[[60,1,"Din, "],[55,1,"dan, "],[60,2,"don. "]]}
+  ],
+  chords:[["C",4],["C",4],["C",4],["C",4],["C",4],["C",4],["C",2],["G",1],["C",1],["C",2],["G",1],["C",1]]
+},
+{
+  code:"004", title:"Joyful, Joyful", credit:"Beethoven · words Henry van Dyke, 1907",
+  keyName:"C", bpm:112, beatsPerBar:4, level:"Steady",
+  duet:{parts:["a","b","a","both"]},
+  lines:[
+    {n:[[64,1,"Joy-"],[64,1,"ful, "],[65,1,"joy-"],[67,1,"ful, "],[67,1,"we "],[65,1,"a-"],[64,1,"dore "],[62,1,"Thee, "]]},
+    {n:[[60,1,"God "],[60,1,"of "],[62,1,"glo-"],[64,1,"ry, "],[64,1.5,"Lord "],[62,.5,"of "],[62,2,"love; "]]},
+    {n:[[64,1,"Hearts "],[64,1,"un-"],[65,1,"fold "],[67,1,"like "],[67,1,"flow'rs "],[65,1,"be-"],[64,1,"fore "],[62,1,"Thee, "]]},
+    {n:[[60,1,"O-"],[60,1,"p'ning "],[62,1,"to "],[64,1,"the "],[62,1.5,"sun "],[60,.5,"a-"],[60,2,"bove. "]]}
+  ],
+  chords:[["C",4],["G",4],["C",4],["G",4],["C",4],["G",4],["C",4],["G",2],["C",2]]
+},
+{
+  code:"005", title:"The Backtest Blues", credit:"Original · twelve bars in C",
+  keyName:"C7", bpm:96, beatsPerBar:4, shuffle:true, level:"Swagger",
+  duet:{parts:["a","b","a","b","both","a","b","a","b","both"]},
+  lines:[
+    {n:[[67,.667,"I "],[70,.333,"fit "],[70,.667,"the "],[72,.333,"curve "],[70,.667,"so "],[70,.333,"tight "],[67,.667,"it "],[67,.333,"sings, "],
+        [65,.667,"my "],[67,.333,"Sharpe "],[65,.667,"was "],[63,.333,"three "],[63,1,"point "],[60,1,"one. "]]},
+    {n:[[0,2,null],[70,2,"Yeah… "],[0,4,null]]},
+    {n:[[67,.667,"I "],[70,.333,"fit "],[70,.667,"the "],[72,.333,"curve "],[70,.667,"so "],[70,.333,"tight "],[67,.667,"it "],[67,.333,"sings, "],
+        [65,.667,"oh "],[65,.333,"my "],[67,.667,"Sharpe "],[65,.333,"was "],[63,.667,"three "],[63,.333,"point "],[60,1,"one. "]]},
+    {n:[[0,2,null],[70,1,"Mm-"],[67,1,"hmm… "],[0,4,null]]},
+    {n:[[72,.667,"Then "],[72,.333,"I "],[70,.667,"hit "],[70,.333,"the "],[72,.667,"walk-"],[70,.333,"for-"],[67,1,"ward, "],
+        [70,.667,"and "],[70,.333,"the "],[67,.667,"mon-"],[65,.333,"ey "],[66,.667,"up "],[65,.333,"and "],[63,1,"run. "],
+        [60,2,null],[0,2,null],[0,4,null]]},
+    {n:[[67,.667,"Ev-"],[70,.333,"'ry "],[70,.667,"back-"],[72,.333,"test "],[70,.667,"looks "],[70,.333,"like "],[67,.667,"ge-"],[67,.333,"nius "],
+        [65,.667,"till "],[67,.333,"that "],[65,.667,"o-"],[63,.333,"pen-"],[63,1,"ing "],[60,1,"bell. "]]},
+    {n:[[0,2,null],[70,2,"Yeah… "],[0,4,null]]},
+    {n:[[67,.667,"Ev-"],[70,.333,"'ry "],[70,.667,"back-"],[72,.333,"test "],[70,.667,"looks "],[70,.333,"like "],[67,.667,"ge-"],[67,.333,"nius "],
+        [65,.667,"yeah "],[65,.333,"till "],[67,.667,"that "],[65,.333,"o-"],[63,.667,"pen-"],[63,.333,"ing "],[60,1,"bell. "]]},
+    {n:[[0,2,null],[70,1,"Mm-"],[67,1,"hmm… "],[0,4,null]]},
+    {n:[[72,.667,"Now "],[72,.333,"my "],[70,.667,"eq-"],[70,.333,"ui-"],[72,.667,"ty "],[70,.333,"curve "],[67,1,"is "],
+        [70,.667,"flat "],[70,.333,"as "],[67,.667,"the "],[65,.333,"sto-"],[66,.667,"ry "],[65,.333,"I "],[63,1,"tell. "],
+        [60,2,null],[0,2,null],[0,4,null]]}
+  ],
+  chords:[["C7",4],["F7",4],["C7",4],["C7",4],["F7",4],["F7",4],["C7",4],["C7",4],["G7",4],["F7",4],["C7",4],["G7",4],
+          ["C7",4],["F7",4],["C7",4],["C7",4],["F7",4],["F7",4],["C7",4],["C7",4],["G7",4],["F7",4],["C7",4],["G7",4]]
+},
+{
+  code:"006", title:"Sing It Anyway", credit:"Original · a waltz in A minor",
+  keyName:"Am", bpm:84, beatsPerBar:3, level:"Tender",
+  duet:{parts:["a","a","b","b","both","both","both","both"]},
+  lines:[
+    {n:[[64,1,"The "],[69,1,"lights "],[71,1,"go "],[72,3,"down, "],[72,1,"the "],[71,1,"room "],[69,1,"gets "],[67,3,"small, "]]},
+    {n:[[64,1,"some-"],[69,1,"one "],[71,1,"puts "],[72,2,"a "],[74,1,"mic "],[72,1,"in "],[71,1,"my "],[69,1,"hand, "],[69,3,null]]},
+    {n:[[64,1,"I "],[69,1,"don't "],[71,1,"know "],[72,1,"the "],[74,1,"words "],[76,1,"to "],[76,1,"this "],[74,1,"one "],[72,1,"at "],[71,3,"all, "]]},
+    {n:[[64,1,"but "],[67,1,"the "],[69,1,"cho-"],[71,2,"rus, "],[72,1,"I "],[71,1,"un-"],[69,1,"der-"],[67,1,"stand. "],[67,3,null]]},
+    {n:[[69,1,"So "],[76,2,"sing "],[76,1,"it "],[74,1,"a-"],[72,1,"ny-"],[74,3,"way, "],[0,3,null]]},
+    {n:[[69,1,"off-"],[76,2,"key "],[74,1,"and "],[72,1,"out "],[71,1,"of "],[72,3,"time, "],[0,3,null]]},
+    {n:[[64,1,"no-"],[65,1,"bo-"],[67,1,"dy "],[69,1,"here "],[71,2,"needs "],[72,1,"per-"],[74,2,"fect, "],[74,3,null]]},
+    {n:[[72,1,"they "],[71,1,"just "],[69,1,"need "],[71,1,"you "],[69,1,"on "],[67,1,"the "],[69,3,"line. "],[69,3,null]]}
+  ],
+  chords:[["Am",3],["C",3],["G",3],["G",3],["Am",3],["Dm",3],["Am",3],["G",3],
+          ["C",3],["Dm",3],["Am",3],["G",3],["Am",3],["Em",3],["G",3],["G",3],
+          ["Am",3],["Dm",3],["G",3],["G",3],["Am",3],["G",3],["C",3],["C",3],
+          ["C",3],["G",3],["Dm",3],["Dm",3],["Am",3],["G",3],["Am",3],["Am",3]]
+}
+];
+
+var CHORD_TABLE = {
+  "C":[60,[0,4,7]], "Cm":[60,[0,3,7]], "C7":[60,[0,4,7,10]],
+  "Dm":[62,[0,3,7]], "Em":[64,[0,3,7]],
+  "F":[65,[0,4,7]], "F7":[65,[0,4,7,10]],
+  "G":[67,[0,4,7]], "G7":[67,[0,4,7,10]],
+  "Am":[69,[0,3,7]], "E7":[64,[0,4,7,10]], "Bb":[70,[0,4,7]]
+};
+
+/* ============================================================
+   2. AUDIO
+   ============================================================ */
+var ctx=null, master, leadG, padG, bassG, drumG, active=[];
+
+function hz(m){ return 440*Math.pow(2,(m-69)/12); }
+
+function initAudio(){
+  if(ctx) return;
+  var AC = window.AudioContext || window.webkitAudioContext;
+  ctx = new AC();
+  master = ctx.createGain(); master.gain.value=0.9; master.connect(ctx.destination);
+  var comp = ctx.createDynamicsCompressor();
+  comp.threshold.value=-14; comp.ratio.value=4; comp.connect(master);
+  leadG = ctx.createGain(); leadG.gain.value=0.8; leadG.connect(comp);
+  padG  = ctx.createGain(); padG.gain.value=0.30; padG.connect(comp);
+  bassG = ctx.createGain(); bassG.gain.value=0.42; bassG.connect(comp);
+  drumG = ctx.createGain(); drumG.gain.value=0.34; drumG.connect(comp);
+}
+
+function track(node){ active.push(node); }
+function killActive(){
+  for(var i=0;i<active.length;i++){ try{ active[i].stop(0); }catch(e){} }
+  active=[];
+}
+
+/* Guide voice: two slightly detuned triangles through a gentle lowpass,
+   with a touch of vibrato once the note has settled. Reads as "someone humming
+   the tune" rather than a test tone. */
+function voiceLead(t, midi, dur, part){
+  var f = hz(midi);
+  var dark = part==="b";          /* the second singer sits darker, so the two separate */
+  var g = ctx.createGain();
+  var lp = ctx.createBiquadFilter(); lp.type="lowpass";
+  lp.frequency.setValueAtTime(Math.min(6000, f*(dark?3.4:7)), t); lp.Q.value=dark?1.1:0.6;
+  g.connect(lp); lp.connect(leadG);
+
+  var a=0.018, rel=Math.min(0.14, dur*0.45);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.30, t+a);
+  g.gain.setValueAtTime(0.30, t+Math.max(a, dur-rel));
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+
+  [0,-6,7].forEach(function(det,i){
+    var o = ctx.createOscillator();
+    o.type = i===2 ? "sine" : "triangle";
+    /* B's third partial drops an octave instead of rising one */
+    o.frequency.value = f * (i===2 ? (dark?0.5:2) : 1);
+    o.detune.value = dark ? det*2 : det;
+    var vg = ctx.createGain(); vg.gain.value = i===2 ? (dark?0.34:0.16) : 0.5;
+    o.connect(vg); vg.connect(g);
+    o.start(t); o.stop(t+dur+0.05); track(o);
+  });
+
+  if(dur>0.5){
+    var lfo=ctx.createOscillator(), la=ctx.createGain();
+    lfo.frequency.value=5.2; la.gain.value=0;
+    la.gain.setValueAtTime(0,t+0.18);
+    la.gain.linearRampToValueAtTime(f*0.006, t+Math.min(dur,0.55));
+    lfo.connect(la);
+    lfo.start(t); lfo.stop(t+dur); track(lfo);
+  }
+}
+
+function voicePad(t, name, dur){
+  var c = CHORD_TABLE[name]; if(!c) return;
+  var root=c[0]-12, ivs=c[1];
+  var g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.22, t+0.09);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur*0.98);
+  var lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=1500;
+  g.connect(lp); lp.connect(padG);
+  for(var i=0;i<ivs.length;i++){
+    var o=ctx.createOscillator(); o.type="triangle";
+    o.frequency.value=hz(root+ivs[i]);
+    o.detune.value=(i%2?5:-5);
+    var vg=ctx.createGain(); vg.gain.value=1/ivs.length;
+    o.connect(vg); vg.connect(g);
+    o.start(t); o.stop(t+dur+0.05); track(o);
+  }
+}
+
+function voiceBass(t, name, dur){
+  var c = CHORD_TABLE[name]; if(!c) return;
+  var o=ctx.createOscillator(); o.type="sine";
+  o.frequency.value=hz(c[0]-24);
+  var g=ctx.createGain();
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(0.5,t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+Math.min(dur,0.9));
+  o.connect(g); g.connect(bassG);
+  o.start(t); o.stop(t+Math.min(dur,0.95)+0.05); track(o);
+}
+
+function noiseBurst(t, dur, type, freq, gain){
+  var n = Math.max(1, Math.floor(ctx.sampleRate*dur));
+  var buf = ctx.createBuffer(1,n,ctx.sampleRate), d=buf.getChannelData(0);
+  for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+  var s=ctx.createBufferSource(); s.buffer=buf;
+  var f=ctx.createBiquadFilter(); f.type=type; f.frequency.value=freq;
+  var g=ctx.createGain(); g.gain.value=gain;
+  s.connect(f); f.connect(g); g.connect(drumG);
+  s.start(t); track(s);
+}
+function drumKick(t){
+  var o=ctx.createOscillator(), g=ctx.createGain();
+  o.frequency.setValueAtTime(130,t);
+  o.frequency.exponentialRampToValueAtTime(45,t+0.10);
+  g.gain.setValueAtTime(0.9,t);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.22);
+  o.connect(g); g.connect(drumG);
+  o.start(t); o.stop(t+0.25); track(o);
+}
+function drumSnare(t){ noiseBurst(t,0.16,"highpass",1400,0.30); }
+function drumHat(t,accent){ noiseBurst(t,0.035,"highpass",7000,accent?0.20:0.10); }
+function clickTick(t,accent){
+  var o=ctx.createOscillator(), g=ctx.createGain();
+  o.frequency.value=accent?1500:1000; o.type="square";
+  g.gain.setValueAtTime(accent?0.22:0.12,t);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.06);
+  o.connect(g); g.connect(drumG);
+  o.start(t); o.stop(t+0.08); track(o);
+}
+
+/* ============================================================
+   3. PREPARE A SONG  ->  timed lines, syllables, and events
+   ============================================================ */
+/* A second voice on a shared line: the nearest chord tone above the melody,
+   so the harmony is always consonant with what the band is playing. */
+function harmonize(midi, chordName){
+  var c=CHORD_TABLE[chordName];
+  if(!c) return midi+4;
+  var pcs=c[1].map(function(iv){ return (c[0]+iv)%12; });
+  for(var m=midi+3; m<midi+13; m++){
+    if(pcs.indexOf(((m%12)+12)%12)>=0) return m;
+  }
+  return midi+4;
+}
+
+/* When a song carries no arrangement of its own, singers simply alternate
+   and finish together. */
+function defaultParts(n){
+  var p=[];
+  for(var i=0;i<n;i++) p.push(i===n-1 ? "both" : (i%2 ? "b" : "a"));
+  return p;
+}
+
+function shiftLine(L, by){
+  return {
+    index:L.index, start:L.start+by, end:L.end+by, sub:L.sub, voice:L.voice,
+    syls:L.syls.map(function(s){
+      return {text:s.text, start:s.start+by, end:s.end+by};
+    })
+  };
+}
+
+function prepare(song, duet){
+  var lines=[], events=[], beat=0;
+  var spec = song.duet || {};
+  var round = (duet && spec.round) ? spec.round : 0;
+  var parts = (duet && !round) ? (spec.parts || defaultParts(song.lines.length)) : null;
+
+  /* chords are needed while laying out the melody, so that a shared line can be
+     harmonised against whatever chord is sounding underneath it */
+  var raw=[], rb=0;
+  song.chords.forEach(function(c){ raw.push({t:rb, end:rb+c[1], name:c[0]}); rb+=c[1]; });
+  function chordAt(t){
+    for(var i=0;i<raw.length;i++){ if(t>=raw[i].t && t<raw[i].end) return raw[i].name; }
+    return raw.length ? raw[raw.length-1].name : "C";
+  }
+
+  song.lines.forEach(function(L, li){
+    var lineStart=beat, syls=[], cur=null;
+    var voice = parts ? (parts[li]||"a") : "a";
+    L.n.forEach(function(nt){
+      var midi=nt[0], dur=nt[1], text=nt[2];
+      if(midi>0){
+        events.push({t:beat, type:"lead", midi:midi, dur:dur, voice:(voice==="b"?"b":"a")});
+        /* sung together — B takes the upper line */
+        if(voice==="both") events.push({t:beat, type:"lead", dur:dur, voice:"b",
+                                        midi:harmonize(midi, chordAt(beat))});
+      }
+      if(text!=null){
+        cur={text:text, start:beat, end:beat+dur, left:0, width:0};
+        syls.push(cur);
+      } else if(midi>0 && cur){
+        cur.end = beat+dur;              /* melisma extends the syllable */
+      }
+      beat+=dur;
+    });
+    lines.push({index:li, start:lineStart, end:beat, syls:syls, sub:L.sub||"", voice:voice});
+  });
+
+  /* a round runs long by however far behind the second singer enters */
+  var total = beat + round;
+
+  var lanes;
+  if(!duet){
+    lanes=[lines, []];
+  } else if(round){
+    events = events.concat(events.filter(function(e){ return e.type==="lead"; })
+      .map(function(e){ return {t:e.t+round, type:"lead", midi:e.midi, dur:e.dur, voice:"b"}; }));
+    lanes=[lines, lines.map(function(L){ return shiftLine(L, round); })];
+  } else {
+    lanes=[
+      lines.filter(function(L){ return L.voice!=="b"; }),
+      lines.filter(function(L){ return L.voice!=="a"; })
+    ];
+  }
+
+  /* chords + bass */
+  var cb=0, chordSpans=[];
+  song.chords.forEach(function(c){
+    var name=c[0], dur=c[1];
+    if(cb<total){
+      events.push({t:cb, type:"pad", name:name, dur:dur});
+      events.push({t:cb, type:"bass", name:name, dur:dur});
+      chordSpans.push({t:cb, end:cb+dur, name:name});
+    }
+    cb+=dur;
+  });
+  /* if the chord chart runs short, hold the last chord to the end */
+  if(cb<total && chordSpans.length){
+    var last=chordSpans[chordSpans.length-1].name;
+    while(cb<total){
+      var d=Math.min(song.beatsPerBar, total-cb);
+      events.push({t:cb,type:"pad",name:last,dur:d});
+      events.push({t:cb,type:"bass",name:last,dur:d});
+      chordSpans.push({t:cb,end:cb+d,name:last});
+      cb+=d;
+    }
+  }
+
+  /* percussion */
+  var bpb=song.beatsPerBar, shuffle=!!song.shuffle, compound=song.feel==="compound";
+  for(var b=0;b<total;b+=bpb){
+    for(var k=0;k<bpb;k++){
+      var pos=b+k; if(pos>=total) break;
+      if(k===0) events.push({t:pos,type:"kick"});
+      else if(bpb===4 && k===2) events.push({t:pos,type:"kick"});
+      if(bpb===4 && (k===1||k===3)) events.push({t:pos,type:"snare"});
+      if(bpb===3 && !compound && k===1) events.push({t:pos,type:"snare"});
+      if(compound && k===1.5) events.push({t:pos,type:"snare"});
+      events.push({t:pos,type:"hat",accent:k===0});
+      if(shuffle){ if(pos+0.667<total) events.push({t:pos+0.667,type:"hat"}); }
+      else { if(pos+0.5<total) events.push({t:pos+0.5,type:"hat"}); }
+    }
+  }
+
+  events.sort(function(a,b){ return a.t-b.t; });
+
+  /* what each singer is meant to be on at any moment — the yardstick for scoring */
+  var notes={a:[],b:[]};
+  events.forEach(function(e){
+    if(e.type==="lead") notes[e.voice].push({t:e.t, end:e.t+e.dur, midi:e.midi});
+  });
+  notes.a.sort(function(x,y){ return x.t-y.t; });
+  notes.b.sort(function(x,y){ return x.t-y.t; });
+
+  return {lines:lines, lanes:lanes, events:events, chords:chordSpans, notes:notes,
+          total:total, bpb:bpb, duet:!!duet, round:round};
+}
+
+/* ============================================================
+   3b. PITCH DETECTION (YIN)
+   Plain autocorrelation octave-jumps badly on a sung note, because a
+   voice is rich in harmonics. YIN's cumulative mean normalised difference
+   is what keeps the estimate on the fundamental.
+   ============================================================ */
+var PITCH_LO=70, PITCH_HI=1050;      /* Hz — comfortably around the human range */
+
+function detectPitch(buf, rate){
+  /* halve the sample rate first: it quarters the work and costs nothing,
+     since nothing sung reaches anywhere near the new Nyquist */
+  var n=buf.length>>1, x=new Float32Array(n);
+  for(var i=0;i<n;i++) x[i]=(buf[2*i]+buf[2*i+1])*0.5;
+  var sr=rate/2;
+
+  var rms=0;
+  for(i=0;i<n;i++) rms+=x[i]*x[i];
+  rms=Math.sqrt(rms/n);
+  if(rms<0.012) return {hz:-1, clarity:0, rms:rms};   /* silence, or room noise */
+
+  var half=n>>1;
+  var tauMin=Math.max(2, Math.floor(sr/PITCH_HI));
+  var tauMax=Math.min(half-1, Math.ceil(sr/PITCH_LO));
+
+  var cmnd=new Float32Array(tauMax+1), running=0, tau, j;
+  for(tau=1; tau<=tauMax; tau++){
+    var sum=0;
+    for(j=0;j<half;j++){ var d=x[j]-x[j+tau]; sum+=d*d; }
+    running+=sum;
+    cmnd[tau]= running>0 ? sum*tau/running : 1;
+  }
+
+  var THRESH=0.13, best=-1;
+  for(tau=tauMin; tau<=tauMax; tau++){
+    if(cmnd[tau]<THRESH){
+      while(tau+1<=tauMax && cmnd[tau+1]<cmnd[tau]) tau++;   /* walk to the local floor */
+      best=tau; break;
+    }
+  }
+  if(best<0){                                   /* nothing convincing — take the best dip */
+    var lo=1e9;
+    for(tau=tauMin; tau<=tauMax; tau++) if(cmnd[tau]<lo){ lo=cmnd[tau]; best=tau; }
+    if(lo>0.45) return {hz:-1, clarity:0, rms:rms};
+  }
+
+  /* parabolic interpolation around the minimum, for sub-sample accuracy */
+  var t0=Math.max(tauMin,best-1), t2=Math.min(tauMax,best+1), refined=best;
+  if(t2>t0){
+    var a=cmnd[t0], b2=cmnd[best], c=cmnd[t2], denom=2*(2*b2-c-a);
+    if(denom!==0) refined = best + (c-a)/denom;
+  }
+  return {hz: sr/refined, clarity: 1-cmnd[best], rms:rms};
+}
+
+function hzToMidi(hz){ return 69 + 12*Math.log(hz/440)/Math.LN2; }
+
+/* ============================================================
+   4. PLAYER
+   ============================================================ */
+var P = {
+  song:null, prep:null, playing:false,
+  anchorCtx:0, anchorBeat:0,
+  tempo:1, transpose:0, guide:0.8, drums:true, loop:false, duet:false,
+  evIdx:0, timer:null, countIn:0, skipCount:false
+};
+
+function secPerBeat(){ return 60/(P.song.bpm*P.tempo); }
+function nowBeat(){
+  if(!P.playing) return P.anchorBeat;
+  return P.anchorBeat + (ctx.currentTime - P.anchorCtx)/secPerBeat();
+}
+function beatToTime(b){ return P.anchorCtx + (b-P.anchorBeat)*secPerBeat(); }
+
+function seekEventIndex(b){
+  var e=P.prep.events, i=0;
+  while(i<e.length && e[i].t < b) i++;
+  P.evIdx=i;
+}
+
+function schedule(){
+  if(!P.playing) return;
+  var lookahead = ctx.currentTime + 0.18;
+  var e=P.prep.events, sp=secPerBeat();
+  while(P.evIdx<e.length && beatToTime(e[P.evIdx].t) < lookahead){
+    var ev=e[P.evIdx], t=beatToTime(ev.t);
+    if(t >= ctx.currentTime-0.01){
+      switch(ev.type){
+        case "lead":
+          /* a muted part drops out of the guide so you can sing it yourself */
+          if(P.guide>0.001 && !lanes[ev.voice==="b"?1:0].muted)
+            voiceLead(t, ev.midi+P.transpose, ev.dur*sp*0.96, ev.voice);
+          break;
+        case "pad":  voicePad(t, ev.name, ev.dur*sp); break;
+        case "bass": voiceBass(t, ev.name, ev.dur*sp); break;
+        case "kick": if(P.drums) drumKick(t); break;
+        case "snare":if(P.drums) drumSnare(t); break;
+        case "hat":  if(P.drums) drumHat(t, ev.accent); break;
+      }
+    }
+    P.evIdx++;
+  }
+  if(P.evIdx>=e.length && nowBeat() >= P.prep.total){
+    if(P.loop){ P.skipCount=true; restart(true); }
+    else { finishScore(); stop(); }
+  }
+}
+
+function play(){
+  initAudio();
+  if(ctx.state==="suspended") ctx.resume();
+  if(P.playing) return;
+  /* one bar of count-in from a standstill — but a loop turns over without one */
+  var bars = P.prep.bpb, sp=secPerBeat();
+  var wantCount = P.anchorBeat<=0 && !P.skipCount;
+  P.skipCount=false;
+  P.anchorCtx = ctx.currentTime + 0.08 + (wantCount ? bars*sp : 0);
+  if(wantCount){
+    var t0=ctx.currentTime+0.08;
+    for(var i=0;i<bars;i++) clickTick(t0+i*sp, i===0);
+    P.countIn = t0 + bars*sp;
+  } else { P.countIn=0; }
+  P.playing=true;
+  seekEventIndex(P.anchorBeat);
+  P.timer=setInterval(schedule, 25);
+  ui.btnPlay.textContent="Pause";
+  setState("PLAYING");
+}
+function pause(){
+  if(!P.playing) return;
+  P.anchorBeat = Math.max(0, nowBeat());
+  P.playing=false;
+  clearInterval(P.timer); P.timer=null;
+  killActive();
+  ui.btnPlay.textContent="Play";
+  setState("PAUSED");
+}
+function stop(){
+  P.playing=false; clearInterval(P.timer); P.timer=null;
+  P.anchorBeat=0; killActive();
+  ui.btnPlay.textContent="Play";
+  setState("DONE");
+}
+function restart(keepGoing){
+  var wasPlaying = P.playing || keepGoing;
+  if(S.on) resetScore();
+  clearInterval(P.timer); P.timer=null;
+  P.playing=false; P.anchorBeat=0; killActive();
+  lanes[0].shown=-1; lanes[1].shown=-1;
+  if(wasPlaying) play(); else { ui.btnPlay.textContent="Play"; setState("READY"); }
+}
+function reanchor(){
+  if(!P.playing) return;
+  var b=nowBeat();
+  killActive();
+  P.anchorBeat=b; P.anchorCtx=ctx.currentTime+0.05;
+  seekEventIndex(b);
+}
+
+/* ============================================================
+   5. THE MONITOR
+   ============================================================ */
+var ui={};
+["remoteDigits","npCode","npTitle","npCredit","mBar","mKey","mBpm","mState",
+ "field","laneA","baseA","fillA","ballA","partA",
+ "laneB","baseB","fillB","ballB","partB","subCur","lineNext","baseNext","cue","optDuet",
+ "progressBar","chordCur","chordNext","btnPlay","btnRestart","optLoop","optDrums",
+ "trackCount","mScoreWrap","mScore","scorebar","ribbon","scoreNote","optScore",
+ "result","resultScore","resultRank","resultDetail","resultFlag",
+ "board","boardWhere","singerIn","btnClearBoard",
+ "boardUrl","btnConnect","boardStatus","kGuide","vGuide","kTempo","vTempo","kKey","vKey","book","lyricsIn","titleIn","btnQueue",
+ "btnSave","btnShare","said","announcer"].forEach(function(id){ ui[id]=document.getElementById(id); });
+
+function setState(s){ ui.mState.textContent=s; }
+
+/* ---------- lanes ----------
+   One lane per singer. Solo mode uses lane A only; duet mode adds lane B,
+   which for a round is the very same lines running a couple of bars behind. */
+function Lane(root, base, fill, ball, badge, part){
+  return {root:root, base:base, fill:fill, ball:ball, badge:badge, part:part,
+          entries:[], shown:-1, layout:null, muted:false};
+}
+var lanes=[
+  Lane(ui.laneA, ui.baseA, ui.fillA, ui.ballA, ui.partA, "a"),
+  Lane(ui.laneB, ui.baseB, ui.fillB, ui.ballB, ui.partB, "b")
+];
+function setLaneEntries(){
+  lanes[0].entries = P.prep.lanes[0];
+  lanes[1].entries = P.prep.lanes[1];
+  lanes[0].shown=-1; lanes[1].shown=-1;
+  lanes[1].root.hidden = !P.prep.lanes[1].length;
+  ui.field.classList.toggle("duet", P.prep.duet && P.prep.lanes[1].length>0);
+  /* paint straight away rather than waiting on the next animation frame —
+     a background tab has no frames, and the monitor would sit on stale words */
+  paintLane(lanes[0], P.anchorBeat, false);
+  paintLane(lanes[1], P.anchorBeat, false);
+}
+
+function renderLaneLine(lane, idx, force){
+  if(idx===lane.shown && !force) return;
+  lane.shown=idx;
+  var L=lane.entries[idx];
+  lane.base.textContent=""; lane.fill.textContent="";
+  lane.layout=null;
+  if(!L) return;
+
+  var spans=[];
+  L.syls.forEach(function(s){
+    var a=document.createElement("span"); a.textContent=s.text; lane.base.appendChild(a);
+    var b=document.createElement("span"); b.textContent=s.text; lane.fill.appendChild(b);
+    spans.push(a);
+  });
+  if(!L.syls.length){ lane.base.textContent="· · ·"; lane.fill.textContent="· · ·"; }
+
+  /* Shrink to fit. The wipe is one horizontal sweep, so the line must never wrap —
+     and an inline box reports scrollWidth 0, so measure the rendered rect instead. */
+  lane.base.style.fontSize=""; lane.fill.style.fontSize="";
+  var avail = lane.base.parentNode.parentNode.clientWidth || ui.field.clientWidth;
+  var w = lane.base.getBoundingClientRect().width;
+  if(w>avail && avail>0){
+    var start = parseFloat(getComputedStyle(lane.base).fontSize);
+    var size = Math.max(11, start*(avail/w)*0.985);
+    lane.base.style.fontSize=size+"px";
+    lane.fill.style.fontSize=size+"px";
+    /* one correction pass — glyph widths are not perfectly linear in font-size */
+    var w2 = lane.base.getBoundingClientRect().width;
+    if(w2>avail){
+      size=Math.max(11, size*(avail/w2)*0.99);
+      lane.base.style.fontSize=size+"px";
+      lane.fill.style.fontSize=size+"px";
+    }
+  }
+
+  var lineBox = lane.base.getBoundingClientRect();
+  lane.layout = spans.map(function(el,i){
+    var r = el.getBoundingClientRect();
+    return {syl:L.syls[i], left:r.left-lineBox.left, width:r.width};
+  });
+  if(lane.part==="a") ui.announcer.textContent = L.syls.map(function(s){return s.text;}).join("");
+}
+
+/* the entry this singer is inside, or failing that the one they are waiting on */
+function laneIndexAt(lane, b){
+  var e=lane.entries, active=-1, upcoming=-1;
+  for(var i=0;i<e.length;i++){
+    if(b>=e[i].start && b<e[i].end){ active=i; break; }
+    if(b<e[i].start){ upcoming=i; break; }
+    active=i;
+  }
+  if(active>=0 && b<e[active].end) return {idx:active, live:true};
+  if(upcoming>=0) return {idx:upcoming, live:false};
+  return {idx:Math.max(0,e.length-1), live:false};
+}
+
+function paintLane(lane, b, counting){
+  if(!lane.entries.length){ lane.root.hidden=true; return; }
+  lane.root.hidden=false;
+
+  var at=laneIndexAt(lane, b);
+  renderLaneLine(lane, at.idx);
+  lane.root.classList.toggle("idle", !at.live);
+
+  var px=0, ballX=null, ballY=0, L=lane.layout;
+  if(L && L.length){
+    var lastEnd=0;
+    for(var j=0;j<L.length;j++){
+      var it=L[j], s=it.syl;
+      if(b>=s.end){ px=it.left+it.width; lastEnd=j; }
+      else if(b>=s.start){
+        var p=(b-s.start)/Math.max(.0001,(s.end-s.start));
+        px=it.left+it.width*p;
+        ballX=it.left+it.width/2;
+        /* hop toward the next syllable over the tail of this one */
+        var nx=L[j+1];
+        if(nx && p>0.62){
+          var u=(p-0.62)/0.38;
+          ballX = it.left+it.width/2 + (nx.left+nx.width/2 - (it.left+it.width/2))*u;
+          ballY = -Math.sin(Math.PI*u)*22;
+        }
+        break;
+      } else { break; }
+    }
+    if(ballX===null){
+      var k=Math.min(lastEnd, L.length-1);
+      ballX = (b < L[0].syl.start) ? L[0].left+L[0].width/2 : L[k].left+L[k].width/2;
+    }
+  }
+  lane.fill.style.setProperty("--wipe", px+"px");
+
+  var bodyRect=lane.ball.parentNode.getBoundingClientRect();
+  var lineRect=lane.base.getBoundingClientRect();
+  if(ballX!==null && L && L.length && !counting && P.playing && at.live){
+    lane.ball.style.opacity="1";
+    lane.ball.style.left=(lineRect.left-bodyRect.left+ballX)+"px";
+    lane.ball.style.top=(lineRect.top-bodyRect.top-10+ballY)+"px";
+  } else {
+    lane.ball.style.opacity="0";
+  }
+  return at;
+}
+
+function frame(){
+  requestAnimationFrame(frame);
+  if(!P.prep) return;
+
+  var counting = P.playing && P.countIn && ctx && ctx.currentTime < P.countIn;
+  var b = counting ? 0 : Math.max(0, Math.min(nowBeat(), P.prep.total));
+
+  var atA = paintLane(lanes[0], b, counting);
+  paintLane(lanes[1], b, counting);
+
+  if(S.on){
+    listen(b, counting);
+    drawRibbon(b);
+    ui.mScore.textContent=liveScore();
+    ui.scoreNote.textContent = S.target>0
+      ? ("you " + (S.live>0 ? noteName(S.live) : "—") + " · aim " + noteName(S.target))
+      : (S.live>0 ? "you "+noteName(S.live) : "sing — bars are the tune, dots are you");
+  }
+
+  /* the translation line and the look-ahead follow the lead singer */
+  var curA = atA ? lanes[0].entries[atA.idx] : null;
+  ui.subCur.textContent = curA ? (curA.sub||"") : "";
+  var all=P.prep.lines, nxt=null;
+  for(var n=0;n<all.length;n++){ if(all[n].start>b){ nxt=all[n]; break; } }
+  ui.baseNext.textContent = nxt ? nxt.syls.map(function(s){return s.text;}).join("") : "";
+
+  /* meters */
+  var bar=Math.floor(b/P.prep.bpb)+1;
+  ui.mBar.textContent = counting ? "COUNT IN" : ("BAR "+bar);
+  ui.progressBar.style.width = (100*b/P.prep.total)+"%";
+
+  var cc="—", cn="—";
+  for(var q=0;q<P.prep.chords.length;q++){
+    if(b>=P.prep.chords[q].t && b<P.prep.chords[q].end){
+      cc=P.prep.chords[q].name;
+      cn=P.prep.chords[q+1] ? P.prep.chords[q+1].name : "—";
+      break;
+    }
+  }
+  ui.chordCur.textContent=transposeName(cc);
+  ui.chordNext.textContent=transposeName(cn);
+
+  if(counting){
+    var left=Math.ceil((P.countIn-ctx.currentTime)/secPerBeat());
+    ui.cue.innerHTML="Coming in on <b>"+Math.max(1,left)+"</b>";
+  } else if(P.playing){
+    ui.cue.textContent = P.guide<0.02 ? "Guide muted — it is all you" : "";
+  }
+}
+
+/* ============================================================
+   5b. SCORING
+   ============================================================ */
+var S = {
+  on:false, analyser:null, buf:null, stream:null,
+  credit:0, chances:0,
+  runFrom:-1, bestRun:0,      /* streaks measured in beats, not frames */
+  lastTarget:-1, notes:0, notesHit:0, noteScored:false,
+  history:[],                 /* {beat, midi, hit} for the ribbon */
+  live:-1, target:-1, done:null
+};
+
+function scoredPart(){
+  /* the part you muted is the part you are singing, so that is what gets graded */
+  if(P.prep && P.prep.duet){
+    if(lanes[0].muted && !lanes[1].muted) return "a";
+    if(lanes[1].muted && !lanes[0].muted) return "b";
+  }
+  return "a";
+}
+
+/* the index of the note being sung, so that two notes at the same pitch
+   still count as two — comparing pitches alone silently merges them */
+function targetIndexAt(beat, part){
+  var list=P.prep && P.prep.notes ? P.prep.notes[part] : null;
+  if(!list) return -1;
+  for(var i=0;i<list.length;i++){
+    if(beat>=list[i].t && beat<list[i].end) return i;
+    if(list[i].t>beat) break;
+  }
+  return -1;
+}
+function targetAt(beat, part){
+  var i=targetIndexAt(beat, part);
+  return i<0 ? -1 : P.prep.notes[part][i].midi+P.transpose;
+}
+
+/* Distance to the target, ignoring which octave you sang it in — a bass
+   answering a soprano line is singing the note, not missing it by twelve. */
+function centsOff(sung, target){
+  var d=(sung-target)%12;
+  if(d>6) d-=12; if(d<-6) d+=12;
+  return d;
+}
+
+function resetScore(){
+  S.credit=0; S.chances=0;
+  S.runFrom=-1; S.bestRun=0;
+  S.lastTarget=-1; S.notes=0; S.notesHit=0; S.noteScored=false;
+  S.history=[]; S.live=-1; S.target=-1; S.done=null;
+  ui.result.hidden=true;
+  ui.mScore.textContent="0";
+}
+
+async function micOn(){
+  initAudio();
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    ui.said.textContent="This browser has no microphone API.";
+    return false;
+  }
+  try{
+    S.stream = await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}
+    });
+  }catch(err){
+    /* an embedded page is often denied the microphone outright */
+    var why = (err && err.name==="NotAllowedError")
+      ? "The microphone was blocked here. If this page is embedded, open it in its own tab and try again."
+      : (err && err.name==="NotFoundError")
+        ? "No microphone found."
+        : "Could not open the microphone"+(err && err.name ? " ("+err.name+")" : "")+".";
+    ui.said.textContent=why;
+    ui.scoreNote.textContent=why;
+    return false;
+  }
+  var src=ctx.createMediaStreamSource(S.stream);
+  var hp=ctx.createBiquadFilter(); hp.type="highpass"; hp.frequency.value=60;
+  S.analyser=ctx.createAnalyser();
+  S.analyser.fftSize=2048;
+  /* deliberately not connected onward — routing a live mic to the speakers
+     in a page that is already playing a backing track is a feedback loop */
+  src.connect(hp); hp.connect(S.analyser);
+  S.buf=new Float32Array(S.analyser.fftSize);
+  return true;
+}
+
+function micOff(){
+  if(S.stream) S.stream.getTracks().forEach(function(t){ t.stop(); });
+  S.stream=null; S.analyser=null; S.buf=null;
+}
+
+/* ---------- leaderboard ---------- */
+var BOARD_KEY="karaoke-box/scores/v1";
+var NAME_KEY="karaoke-box/singer/v1";
+var board=[], boardWorks=true, freshId=null;
+
+function readBoard(){
+  try{
+    var raw=localStorage.getItem(BOARD_KEY);
+    var v=raw?JSON.parse(raw):[];
+    return Array.isArray(v) ? v.filter(function(e){
+      return e && typeof e.score==="number" && e.title;
+    }) : [];
+  }catch(e){ boardWorks=false; return []; }
+}
+function writeBoard(){
+  try{ localStorage.setItem(BOARD_KEY, JSON.stringify(board.slice(0,50))); return true; }
+  catch(e){ boardWorks=false; return false; }
+}
+function singerName(){
+  var v=(ui.singerIn.value||"").trim();
+  return v || "You";
+}
+function bestFor(code){
+  var b=null;
+  board.forEach(function(e){ if(e.code===code && (b===null || e.score>b)) b=e.score; });
+  return b;
+}
+function whenLabel(iso){
+  try{
+    var d=new Date(iso), now=new Date();
+    var sameDay = d.toDateString()===now.toDateString();
+    if(sameDay) return d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+    return d.toLocaleDateString(undefined,{day:"numeric",month:"short"});
+  }catch(e){ return ""; }
+}
+
+/* ---------- shared board ----------
+   Off unless a server is actually configured, so the standalone page makes
+   no requests at all: a published artifact is sandboxed against outbound
+   traffic, and firing doomed fetches at it would only produce noise. */
+var URL_KEY="karaoke-box/board-url/v1";
+var boardEndpoint="";      /* "" = this browser only */
+var shared=[], sharedOk=false, freshAt=null;
+
+function metaEndpoint(){
+  var m=document.querySelector('meta[name="karaoke-board"]');
+  return m && m.content ? m.content : "";
+}
+function normalizeEndpoint(raw){
+  var v=(raw||"").trim().replace(/\/+$/,"");
+  if(!v) return "";
+  if(!/\/api\/scores$/.test(v)) v+="/api/scores";
+  try{ return new URL(v, location.href).href; }catch(e){ return ""; }
+}
+function endpointLabel(){
+  if(!boardEndpoint) return "";
+  try{ return new URL(boardEndpoint).host; }catch(e){ return boardEndpoint; }
+}
+function setStatus(text, kind){
+  ui.boardStatus.hidden=!text;
+  ui.boardStatus.textContent=text||"";
+  ui.boardStatus.className="board-status"+(kind?" "+kind:"");
+}
+
+function askServer(path, options){
+  var ctl = window.AbortController ? new AbortController() : null;
+  var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 5000) : null;
+  var opts = options||{};
+  if(ctl) opts.signal=ctl.signal;
+  return fetch(boardEndpoint+(path||""), opts).then(function(r){
+    if(timer) clearTimeout(timer);
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    return r.json();
+  }, function(err){
+    if(timer) clearTimeout(timer);
+    throw err;
+  });
+}
+
+function reachFailure(err){
+  sharedOk=false;
+  var why = (err && err.name==="AbortError") ? "timed out" : "could not be reached";
+  setStatus("The shared board at "+endpointLabel()+" "+why+
+            ". Showing this browser's scores instead.", "bad");
+  drawBoard();
+}
+
+function pullShared(){
+  if(!boardEndpoint) return Promise.resolve(false);
+  return askServer("?limit=20").then(function(data){
+    shared = (data && data.scores) || [];
+    sharedOk = true;
+    setStatus("Sharing with "+endpointLabel()+" — "+shared.length+
+              " run"+(shared.length===1?"":"s")+" on the board.", "ok");
+    drawBoard();
+    return true;
+  }, function(err){ reachFailure(err); return false; });
+}
+
+function pushShared(entry){
+  if(!boardEndpoint) return;
+  askServer("", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(entry)
+  }).then(function(data){
+    shared=(data && data.scores)||shared;
+    sharedOk=true;
+    if(data && data.entry) freshAt=data.entry.at;
+    setStatus("Sent to "+endpointLabel()+".", "ok");
+    drawBoard();
+  }, reachFailure);
+}
+
+function connectBoard(raw, quiet){
+  boardEndpoint=normalizeEndpoint(raw);
+  try{ localStorage.setItem(URL_KEY, boardEndpoint); }catch(e){}
+  if(!boardEndpoint){
+    sharedOk=false; shared=[];
+    setStatus(quiet ? "" : "Scores stay in this browser.", "");
+    drawBoard();
+    return Promise.resolve(false);
+  }
+  setStatus("Connecting to "+endpointLabel()+"…", "");
+  return pullShared();
+}
+
+function drawBoard(){
+  ui.board.innerHTML="";
+  var rows = sharedOk ? shared : board;
+  ui.boardWhere.textContent = sharedOk ? "Everyone on this board" : "Best runs, this browser";
+  if(!rows.length){
+    var p=document.createElement("li");
+    p.className="board-empty";
+    p.textContent = S.on
+      ? "Sing a track through to the end and your score lands here."
+      : "Turn on “Score me” in the transport, sing a track to the end, and your score lands here.";
+    ui.board.appendChild(p);
+    return;
+  }
+  rows.slice(0,10).forEach(function(e,i){
+    var li=document.createElement("li");
+    if((e.id && e.id===freshId) || (freshAt && e.at===freshAt)) li.className="fresh";
+
+    var pos=document.createElement("span");
+    pos.className="bd-pos"; pos.textContent=(i+1)+".";
+
+    var sc=document.createElement("span");
+    sc.className="bd-score"; sc.textContent=e.score;
+
+    var main=document.createElement("span"); main.className="bd-main";
+    var t=document.createElement("span");
+    t.className="bd-title"; t.textContent=e.title;
+    var sub=document.createElement("span"); sub.className="bd-sub";
+    var bits=[e.name||"You", e.rank];
+    if(e.duet) bits.push("duet, part "+String(e.part||"a").toUpperCase());
+    if(e.tempo && e.tempo!==100) bits.push(e.tempo+"% tempo");
+    sub.textContent=bits.join(" · ");
+    main.appendChild(t); main.appendChild(sub);
+
+    var when=document.createElement("span");
+    when.className="bd-when"; when.textContent=whenLabel(e.at);
+
+    li.appendChild(pos); li.appendChild(sc); li.appendChild(main); li.appendChild(when);
+    ui.board.appendChild(li);
+  });
+  if(!boardWorks && !sharedOk){
+    var w=document.createElement("li");
+    w.className="board-empty";
+    w.textContent="This browser is blocking storage, so these last until you reload.";
+    ui.board.appendChild(w);
+  }
+}
+
+function recordRun(sc, rankName){
+  var prev=bestFor(P.song.code);
+  var entry={
+    id:String(Date.now())+"-"+board.length,
+    code:P.song.code, title:P.song.title, name:singerName(),
+    score:sc, rank:rankName, at:new Date().toISOString(),
+    notes:S.notes, hit:S.notesHit,
+    duet:!!(P.prep&&P.prep.duet), part:scoredPart(),
+    tempo:Math.round(P.tempo*100)
+  };
+  board.push(entry);
+  board.sort(function(a,b){ return b.score-a.score; });
+  board=board.slice(0,50);
+  freshId=entry.id;
+  writeBoard();
+  drawBoard();
+  drawBook();
+  pushShared(entry);
+  return {isBest:(prev===null || sc>prev), prev:prev, first:prev===null};
+}
+
+function rank(score){
+  if(score>=95) return "Perfect pitch";
+  if(score>=87) return "Showstopper";
+  if(score>=76) return "Crowd pleaser";
+  if(score>=62) return "Solid set";
+  if(score>=45) return "Warming up";
+  return "Keep practising";
+}
+
+function listen(beat, counting){
+  if(!S.on || !S.analyser) return;
+  S.analyser.getFloatTimeDomainData(S.buf);
+  var got=detectPitch(S.buf, ctx.sampleRate);
+  var part=scoredPart();
+  var ti=targetIndexAt(beat, part);
+  var target = ti<0 ? -1 : P.prep.notes[part][ti].midi+P.transpose;
+  S.target=target;
+  S.live = got.hz>0 ? hzToMidi(got.hz) : -1;
+
+  if(!P.playing || counting || target<0){
+    if(S.runFrom>=0){ S.bestRun=Math.max(S.bestRun, beat-S.runFrom); S.runFrom=-1; }
+    return;
+  }
+
+  /* a new note to aim at */
+  if(ti!==S.lastTarget){
+    S.lastTarget=ti; S.notes++; S.noteScored=false;
+  }
+
+  S.chances++;
+  var hit=false;
+  if(S.live>0){
+    var off=Math.abs(centsOff(S.live, target));
+    /* full marks within a quarter-tone, tailing to nothing at two semitones */
+    S.credit += off<=0.5 ? 1 : (off>=2 ? 0 : 1-(off-0.5)/1.5);
+    hit = off<=0.9;
+  }
+  if(hit){
+    if(S.runFrom<0) S.runFrom=beat;
+    if(!S.noteScored){ S.noteScored=true; S.notesHit++; }
+  } else if(S.runFrom>=0){
+    S.bestRun=Math.max(S.bestRun, beat-S.runFrom); S.runFrom=-1;
+  }
+
+  S.history.push({beat:beat, midi:S.live, target:target, hit:hit});
+  if(S.history.length>900) S.history.shift();
+}
+
+function liveScore(){
+  return S.chances ? Math.round(100*S.credit/S.chances) : 0;
+}
+
+function finishScore(){
+  if(!S.on || S.chances<8) return;
+  if(S.runFrom>=0){ S.bestRun=Math.max(S.bestRun, P.prep.total-S.runFrom); S.runFrom=-1; }
+  var sc=liveScore(), secs=S.bestRun*secPerBeat();
+  S.done={score:sc, rank:rank(sc), run:secs, notes:S.notes, hit:S.notesHit};
+  ui.resultScore.textContent=sc;
+
+  var how=recordRun(sc, S.done.rank);
+  ui.resultRank.textContent=S.done.rank;
+  ui.resultFlag.hidden = !how.isBest;
+  ui.resultFlag.textContent = how.first ? "first run" : "new best";
+
+  var detail = S.notesHit+" of "+S.notes+" notes landed · longest run in tune "+secs.toFixed(1)+"s";
+  if(how.isBest && !how.first) detail += " · beat "+how.prev;
+  ui.resultDetail.textContent=detail;
+  ui.result.hidden=false;
+}
+
+/* ---------- the pitch ribbon ---------- */
+function drawRibbon(beat){
+  var cv=ui.ribbon, g=cv.getContext("2d");
+  var W=cv.clientWidth, H=cv.clientHeight, dpr=Math.min(2, window.devicePixelRatio||1);
+  if(cv.width!==Math.round(W*dpr) || cv.height!==Math.round(H*dpr)){
+    cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+  }
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,W,H);
+  if(!P.prep) return;
+
+  var BACK=6, AHEAD=2, span=BACK+AHEAD;            /* beats of context */
+  var x0=beat-BACK;
+  function bx(b){ return (b-x0)/span*W; }
+
+  var part=scoredPart();
+  var list=P.prep.notes[part]||[];
+
+  /* centre the view on whatever is being sung right now */
+  var centre = S.target>0 ? S.target : 66;
+  var RANGE=9;                                      /* semitones shown either side */
+  function py(m){
+    var d=centsOff(m, centre);
+    return H/2 - (d/RANGE)*(H/2-8);
+  }
+
+  /* the line you are aiming at */
+  for(var i=0;i<list.length;i++){
+    var nt=list[i];
+    if(nt.end<x0 || nt.t>beat+AHEAD) continue;
+    var a=bx(Math.max(nt.t,x0)), b2=bx(Math.min(nt.end, beat+AHEAD));
+    var y=py(nt.midi+P.transpose);
+    g.fillStyle = part==="b" ? "rgba(53,214,192,.30)" : "rgba(255,120,120,.28)";
+    g.beginPath();
+    if(g.roundRect) g.roundRect(a, y-4, Math.max(2,b2-a), 8, 4);
+    else g.rect(a, y-4, Math.max(2,b2-a), 8);
+    g.fill();
+  }
+
+  /* the playhead */
+  g.strokeStyle="rgba(255,255,255,.16)"; g.lineWidth=1;
+  g.beginPath(); g.moveTo(bx(beat),0); g.lineTo(bx(beat),H); g.stroke();
+
+  /* what you actually sang */
+  for(i=0;i<S.history.length;i++){
+    var h=S.history[i];
+    if(h.beat<x0 || h.midi<0) continue;
+    g.fillStyle = h.hit ? "#7CE7A8" : "#FFB347";
+    g.fillRect(bx(h.beat)-1.5, py(h.midi)-1.5, 3, 3);
+  }
+}
+
+var NOTE_NAMES=["C","C♯","D","E♭","E","F","F♯","G","A♭","A","B♭","B"];
+function noteName(midi){
+  var r=Math.round(midi);
+  return NOTE_NAMES[((r%12)+12)%12] + (Math.floor(r/12)-1);
+}
+
+/* read-only hook for the browser test harness; the page never reads it back */
+window.__karaokeProbe=function(){
+  return {live:S.live, target:S.target, credit:S.credit, chances:S.chances,
+          score:liveScore(), on:S.on, part:scoredPart()};
+};
+function transposeName(name){
+  if(!CHORD_TABLE[name]) return name;
+  var root=CHORD_TABLE[name][0], suffix=name.replace(/^[A-G][b#]?/,"");
+  var pc=((root+P.transpose)%12+12)%12;
+  return NOTE_NAMES[pc]+suffix;
+}
+
+/* ============================================================
+   6. LOAD A SONG
+   ============================================================ */
+function load(song, autoplay){
+  var wasPlaying=P.playing;
+  clearInterval(P.timer); P.timer=null; P.playing=false; killActive();
+  P.song=song; P.prep=prepare(song, P.duet); P.anchorBeat=0;
+  setLaneEntries();
+  if(S.on) resetScore();
+
+  ui.npCode.textContent=song.code;
+  ui.npTitle.textContent=song.title;
+  ui.npCredit.textContent=song.credit;
+  ui.mKey.textContent="KEY "+song.keyName;
+  ui.mBpm.textContent=Math.round(song.bpm*P.tempo)+" BPM";
+  ui.btnPlay.textContent="Play";
+  setState("READY");
+  ui.cue.textContent="Press play — the guide melody sings the first pass with you";
+
+  Array.prototype.forEach.call(document.querySelectorAll(".track"),function(el){
+    el.setAttribute("aria-current", el.dataset.code===song.code ? "true":"false");
+  });
+  if(autoplay||wasPlaying) play();
+}
+
+/* ============================================================
+   7. SONGBOOK — the printed tracks, plus whatever you have added
+   ============================================================ */
+var STORE_KEY="karaoke-box/songbook/v1";
+var mine=[];            /* [{code, title, lyrics, vibe}] */
+var storageWorks=true;
+
+function readStore(){
+  try{
+    var raw=localStorage.getItem(STORE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ storageWorks=false; return []; }
+}
+function writeStore(){
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(mine)); return true; }
+  catch(e){ storageWorks=false; return false; }
+}
+
+/* A saved entry stores the words, not the notes — composeSong is deterministic,
+   so rebuilding from the text gives back the identical tune every time. */
+function hydrate(entry){
+  if(!entry || !entry.lyrics || !VIBES[entry.vibe]) return null;
+  var s=composeSong(entry.lyrics, entry.vibe);
+  if(!s) return null;
+  s.code=entry.code;
+  s.title=entry.title||s.title;
+  s.credit=VIBES[entry.vibe].credit;
+  s.saved=true;
+  return s;
+}
+function library(){
+  return SONGS.concat(mine.map(hydrate).filter(Boolean));
+}
+function nextCode(){
+  var n=SONGS.length;
+  mine.forEach(function(e){ n=Math.max(n, parseInt(e.code,10)); });
+  return String(n+1).padStart(3,"0");
+}
+
+function row(s, entry){
+  var li=document.createElement("li");
+  var b=document.createElement("button");
+  b.className="track"; b.type="button"; b.dataset.code=s.code;
+  b.setAttribute("aria-current","false");
+
+  var beats=0; s.lines.forEach(function(L){ L.n.forEach(function(n){ beats+=n[1]; }); });
+  var secs=Math.round(beats*60/s.bpm);
+
+  /* built with nodes rather than innerHTML — a title you typed is never markup */
+  var code=document.createElement("span");
+  code.className="tk-code"; code.textContent=s.code;
+
+  var main=document.createElement("span"); main.className="tk-main";
+  var title=document.createElement("span");
+  title.className="tk-title"; title.textContent=s.title;
+  var credit=document.createElement("span");
+  credit.className="tk-credit"; credit.textContent=s.credit;
+  main.appendChild(title); main.appendChild(credit);
+
+  var meta=document.createElement("span"); meta.className="tk-meta";
+  var lvl=document.createElement("b"); lvl.textContent=s.level;
+  meta.appendChild(lvl);
+  meta.appendChild(document.createTextNode(
+    Math.floor(secs/60)+":"+String(secs%60).padStart(2,"0")+" · "+s.bpm));
+  var pb=bestFor(s.code);
+  if(pb!==null){
+    var best=document.createElement("span");
+    best.className="tk-best"; best.textContent="best "+pb;
+    meta.appendChild(best);
+  }
+
+  b.appendChild(code); b.appendChild(main); b.appendChild(meta);
+  b.addEventListener("click", function(){ load(s, true); });
+  li.appendChild(b);
+
+  if(entry){
+    li.className="mine";
+    var drop=document.createElement("button");
+    drop.className="tk-drop"; drop.type="button"; drop.textContent="×";
+    drop.title="Remove "+s.title+" from the songbook";
+    drop.setAttribute("aria-label","Remove "+s.title+" from the songbook");
+    drop.addEventListener("click", function(){
+      mine=mine.filter(function(e){ return e.code!==entry.code; });
+      writeStore(); drawBook();
+      ui.said.textContent="Removed “"+s.title+"”.";
+    });
+    li.appendChild(drop);
+  }
+  return li;
+}
+
+function drawBook(){
+  ui.book.innerHTML="";
+  SONGS.forEach(function(s){ ui.book.appendChild(row(s, null)); });
+
+  if(mine.length){
+    var head=document.createElement("li");
+    head.className="book-divider"; head.textContent="Yours";
+    ui.book.appendChild(head);
+    mine.forEach(function(entry){
+      var s=hydrate(entry);
+      if(s) ui.book.appendChild(row(s, entry));
+    });
+    if(!storageWorks){
+      var warn=document.createElement("li");
+      warn.className="book-empty";
+      warn.textContent="This browser is blocking storage, so these last until you reload. The share link still carries a song anywhere.";
+      ui.book.appendChild(warn);
+    }
+  }
+  /* keep the highlight on whatever is loaded */
+  if(P.song){
+    Array.prototype.forEach.call(document.querySelectorAll(".track"),function(el){
+      el.setAttribute("aria-current", el.dataset.code===P.song.code ? "true":"false");
+    });
+  }
+
+  var total=SONGS.length+mine.length;
+  var WORDS=["no","one","two","three","four","five","six","seven","eight","nine","ten"];
+  ui.trackCount.textContent =
+    "Room 07 · "+(WORDS[total]||total)+" track"+(total===1?"":"s")+" loaded";
+}
+
+/* ============================================================
+   8. YOUR OWN WORDS  ->  a song
+   Deterministic: the same text always yields the same tune.
+   ============================================================ */
+function hashStr(s){
+  var h=2166136261;
+  for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); }
+  return h>>>0;
+}
+function rng(seed){
+  return function(){
+    seed|=0; seed=seed+0x6D2B79F5|0;
+    var t=Math.imul(seed^seed>>>15,1|seed);
+    t=t+Math.imul(t^t>>>7,61|t)^t;
+    return ((t^t>>>14)>>>0)/4294967296;
+  };
+}
+
+var VOWELS="aeiouy";
+/* Consonant clusters that can legally start an English syllable. Used to decide
+   where a cluster breaks: "tr" can begin one, so ex-tra; "kt" cannot, so back-test. */
+var ONSETS={bl:1,br:1,ch:1,cl:1,cr:1,dr:1,dw:1,fl:1,fr:1,gl:1,gn:1,gr:1,kn:1,ph:1,pl:1,pr:1,
+  qu:1,sc:1,sh:1,sk:1,sl:1,sm:1,sn:1,sp:1,st:1,sw:1,th:1,tr:1,tw:1,wh:1,wr:1,
+  sch:1,scr:1,shr:1,spl:1,spr:1,squ:1,str:1,thr:1};
+function syllabify(token){
+  var m=token.match(/^([^\w'’]*)([\w'’‐-]*?)([^\w'’]*)$/);
+  var pre=m?m[1]:"", core=m?m[2]:token, post=m?m[3]:"";
+  if(!core) return [token];
+
+  /* the writer's own hyphens always win */
+  if(/[-‐]/.test(core)){
+    var parts=core.split(/[-‐]/).filter(Boolean);
+    return parts.map(function(p,i){
+      return (i===0?pre:"")+p+(i<parts.length-1 ? "-" : post);
+    });
+  }
+
+  var w=core.toLowerCase(), letters=w.replace(/['’]/g,"");
+  var groups=[], i=0;
+  while(i<letters.length){
+    if(VOWELS.indexOf(letters[i])>=0){
+      var st=i; while(i<letters.length && VOWELS.indexOf(letters[i])>=0) i++;
+      groups.push([st,i]);
+    } else i++;
+  }
+  /* silent final e */
+  if(groups.length>1){
+    var last=groups[groups.length-1];
+    if(last[1]===letters.length && last[1]-last[0]===1 && letters[last[0]]==="e") groups.pop();
+  }
+
+  var cuts=[];
+  /* consonant + "le" is its own syllable: lit-tle, ta-ble, peo-ple */
+  if(letters.length>3 && /[bcdfgkpstvz]le$/.test(letters)) cuts.push(letters.length-3);
+
+  for(var g=0;g<groups.length-1;g++){
+    var endV=groups[g][1], startV=groups[g+1][0], cons=startV-endV, cut;
+    if(cons>=2){
+      /* hand the next syllable the longest legal onset the cluster ends with —
+         all of it when that is legal (mi-cro), otherwise what is (ex-tra, back-test) */
+      var cluster=letters.slice(endV,startV), k=1;
+      for(var kk=Math.min(3,cons); kk>=2; kk--){
+        if(ONSETS[cluster.slice(cons-kk)]){ k=kk; break; }
+      }
+      cut=startV-k;
+    } else {
+      cut = cons===1 ? endV : startV;   /* one consonant goes forward: a-bove */
+    }
+    if(cut>0 && cut<letters.length && cuts.indexOf(cut)<0) cuts.push(cut);
+  }
+  cuts.sort(function(a,b){ return a-b; });
+  if(!cuts.length) return [pre+core+post];
+  /* map cuts back onto the original spelling (apostrophes were stripped) */
+  var map=[], n=0;
+  for(var c=0;c<core.length;c++){ if(!/['’]/.test(core[c])) { map[n]=c; n++; } }
+  var out=[], prev=0;
+  cuts.forEach(function(cu){
+    var at=map[cu]!==undefined?map[cu]:cu;
+    if(at>prev){ out.push(core.slice(prev,at)); prev=at; }
+  });
+  out.push(core.slice(prev));
+  out=out.filter(function(s){ return s.length; });
+  if(out.length<2) return [pre+core+post];
+  return out.map(function(p,i){
+    return (i===0?pre:"")+p+(i<out.length-1 ? "-" : post);
+  });
+}
+
+var VIBES = {
+  anthem:{ bpm:108, bpb:4, scale:[0,2,4,5,7,9,11], root:60, prog:["C","G","Am","F"], keyName:"C", level:"Anthem", credit:"Your words · major, four to the bar" },
+  ballad:{ bpm:80,  bpb:3, scale:[0,2,3,5,7,8,10], root:69, prog:["Am","F","C","G"], keyName:"Am", level:"Ballad", credit:"Your words · a minor waltz" },
+  blues:{  bpm:92,  bpb:4, scale:[0,3,5,6,7,10],   root:60, prog:["C7","C7","F7","C7","F7","F7","C7","C7","G7","F7","C7","G7"], keyName:"C7", level:"Blues", shuffle:true, credit:"Your words · twelve bars in C" },
+  chant:{  bpm:100, bpb:4, scale:[0,2,4,7,9],      root:60, prog:["C","C","F","C"], keyName:"C", level:"Chant", credit:"Your words · pentatonic, drone underneath" }
+};
+
+function pitchAt(V, deg){
+  var n=V.scale.length;
+  var oct=Math.floor(deg/n), step=((deg%n)+n)%n;
+  return V.root + V.scale[step] + 12*oct;
+}
+
+function composeSong(text, vibeName){
+  var V=VIBES[vibeName], rand=rng(hashStr(text+"|"+vibeName));
+  var rawLines = text.split(/\r?\n/).map(function(s){return s.trim();}).filter(Boolean);
+  if(!rawLines.length) return null;
+
+  var lines=[], chords=[], deg=2, totalBeats=0;
+
+  rawLines.forEach(function(raw, li){
+    var syls=[];
+    raw.split(/\s+/).forEach(function(word){
+      syllabify(word).forEach(function(s){ syls.push(s); });
+    });
+    if(!syls.length) return;
+
+    var base = syls.length > 11 ? 0.5 : 1;
+    var notes=[], used=0, isLast = li===rawLines.length-1;
+
+    syls.forEach(function(s, i){
+      var lastSyl = i===syls.length-1;
+      /* melodic walk: mostly steps, an occasional leap, pulled back from the edges */
+      var r=rand(), move;
+      if(r<0.42) move = rand()<0.5 ? 1 : -1;
+      else if(r<0.68) move = 0;
+      else if(r<0.88) move = rand()<0.5 ? 2 : -2;
+      else move = rand()<0.5 ? 3 : -3;
+      deg += move;
+      if(deg>7) deg-=3; if(deg<-2) deg+=3;
+      if(lastSyl) deg = isLast ? 0 : (li%2 ? 4 : 2);   /* cadence */
+      /* a syllable ending in a hyphen runs straight into the next one — no space */
+      notes.push([pitchAt(V,deg), base, /[-‐]$/.test(s) ? s : s+" "]);
+      used += base;
+    });
+
+    /* round the line out to whole bars, holding the final syllable */
+    var bars=Math.max(1, Math.ceil(used/V.bpb));
+    var target=bars*V.bpb, pad=target-used;
+    if(pad<=0){ target=(bars+1)*V.bpb; pad=target-used; }
+    notes[notes.length-1][1]+=pad;
+
+    lines.push({n:notes});
+    totalBeats+=target;
+  });
+
+  var beatsDone=0, pi=0;
+  while(beatsDone<totalBeats){
+    chords.push([V.prog[pi%V.prog.length], V.bpb]);
+    beatsDone+=V.bpb; pi++;
+  }
+
+  var title = rawLines[0].replace(/[.,;:!?]+$/,"");
+  if(title.length>42) title=title.slice(0,40).trim()+"…";
+
+  return {
+    code:"###", title:title||"Untitled", credit:V.credit,
+    keyName:V.keyName, bpm:V.bpm, beatsPerBar:V.bpb, shuffle:!!V.shuffle,
+    level:V.level, lines:lines, chords:chords, custom:true, sourceText:text, vibe:vibeName
+  };
+}
+
+/* ============================================================
+   9. WIRING
+   ============================================================ */
+function currentVibe(){
+  var r=document.querySelector('input[name="vibe"]:checked');
+  return r?r.value:"anthem";
+}
+
+ui.btnPlay.addEventListener("click", function(){ P.playing ? pause() : play(); });
+ui.btnRestart.addEventListener("click", function(){ restart(false); });
+ui.optLoop.addEventListener("change", function(){ P.loop=this.checked; });
+ui.optDrums.addEventListener("change", function(){ P.drums=this.checked; });
+
+ui.optDuet.addEventListener("change", function(){
+  P.duet=this.checked;
+  if(!P.song) return;
+  /* the arrangement changes underneath, so rebuild and pick the song back up
+     where it was — a round runs longer, so the position may need clamping */
+  var at=Math.max(0, nowBeat()), was=P.playing;
+  clearInterval(P.timer); P.timer=null; P.playing=false; killActive();
+  P.prep=prepare(P.song, P.duet);
+  setLaneEntries();
+  P.anchorBeat=Math.min(at, P.prep.total);
+  if(was){ P.skipCount=true; play(); } else { ui.btnPlay.textContent="Play"; }
+  ui.said.textContent = P.duet
+    ? (P.prep.round ? "Duet: a round — B comes in behind A." : "Duet: parts A and B.")
+    : "";
+});
+
+ui.singerIn.addEventListener("change", function(){
+  try{ localStorage.setItem(NAME_KEY, this.value.trim()); }catch(e){}
+});
+
+ui.btnConnect.addEventListener("click", function(){
+  connectBoard(ui.boardUrl.value, false);
+});
+ui.boardUrl.addEventListener("keydown", function(e){
+  if(e.key==="Enter") connectBoard(this.value, false);
+});
+
+ui.btnClearBoard.addEventListener("click", function(){
+  if(!board.length) return;
+  board=[]; freshId=null;
+  writeBoard(); drawBoard(); drawBook();
+  ui.said.textContent = sharedOk
+    ? "Cleared this browser's copy — the shared board is untouched."
+    : "Leaderboard cleared.";
+});
+
+ui.optScore.addEventListener("change", async function(){
+  if(this.checked){
+    this.disabled=true;
+    var ok=await micOn();
+    this.disabled=false;
+    if(!ok){ this.checked=false; return; }
+    S.on=true;
+    resetScore();
+    ui.scorebar.hidden=false;
+    ui.mScoreWrap.hidden=false;
+    ui.scoreNote.textContent="Sing — the bars are the tune, the dots are you.";
+    drawBoard();
+  } else {
+    S.on=false; micOff();
+    ui.scorebar.hidden=true;
+    ui.mScoreWrap.hidden=true;
+    ui.result.hidden=true;
+  }
+});
+
+lanes.forEach(function(L){
+  L.badge.addEventListener("click", function(){
+    L.muted=!L.muted;
+    L.badge.setAttribute("aria-pressed", L.muted?"true":"false");
+    L.badge.title = L.muted
+      ? "Part "+L.part.toUpperCase()+" is yours — click to hear the guide again"
+      : "Mute part "+L.part.toUpperCase()+" and sing it yourself";
+  });
+  L.badge.title="Mute part "+L.part.toUpperCase()+" and sing it yourself";
+});
+
+ui.kGuide.addEventListener("input", function(){
+  P.guide=this.value/100;
+  ui.vGuide.textContent=this.value+"%";
+  if(leadG) leadG.gain.setTargetAtTime(P.guide, ctx.currentTime, 0.02);
+});
+ui.kTempo.addEventListener("input", function(){
+  ui.vTempo.textContent=this.value+"%";
+  P.tempo=this.value/100;
+  if(P.song) ui.mBpm.textContent=Math.round(P.song.bpm*P.tempo)+" BPM";
+  reanchor();
+});
+ui.kKey.addEventListener("input", function(){
+  P.transpose=parseInt(this.value,10);
+  ui.vKey.textContent=(P.transpose>0?"+":P.transpose<0?"":"±")+P.transpose;
+  reanchor();
+});
+
+function composeFromForm(){
+  var text=ui.lyricsIn.value.trim();
+  if(!text){ ui.said.textContent="Type a line or two first."; ui.lyricsIn.focus(); return null; }
+  var s=composeSong(text, currentVibe());
+  if(!s){ ui.said.textContent="Nothing singable in there."; return null; }
+  var given=ui.titleIn.value.trim();
+  if(given) s.title=given;
+  return s;
+}
+
+ui.btnQueue.addEventListener("click", function(){
+  var s=composeFromForm();
+  if(!s) return;
+  var n=s.lines.length;
+  ui.said.textContent="Scored "+n+" line"+(n===1?"":"s")+".";
+  load(s, true);
+});
+
+ui.btnSave.addEventListener("click", function(){
+  var s=composeFromForm();
+  if(!s) return;
+  var entry={
+    code:nextCode(), title:s.title,
+    lyrics:ui.lyricsIn.value.trim(), vibe:currentVibe()
+  };
+  mine.push(entry);
+  s.code=entry.code; s.saved=true;
+  var stored=writeStore();
+  drawBook();
+  load(s, false);
+  ui.said.textContent = stored
+    ? "Saved as track "+entry.code+" — punch "+entry.code+" any time."
+    : "Added as track "+entry.code+", but this browser blocks storage so it will not survive a reload.";
+});
+
+ui.btnShare.addEventListener("click", function(){
+  var text=ui.lyricsIn.value.trim();
+  if(!text){ ui.said.textContent="Nothing to share yet."; return; }
+  var payload=JSON.stringify({l:text, v:currentVibe(), t:ui.titleIn.value.trim()||undefined});
+  var b64=btoa(unescape(encodeURIComponent(payload))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  var url=location.origin+location.pathname+"#s="+b64;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(
+      function(){ ui.said.textContent="Link copied — the lyrics travel with it."; },
+      function(){ location.hash="s="+b64; ui.said.textContent="Copy the address bar to share."; }
+    );
+  } else {
+    location.hash="s="+b64;
+    ui.said.textContent="Copy the address bar to share.";
+  }
+});
+
+/* the remote: type a three digit code anywhere */
+var digits="", digitTimer=null;
+function showDigits(){
+  ui.remoteDigits.textContent = digits.padEnd(3,"—").split("").join(" ");
+}
+document.addEventListener("keydown", function(e){
+  var tag=(e.target.tagName||"").toLowerCase();
+  var typing = tag==="textarea" || tag==="input";
+
+  if(e.code==="Space" && !typing && tag!=="button"){
+    e.preventDefault(); P.playing?pause():play(); return;
+  }
+  if((e.key==="r"||e.key==="R") && !typing){ restart(false); return; }
+  if(/^[0-9]$/.test(e.key) && !typing){
+    digits=(digits+e.key).slice(-3);
+    showDigits();
+    clearTimeout(digitTimer);
+    if(digits.length===3){
+      var hit=library().filter(function(s){return s.code===digits;})[0];
+      if(hit){ load(hit,true); }
+      digitTimer=setTimeout(function(){ digits=""; showDigits(); },900);
+    } else {
+      digitTimer=setTimeout(function(){ digits=""; showDigits(); },1600);
+    }
+  }
+});
+
+window.addEventListener("resize", function(){
+  lanes.forEach(function(L){ renderLaneLine(L, L.shown, true); });
+});
+
+/* boot */
+board = readBoard();
+var savedEndpoint="";
+try{ savedEndpoint=localStorage.getItem(URL_KEY)||""; }catch(e){}
+if(!savedEndpoint) savedEndpoint=metaEndpoint();
+savedEndpoint=normalizeEndpoint(savedEndpoint);
+ui.boardUrl.value=savedEndpoint;
+try{ ui.singerIn.value = localStorage.getItem(NAME_KEY) || ""; }catch(e){}
+connectBoard(savedEndpoint, true);
+mine = readStore().filter(function(e){ return e && e.lyrics && VIBES[e.vibe]; });
+drawBook();
+showDigits();
+
+var booted=null;
+if(location.hash.indexOf("#s=")===0){
+  try{
+    var raw=location.hash.slice(3).replace(/-/g,"+").replace(/_/g,"/");
+    var json=decodeURIComponent(escape(atob(raw)));
+    var data=JSON.parse(json);
+    if(data && data.l){
+      var vibe = VIBES[data.v] ? data.v : "anthem";
+      ui.lyricsIn.value=data.l;
+      if(data.t) ui.titleIn.value=data.t;
+      var vr=document.querySelector('input[name="vibe"][value="'+vibe+'"]');
+      if(vr) vr.checked=true;
+      booted=composeSong(data.l, vibe);
+      if(booted){
+        if(data.t) booted.title=data.t;
+        ui.said.textContent="Loaded from a shared link. Save it to keep it in the songbook.";
+      }
+    }
+  }catch(err){ /* a mangled link just falls through to track 001 */ }
+}
+load(booted || SONGS[0], false);
+requestAnimationFrame(frame);
+
+})();
+</script>

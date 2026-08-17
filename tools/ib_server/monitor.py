@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pwb_toolbox.performance as pwb_perf
 
-
 logs_dir = Path.home() / "pwb-fund-data" / "strategies" / "all" / "execution_logs"
 
 reports_dir = logs_dir.parent / "monitoring_reports"
