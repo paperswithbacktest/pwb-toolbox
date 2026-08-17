@@ -73,12 +73,12 @@ A full block looks like this:
 
 ## Layout
 
-- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`)
+- `pwb_toolbox/` — the shipped package (`datasets`, `backtesting`, `execution`, `performance`, `scraping`, `converting`)
 - `pwb_toolbox_legacy/` — superseded code kept for reference; not part of the public API
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
 - `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
-- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`
+- `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`
 
 ## Environment
 
@@ -118,7 +118,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (170 tests, ~20s cold / ~3s warm)
+pytest tests/ -v                  # full suite (440 tests, ~28s cold / ~9s warm)
 pytest tests/test_optimal_limit_order.py -v
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
@@ -139,6 +139,13 @@ black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 - Tests must not require network access or a live broker. `ib_insync` calls are
   exercised against a mocked `IB` client (see `tests/test_ib_connector_calibration.py`),
   and dataset tests should not depend on `PWB_API_KEY` or a Hugging Face login.
+  `pwb_toolbox.scraping` follows the same rule: HTTP is served by a fake session
+  and `PoliteSession` takes injectable `sleep`/`monotonic` so rate-limiting and
+  retry behavior can be asserted without real delays (see `tests/test_scraping.py`).
+- `pwb_toolbox.converting` emits Backtrader source, so its tests compile the
+  generated code and run it through a real `cerebro` on synthetic bars — a
+  conversion that parses but does not execute or trade is a failure, not a pass
+  (see the end-to-end section of `tests/test_converting.py`).
 - Regression tests for fixed bugs pin the previous numeric output where the old
   behavior must be preserved (see `_LEGACY_DEFAULT_QUOTE` in
   `tests/test_optimal_limit_order.py`).

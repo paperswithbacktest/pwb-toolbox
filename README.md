@@ -154,6 +154,55 @@ Two brokers are supporter today:
 For more about execution, see [docs/execution.md](/docs/execution.md).
 
 
+### Scraping strategy ideas
+
+The `pwb_toolbox.scraping` module collects published trading scripts into a
+local, deduplicated corpus. PineScript (TradingView) and thinkScript
+(thinkorswim) are recognized as separate languages and parsed separately.
+
+```python
+from pwb_toolbox.scraping import ForumSource, GitHubSource, ScriptStore
+
+store = ScriptStore("script-corpus")
+store.extend(GitHubSource().collect("owner/pinescript-collection"))
+store.extend(ForumSource(max_pages=5).collect(thread_url))
+```
+
+Four collectors are available: `GitHubSource` for licensed open-source
+repositories, `ThinkorswimSource` for `tos.mx` share links, `ForumSource` for
+studies posted in forum threads, and `TradingViewSource` for individual
+published script pages.
+
+Fetching goes through a `robots.txt`-aware, rate-limited session, and by
+default the collectors skip repositories without a permissive license, pages
+gated behind a login or paid tier, and code whose headers mark it as paid or
+non-redistributable.
+
+For more about scraping, see [docs/scraping.md](/docs/scraping.md).
+
+
+### Converting PineScript to Backtrader
+
+The `pwb_toolbox.converting` module turns a PineScript strategy into a
+Backtrader one, hoisting `ta.*` indicators into `__init__` and mapping Pine
+inputs onto tunable Backtrader params.
+
+```python
+from pwb_toolbox.converting import convert
+
+result = convert(pine_source)
+print(result.code if result.ok else result.unsupported)
+```
+
+It covers the shape most published strategies take — declaration, inputs,
+indicators, conditions, entries and exits. Anything else (`request.security`,
+`var`, arrays, loops, bracket orders) is reported in `result.unsupported`
+rather than approximated, so `result.ok` tells you whether you have a working
+port or a starting point.
+
+For more about converting, see [docs/converting.md](/docs/converting.md).
+
+
 ### Performance Analysis
 
 Any NAV series produced by `pwb_toolbox.backtesting.run_strategy` (or your own live
