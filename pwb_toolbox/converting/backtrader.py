@@ -41,6 +41,7 @@ from .nodes import (
     ExprStmt,
     If,
     Index,
+    ListLit,
     Na,
     Name,
     Num,
@@ -170,8 +171,8 @@ PRESENTATIONAL_NAMESPACES = (
 
 
 def _presentational_constant(name: str) -> bool:
-    """True for a drawing constant such as ``color.green``."""
-    return name.startswith(PRESENTATIONAL_NAMESPACES)
+    """True for a drawing constant such as ``color.green`` or ``#00c853``."""
+    return name.startswith("#") or name.startswith(PRESENTATIONAL_NAMESPACES)
 
 
 _BINARY_OPS = {
@@ -412,6 +413,9 @@ class _Generator:
                 f"({self._value_expr(node.then)} if {self._value_expr(node.cond)} "
                 f"else {self._value_expr(node.other)})"
             )
+
+        if isinstance(node, ListLit):
+            return "[" + ", ".join(self._value_expr(i) for i in node.items) + "]"
 
         if isinstance(node, Call):
             return self._value_call(node)

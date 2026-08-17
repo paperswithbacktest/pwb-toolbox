@@ -468,6 +468,69 @@ def test_convert_accepts_an_input_nested_in_an_expression():
     assert ("stop_percent", 5) in result.params
 
 
+@pytest.mark.parametrize("literal", ["#00c853", "#ff0000", "#00c85380"])
+def test_hex_colour_literals_are_presentational_not_syntax_errors(literal):
+    """`#00c853` broke the lexer outright -- the commonest cause in the corpus."""
+    source = (
+        '//@version=6\nstrategy("S")\n'
+        f"c = close > open ? {literal} : #000000\n"
+        "plot(close, color=c)\n"
+    )
+    result = convert(source)
+    assert result.ok, result.unsupported
+    assert any(literal in item for item in result.ignored)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "f(x) =>",
+        "atan2(series float y, series float x) =>",
+        "ema(series float src, simple int period=0) =>",
+    ],
+)
+def test_user_defined_functions_are_reported_not_fatal(declaration):
+    """Out of scope to translate, but refusing to parse tells the caller less."""
+    source = '//@version=6\nstrategy("S")\n' + declaration + "\n    close\ny = close\n"
+    result = convert(source)
+    assert not result.ok
+    assert any("user-defined function" in item for item in result.unsupported)
+    assert not any("could not parse" in item for item in result.unsupported)
+
+
+def test_parsing_resumes_after_a_user_defined_function():
+    program = parse(
+        '//@version=6\nstrategy("S")\nf(x) =>\n    x * 2\ny = ta.sma(close, 10)\n'
+    )
+    assert isinstance(program.body[-1], Assign)
+    assert program.body[-1].target == "y"
+
+
+def test_a_plain_call_is_not_mistaken_for_a_function_declaration():
+    result = convert('//@version=6\nstrategy("S")\nx = ta.sma(close, 10)\n')
+    assert result.ok, result.unsupported
+
+
+def test_list_literal_in_an_argument_parses():
+    """`options=[...]` is a dropdown hint; it blocked 9 of 17 corpus strategies."""
+    result = convert(
+        '//@version=6\nstrategy("S")\n'
+        'ma = input.string("EMA", "Type", options=["EMA", "SMA", "WMA"])\n'
+    )
+    assert result.ok, result.unsupported
+
+
+def test_list_literal_does_not_break_history_or_destructuring():
+    """`[` is a list only in prefix position -- indexing is postfix."""
+    assert convert(
+        '//@version=6\nstrategy("S")\nif close > close[1]\n    strategy.close()\n'
+    ).ok
+    destructured = convert(
+        '//@version=6\nstrategy("S")\n[m, s, h] = ta.macd(close, 12, 26, 9)\n'
+    )
+    assert any("tuple destructuring" in item for item in destructured.unsupported)
+
+
 def test_nested_input_without_a_title_still_becomes_a_param():
     result = convert('//@version=6\nstrategy("S")\nx = close * input.float(1.5)\n')
     assert result.ok, result.unsupported

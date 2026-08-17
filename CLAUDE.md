@@ -78,6 +78,7 @@ A full block looks like this:
 - `tests/` — pytest suite
 - `tools/ib_server/` — operational scripts for running strategies against Interactive Brokers
 - `tools/grok_export/` — exports grok.com chat history to JSON/Markdown (`python -m tools.grok_export`)
+- `tools/pine_sweep.py` — converts a corpus of real `.pine` files and ranks what blocks them
 - `docs/` — `datasets.md`, `backtesting.md`, `execution.md`, `scraping.md`, `converting.md`
 
 ## Environment
@@ -118,7 +119,7 @@ distribution. `pythonpath = ["."]` under `[tool.pytest.ini_options]` in
 ## Commands
 
 ```bash
-pytest tests/ -v                  # full suite (461 tests, ~28s cold / ~9s warm)
+pytest tests/ -v                  # full suite (471 tests, ~28s cold / ~9s warm)
 pytest tests/test_optimal_limit_order.py -v
 black pwb_toolbox/ tools/ tests/  # format; CI checks this exact scope
 black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
@@ -149,6 +150,57 @@ black --check --diff pwb_toolbox/ tools/ tests/   # what CI runs
 - Regression tests for fixed bugs pin the previous numeric output where the old
   behavior must be preserved (see `_LEGACY_DEFAULT_QUOTE` in
   `tests/test_optimal_limit_order.py`).
+
+## Verifying converter work without the user
+
+Do not use the user as a test harness. Every round trip that asks them to paste
+a command, report output, and wait costs them far more than it costs us, and
+most of what it found was reachable from here.
+
+From this container: `raw.githubusercontent.com` and plain `git clone` both
+work. `api.github.com` and `codeload.github.com` return **403** (proxy policy),
+so `GitHubSource` cannot be exercised live here — clone instead.
+
+Build a corpus and sweep it:
+
+```bash
+mkdir -p /tmp/corpus && cd /tmp/corpus
+for r in kohld/tradingview-scripts Tim1l/PineCryptoStrategies \
+         casoon/pine-scripts LouisLetcher/quant-pine mihakralj/pinescript; do
+  git clone --depth 1 -q "https://github.com/$r.git" &
+done; wait
+cd - && python -m tools.pine_sweep /tmp/corpus --strategies-only
+```
+
+`tools/pine_sweep.py` converts every `.pine` under a directory and ranks the
+failure reasons by how many scripts each costs, so the next thing to fix is a
+measurement rather than a guess. Always pass `--strategies-only` for a
+meaningful number: one indicator library (`mihakralj/pinescript`, 410 files)
+outnumbers the actual strategies in that corpus twenty to one and drags the
+headline figure somewhere useless.
+
+A non-zero crash count is a bug in the converter, not a fact about the corpus.
+`convert` is contracted never to raise.
+
+## The user's local checkout
+
+Windows, PowerShell 5.1, at `C:\Users\Gexio\OneDrive\pwb-toolbox`, Python 3.12.
+
+**`origin` is `paperswithbacktest/pwb-toolbox`, the upstream project — not their
+fork.** Their fork is `jay79-boop/pwb-toolbox`, added as the remote `jay`.
+Telling them to `git pull origin main` pulls upstream and conflicts; branches
+pushed from here arrive via `git fetch jay <branch>`.
+
+Running only `pwb_toolbox.scraping` and `pwb_toolbox.converting` needs six
+packages, not all of `requirements-dev.txt` (which drags in `transformers`,
+`datasets`, `scikit-learn`, `scipy`, `matplotlib`, `ccxt` and `ib_insync`):
+
+```
+backtrader pandas pytest requests beautifulsoup4 click
+```
+
+Verified on Python 3.12 with pandas 3.0.5 — `backtrader` 1.9.78.123 is a 2019
+release but runs clean there.
 
 ## Design tooling (UI/UX)
 
