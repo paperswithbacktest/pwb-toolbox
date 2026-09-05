@@ -179,7 +179,7 @@ if __name__ == "__main__":
     strategy = run_strategy()
 ```
 
-![](/static/images/backtest-result.png)
+![Backtest result](../static/images/backtest-result.png)
 
 ## List of strategies
 
