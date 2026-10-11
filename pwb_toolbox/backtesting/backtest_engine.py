@@ -34,6 +34,49 @@ def _apply_broker_kwargs(broker: bt.BrokerBase, kwargs: dict) -> None:
         raise ValueError(f"Unknown broker kwarg(s): {', '.join(kwargs)}")
 
 
+def _apply_per_symbol_commissions(broker, symbols, start_date, enable_impact=False) -> None:
+    """Charge each symbol its own spread, for the years actually being traded.
+
+    Two things the previous version got wrong, both in one line
+    (``np.mean(list(get_commissions(symbols).values()))``):
+
+    * **It averaged.** Every data feed is added under its own name, so
+      backtrader can price them separately -- and a basket of mega caps was
+      paying the average of a universe that included micro caps. Measured on
+      the cost dataset, the spread runs from 12 bp on high-priced names to
+      175 bp on low-priced ones, so the mean is wrong in both directions at
+      once.
+
+    * **It ignored ``start_date``.** The argument was available here and never
+      passed, so costs were always estimated from 2020 onward -- including for
+      a backtest starting in 1990, across the 2001 decimalisation that moved
+      spreads by an order of magnitude.
+
+    The source of every rate is printed, because a break-even that rests on a
+    measurement and one that rests on an estimate are not the same claim.
+    """
+    breakdown = pwb_bt.get_cost_breakdown(symbols, start_date=start_date)
+    lambdas = pwb_bt.load_lambda_params() if enable_impact else {}
+    year = int(str(start_date)[:4])
+    for symbol, cost in breakdown.items():
+        scheme = pwb_bt.SpreadImpactCommission(
+            half_spread=cost.half_spread,
+            lambda_bps=lambdas.get((symbol, cost.year or year), 0.0),
+        )
+        broker.addcommissioninfo(scheme, name=symbol)
+
+    rates = [c.half_spread for c in breakdown.values()]
+    sources: dict[str, int] = {}
+    for cost in breakdown.values():
+        sources[cost.source] = sources.get(cost.source, 0) + 1
+    detail = ", ".join(f"{n} {k}" for k, n in sorted(sources.items()))
+    print(
+        f"Commissions: {len(rates)} symbols, "
+        f"{np.median(rates) * 1e4:.1f} bp median, "
+        f"{min(rates) * 1e4:.1f}-{max(rates) * 1e4:.1f} bp range ({detail})"
+    )
+
+
 def run_strategy(
     indicator_cls,
     indicator_kwargs,
@@ -44,6 +87,7 @@ def run_strategy(
     cash,
     cerebro_kwargs=None,
     broker_kwargs=None,
+    enable_impact=False,
 ):
     """Run a tactical asset allocation strategy with Backtrader."""
     # Load the data from https://paperswithbacktest.com/datasets
@@ -78,9 +122,9 @@ def run_strategy(
     # Broker
     cerebro.broker.set_cash(cash)
     if "commission" not in broker_kwargs:
-        commission = np.mean(list(pwb_bt.get_commissions(symbols).values()))
-        print(f"Estimated commission: {commission:.6f}")
-        broker_kwargs["commission"] = commission
+        _apply_per_symbol_commissions(
+            cerebro.broker, symbols, start_date, enable_impact=enable_impact
+        )
     _apply_broker_kwargs(cerebro.broker, broker_kwargs)
     # Run the strategy
     strategy = cerebro.run()[0]
