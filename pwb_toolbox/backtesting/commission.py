@@ -54,6 +54,7 @@ from __future__ import annotations
 
 from collections import namedtuple
 import os
+import re
 
 import backtrader as bt
 import numpy as np
@@ -74,6 +75,7 @@ SOURCE_EXTRAPOLATED = "extrapolated"  # nearest vintage, more than max_gap away
 FALLBACK_HALF_SPREAD = 1e-4
 
 COST_PARAMS_REPO = "paperswithbacktest/Stocks-Yearly-TransactionCostParams"
+FUTURES_PARAMS_REPO = "paperswithbacktest/Futures-Yearly-FrontMonthCostParams"
 
 # The cost table is measured on US equity venues, so only these two may be
 # answered from it. Every other class has to fall through.
@@ -288,6 +290,7 @@ def _roll_for(symbols, start_date) -> dict:
 
 
 _UNIVERSE_CACHE: dict | None = None
+_FUTURES_CACHE: dict | None = None
 
 
 def _universe_repos() -> dict:
@@ -351,6 +354,56 @@ def equity_symbols(symbols) -> set:
     return out
 
 
+_FUTURES_ROOT_RE = re.compile(r"^([A-Z]{1,4})\d+$")
+
+
+def futures_root(symbol: str):
+    """``"CL"`` for ``"CL1"``, or None when the symbol is not a futures series.
+
+    The trailing digit is required, and that is the whole safeguard. ``ES`` is
+    the CME E-mini root *and* the ticker of a US utility; ``GC`` is gold and
+    also a listed company. Demanding ``ES1`` rather than ``ES`` is what keeps
+    this from repeating the ``BTC`` collision in the other direction -- see
+    ``equity_symbols`` for that one.
+    """
+    m = _FUTURES_ROOT_RE.match(str(symbol).upper())
+    return m.group(1) if m else None
+
+
+def _front_month_vintages() -> dict:
+    """``{root: {year: half_spread}}`` for the front-month futures table.
+
+    Keyed by contract **root**, because the per-contract table cannot answer
+    the question a backtest asks. A contract's liquidity has a lifecycle, so
+    its yearly row averages the months it was far-dated and wide with the
+    months it was the front month and tight: measured on 2020-08-05 the active
+    gold contract quotes at 0.81 bp, while the *minimum* across every ``GC``
+    contract of 2020 reads 7.92 bp and the median 39.90 bp.
+
+    An absent repository is not an error -- it degrades to the explicit floor,
+    exactly as before this table existed.
+    """
+    global _FUTURES_CACHE
+    if _FUTURES_CACHE is not None:
+        return _FUTURES_CACHE
+    try:
+        frame = _read_hub_table(FUTURES_PARAMS_REPO)
+        out: dict[str, dict[int, float]] = {}
+        for symbol, year, spread_bps in zip(
+            frame["symbol"], frame["year"], frame["spread_bps"]
+        ):
+            if not np.isfinite(spread_bps) or spread_bps <= 0:
+                continue
+            out.setdefault(str(symbol).upper(), {})[int(year)] = (
+                float(spread_bps) / 2.0 / 1e4
+            )
+        _FUTURES_CACHE = out
+    except Exception as exc:  # noqa: BLE001
+        print(f"[costs] futures cost table unavailable ({exc}); using the floor")
+        _FUTURES_CACHE = {}
+    return _FUTURES_CACHE
+
+
 def _symbol_vintages(params: dict) -> dict:
     """``{symbol: {year: half_spread}}`` -- invert the table once, not per lookup."""
     global _VINTAGE_CACHE
@@ -403,6 +456,7 @@ def get_cost_schedules(
     span = range(start_year, end_year + 1)
 
     vintages = _symbol_vintages(load_cost_params())
+    futures = _front_month_vintages()
     schedules: dict[str, dict[int, float]] = {}
     summary: dict[str, Cost] = {}
     uncovered = []
@@ -412,12 +466,20 @@ def get_cost_schedules(
         # ``measurable`` is how a crypto or forex leg is kept out of a table
         # measured on US equity venues; see ``equity_symbols``.
         if measurable is not None and symbol not in measurable:
-            offclass.append(symbol)
-            continue
-        have = vintages.get(symbol)
-        if not have:
-            uncovered.append(symbol)
-            continue
+            # Off the equity universe there is one table left to try: the
+            # front-month futures one, keyed by root. Reaching it only from
+            # here is deliberate -- a symbol already judged non-equity cannot
+            # be a stock that merely looks like a contract root.
+            root = futures_root(symbol)
+            have = futures.get(root) if root else None
+            if not have:
+                offclass.append(symbol)
+                continue
+        else:
+            have = vintages.get(symbol)
+            if not have:
+                uncovered.append(symbol)
+                continue
         years = sorted(have)
         schedule, worst_gap, at_start = {}, 0, None
         for year in span:
