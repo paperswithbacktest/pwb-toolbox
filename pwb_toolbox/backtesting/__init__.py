@@ -16,8 +16,16 @@ from .commission import (
     SOURCE_ROLL,
     SOURCE_DEFAULT,
     EQUITY_REPOS,
+    FUTURES_PARAMS_REPO,
+    futures_root,
 )
-from .backtest_engine import run_strategy, generate_sensitivity_results
+from .backtest_engine import (
+    run_strategy,
+    generate_sensitivity_results,
+    FundingAudit,
+    TARGET_GROSS,
+    MARGIN_TOLERANCE,
+)
 from .optimization_engine import optimize_strategy_ga
 from .indicators import SigmoidLongCompositeIndicator
 from .portfolio import run_portfolio, generate_reports

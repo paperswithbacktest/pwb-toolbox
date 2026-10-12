@@ -110,6 +110,162 @@ def _apply_per_symbol_commissions(
     )
 
 
+# What a fundable book is allowed to ask for. The missing 1 % is the commission:
+# a book at exactly 100 % has no cash left to pay for the trade that got it
+# there, so backtrader refuses the order and the NAV stops moving.
+TARGET_GROSS = 0.99
+
+# Fallback step, applied when scaling to TARGET_GROSS was not enough, and the
+# number of times it may be applied before the run is given up on.
+DELEVERAGE_STEP = 0.90
+DELEVERAGE_MAX_STEPS = 5
+
+# Share of orders a run may fail to fund before it counts as underfunded. An
+# isolated rejection on a gap day is noise; a systematic one freezes the NAV.
+MARGIN_TOLERANCE = 0.02
+
+
+class FundingAudit(bt.Analyzer):
+    """Record every way a run outgrew the account it was given.
+
+    Three symptoms of one cause -- the book asks for more than the account
+    holds -- and all three are cured by asking for less:
+
+    * ``margin``   -- orders backtrader refused outright, because funding them
+      would have taken cash that the position being opened had just consumed.
+      This is the one that freezes a NAV and publishes as a Sharpe of zero.
+    * ``min_cash``  -- the low-water mark of the balance where the broker funds
+      the order anyway and lets the account run a debit.
+    * ``min_value`` -- the low-water mark of the NAV itself. A geared book that
+      loses enough does not merely draw down, it goes through zero.
+    """
+
+    def start(self):
+        self.margin = 0
+        self.submitted = 0
+        self.min_cash = None
+        self.min_value = None
+
+    def notify_order(self, order):
+        if order.status == order.Submitted:
+            self.submitted += 1
+        elif order.status == order.Margin:
+            self.margin += 1
+
+    def next(self):
+        cash = self.strategy.broker.get_cash()
+        if self.min_cash is None or cash < self.min_cash:
+            self.min_cash = cash
+        value = self.strategy.broker.getvalue()
+        if self.min_value is None or value < self.min_value:
+            self.min_value = value
+
+    def get_analysis(self):
+        submitted = max(self.submitted, 1)
+        return {
+            "margin": self.margin,
+            "submitted": self.submitted,
+            "reject_rate": self.margin / submitted,
+            "min_cash": self.min_cash,
+            "min_value": self.min_value,
+        }
+
+
+def _underfunded(audit: dict, tolerance: float) -> bool:
+    """True when the run outgrew the account: refused, in debit, or wiped out.
+
+    The margin check itself stays in force -- this only decides whether the
+    same strategy is worth re-running smaller.
+    """
+    if audit["reject_rate"] > tolerance:
+        return True
+    if audit["min_cash"] is not None and audit["min_cash"] < 0:
+        return True
+    return audit["min_value"] is not None and audit["min_value"] <= 0
+
+
+def _with_exposure_cap(strategy_cls, cap: float):
+    """Subclass ``strategy_cls`` to scale, and record, every target it asks for.
+
+    Acts on the order, not on a ``leverage`` parameter, because declaring one
+    does not mean honouring it: both strategies that went flat on the margin
+    cliff declare ``leverage`` and then call ``order_target_percent`` with a
+    literal 1.0, and 1 803 of the 5 831 published strategies declare no such
+    parameter at all. Scaling the request is the only lever that always exists.
+
+    ``requested_gross`` is the high-water mark of what the strategy asked for
+    before scaling, which is what sizes the next attempt: a book asking for
+    200 % needs halving, and guessing that by steps would cost five backtests.
+    """
+
+    class _Capped(strategy_cls):
+        exposure_cap = cap
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._targets: dict = {}
+            self._scaling = False
+            self.requested_gross = 0.0
+
+        def _record(self, data, share):
+            self._targets[getattr(data, "_name", id(data))] = abs(share)
+            gross = sum(self._targets.values())
+            if gross > self.requested_gross:
+                self.requested_gross = gross
+
+        def order_target_percent(self, data=None, target=0.0, **kwargs):
+            # backtrader's own order_target_percent multiplies by the NAV and
+            # calls order_target_value, which lands back here. Without the
+            # guard the cap is applied twice -- 0.495 became 0.245 -- and the
+            # recorded gross is overwritten by the already-scaled figure.
+            if self._scaling:
+                return super().order_target_percent(
+                    data=data, target=target, **kwargs
+                )
+            self._record(data, target)
+            self._scaling = True
+            try:
+                return super().order_target_percent(
+                    data=data, target=target * cap, **kwargs
+                )
+            finally:
+                self._scaling = False
+
+        def order_target_value(self, data=None, target=0.0, **kwargs):
+            if self._scaling:
+                return super().order_target_value(
+                    data=data, target=target, **kwargs
+                )
+            value = self.broker.getvalue()
+            self._record(data, target / value if value else 0.0)
+            self._scaling = True
+            try:
+                return super().order_target_value(
+                    data=data, target=target * cap, **kwargs
+                )
+            finally:
+                self._scaling = False
+
+    _Capped.__name__ = f"{strategy_cls.__name__}Capped{round(cap * 100)}"
+    _Capped.__qualname__ = _Capped.__name__
+    return _Capped
+
+
+def _next_cap(cap: float, requested_gross: float, steps: int):
+    """The exposure to try next, or None once the attempts are spent.
+
+    The first retry is computed, not guessed: a strategy that asked for 200 %
+    gross is scaled to fit TARGET_GROSS in one go. Only if that still cannot be
+    funded does it fall back to stepping down, which is for the cases where the
+    shortfall is not gross exposure -- a short leg posting margin, say.
+    """
+    if steps == 0 and requested_gross > TARGET_GROSS:
+        return TARGET_GROSS / requested_gross
+    if steps >= DELEVERAGE_MAX_STEPS:
+        return None
+    return cap * DELEVERAGE_STEP
+
+
 def run_strategy(
     indicator_cls,
     indicator_kwargs,
@@ -121,14 +277,27 @@ def run_strategy(
     cerebro_kwargs=None,
     broker_kwargs=None,
     enable_impact=False,
+    deleverage=True,
+    margin_tolerance=MARGIN_TOLERANCE,
 ):
-    """Run a tactical asset allocation strategy with Backtrader."""
-    # Load the data from https://paperswithbacktest.com/datasets
+    """Run a tactical asset allocation strategy with Backtrader.
+
+    With ``deleverage`` on, a run that cannot fund what the strategy asks for is
+    repeated with its gross exposure stepped down the ``EXPOSURE_LADDER`` until
+    it can. The margin check stays in force: a fully invested book plus a
+    commission costs more than the account holds, so backtrader refuses every
+    rebalance and the NAV goes flat -- which then publishes as a Sharpe of zero,
+    or of NaN, rather than as the error it is.
+
+    The applied exposure is on the returned strategy as ``exposure_cap``, and
+    the funding audit as ``funding_audit``. A run that stays underfunded at the
+    bottom of the ladder is returned with both set, so the caller can refuse it
+    rather than record a number.
+    """
     cerebro_kwargs = cerebro_kwargs or {}
     broker_kwargs = broker_kwargs or {}
-    # Engine configuration
-    cerebro = bt.Cerebro(**cerebro_kwargs)
-    # Universe
+    # Load the data from https://paperswithbacktest.com/datasets -- once, and
+    # reused across attempts, because the ladder must not re-download anything.
     pivot_df = pwb_ds.get_pricing(
         symbol_list=symbols,
         fields=["open", "high", "low", "close"],
@@ -140,37 +309,89 @@ def run_strategy(
     pivot_df = pivot_df.reindex(trading_days)
     pivot_df.ffill(inplace=True)  # forward-fill holidays
     pivot_df.bfill(inplace=True)  # back-fill leading IPO gaps
-    cerebro = bt.Cerebro()
-    # Keyed by feed name, because that is what ``addcommissioninfo(name=...)``
-    # matches on, and what the scheme reads the bar date from.
-    feeds = {}
-    for symbol in pivot_df.columns.levels[0]:
-        data = bt.feeds.PandasData(dataname=pivot_df[symbol].copy())
-        cerebro.adddata(data, name=symbol)
-        feeds[symbol] = data
-    # Strategy
-    cerebro.addstrategy(
-        strategy_cls,
-        total_days=len(trading_days),
-        indicator_cls=indicator_cls,
-        indicator_kwargs=indicator_kwargs,
-        **strategy_kwargs,
-    )
-    # Broker
-    cerebro.broker.set_cash(cash)
-    if "commission" not in broker_kwargs:
-        _apply_per_symbol_commissions(
-            cerebro.broker,
-            symbols,
-            start_date,
-            enable_impact=enable_impact,
-            feeds=feeds,
-            end_date=pivot_df.index.max(),
+
+    cap, steps, strategy, as_published = 1.0, 0, None, None
+    while True:
+        # Engine configuration
+        cerebro = bt.Cerebro(**cerebro_kwargs)
+        # Keyed by feed name, because that is what ``addcommissioninfo(name=...)``
+        # matches on, and what the scheme reads the bar date from.
+        feeds = {}
+        for symbol in pivot_df.columns.levels[0]:
+            data = bt.feeds.PandasData(dataname=pivot_df[symbol].copy())
+            cerebro.adddata(data, name=symbol)
+            feeds[symbol] = data
+        # Strategy
+        cerebro.addstrategy(
+            _with_exposure_cap(strategy_cls, cap),
+            total_days=len(trading_days),
+            indicator_cls=indicator_cls,
+            indicator_kwargs=indicator_kwargs,
+            **strategy_kwargs,
         )
-    _apply_broker_kwargs(cerebro.broker, broker_kwargs)
-    # Run the strategy
-    strategy = cerebro.run()[0]
-    return strategy
+        cerebro.addanalyzer(FundingAudit, _name="funding")
+        # Broker. ``_apply_broker_kwargs`` pops what it consumes, so each
+        # attempt gets its own copy -- otherwise the second run of a
+        # de-leveraging sequence would silently lose the caller's commission
+        # and fall back to the measured per-symbol scheme.
+        run_broker_kwargs = copy.deepcopy(broker_kwargs)
+        cerebro.broker.set_cash(cash)
+        if "commission" not in run_broker_kwargs:
+            _apply_per_symbol_commissions(
+                cerebro.broker,
+                symbols,
+                start_date,
+                enable_impact=enable_impact,
+                feeds=feeds,
+                end_date=pivot_df.index.max(),
+            )
+        _apply_broker_kwargs(cerebro.broker, run_broker_kwargs)
+        # Run the strategy
+        strategy = cerebro.run()[0]
+        audit = strategy.analyzers.funding.get_analysis()
+        audit["requested_gross"] = strategy.requested_gross
+        strategy.exposure_cap = cap
+        strategy.funding_audit = audit
+        if as_published is None:
+            as_published = strategy
+
+        if not _underfunded(audit, margin_tolerance):
+            if steps:
+                print(
+                    f"Funded at {cap:.1%} of the requested exposure "
+                    f"(the book asked for {strategy.requested_gross:.0%} gross)"
+                )
+            return strategy
+        if not deleverage:
+            return strategy
+
+        nxt = _next_cap(cap, strategy.requested_gross, steps)
+        print(
+            f"Underfunded at {cap:.1%} of a {strategy.requested_gross:.0%} gross "
+            f"book: {audit['margin']}/{audit['submitted']} orders refused for "
+            f"margin"
+            + (
+                f", min cash {audit['min_cash']:,.0f}"
+                if audit["min_cash"] is not None and audit["min_cash"] < 0
+                else ""
+            )
+            + (
+                f", NAV through zero ({audit['min_value']:,.0f})"
+                if audit["min_value"] is not None and audit["min_value"] <= 0
+                else ""
+            )
+            + (
+                f" -- retrying at {nxt:.1%}"
+                if nxt
+                else " -- no exposure makes it fundable, returning it as published"
+            )
+        )
+        if nxt is None:
+            # Nothing was found that works, so the honest record is the
+            # strategy as published, not an arbitrarily shrunk version of it
+            # that is neither what was published nor fundable either.
+            return as_published
+        cap, steps = nxt, steps + 1
 
 
 def _perturb_parameter(base_kwargs: dict, param_path: tuple[str, ...], new_value):
