@@ -3,6 +3,7 @@ from .commission import (
     get_commissions,
     get_cost_breakdown,
     get_cost_schedules,
+    equity_symbols,
     cost_sources,
     roll_half_spread,
     measured_half_spread,
@@ -14,6 +15,7 @@ from .commission import (
     SOURCE_EXTRAPOLATED,
     SOURCE_ROLL,
     SOURCE_DEFAULT,
+    EQUITY_REPOS,
 )
 from .backtest_engine import run_strategy, generate_sensitivity_results
 from .optimization_engine import optimize_strategy_ga

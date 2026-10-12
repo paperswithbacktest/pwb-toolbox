@@ -66,8 +66,15 @@ def _apply_per_symbol_commissions(
     claim.
     """
     priced = list(feeds) if feeds else list(symbols)
+    # Resolved from ``symbols``, not ``priced``: the suffix that says which
+    # asset a name refers to only exists on the caller's list, and it is the
+    # only thing separating the crypto BTC from the US-listed ETF of the same
+    # ticker that sits in the cost table at 119.6 bp.
     schedules, summary = pwb_bt.get_cost_schedules(
-        priced, start_date=start_date, end_date=end_date
+        priced,
+        start_date=start_date,
+        end_date=end_date,
+        measurable=pwb_bt.equity_symbols(symbols),
     )
     lambdas = pwb_bt.load_lambda_params() if enable_impact else {}
     year = int(str(start_date)[:4])

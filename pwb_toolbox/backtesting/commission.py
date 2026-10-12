@@ -75,6 +75,24 @@ FALLBACK_HALF_SPREAD = 1e-4
 
 COST_PARAMS_REPO = "paperswithbacktest/Stocks-Yearly-TransactionCostParams"
 
+# The cost table is measured on US equity venues, so only these two may be
+# answered from it. Every other class has to fall through.
+EQUITY_REPOS = ("Stocks-Daily-Price", "ETFs-Daily-Price")
+
+# ``get_pricing``'s own suffix map, repeated rather than imported: the lookup
+# has to agree with how the prices were actually routed, and a divergence here
+# would be silent.
+_SUFFIX_REPOS = {
+    "CRP": "Cryptocurrencies-Daily-Price",
+    "STK": "Stocks-Daily-Price",
+    "CMD": "Commodities-Daily-Price",
+    "IDX": "Indices-Daily-Price",
+    "ETF": "ETFs-Daily-Price",
+    "FXR": "Forex-Daily-Price",
+    "BND": "Bonds-Daily-Price",
+    "CRYPTO": "Cryptocurrencies-Daily-Price",
+}
+
 Cost = namedtuple("Cost", "symbol half_spread source year")
 
 
@@ -269,6 +287,70 @@ def _roll_for(symbols, start_date) -> dict:
     return out
 
 
+_UNIVERSE_CACHE: dict | None = None
+
+
+def _universe_repos() -> dict:
+    """``{symbol: repo name}`` from the catalogue index, loaded once."""
+    global _UNIVERSE_CACHE
+    if _UNIVERSE_CACHE is not None:
+        return _UNIVERSE_CACHE
+    try:
+        from ..datasets import load_dataset
+
+        frame = load_dataset("Universe-Daily-Price")
+        _UNIVERSE_CACHE = {
+            str(sym): str(repo).split("/")[-1]
+            for sym, repo in zip(frame["symbol"], frame["repo_id"])
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"[costs] catalogue index unavailable ({exc}); not filtering by class")
+        _UNIVERSE_CACHE = {}
+    return _UNIVERSE_CACHE
+
+
+def equity_symbols(symbols) -> set:
+    """Base names the US equity cost table may answer for.
+
+    Why a filter is needed at all
+    -----------------------------
+    ``get_pricing`` routes ``BTC.CRP`` to the crypto repository and then hands
+    the feed back under the bare name ``BTC``. The suffix -- the only thing
+    that said which asset this is -- is gone by the time costs are priced, and
+    ``BTC`` is also a US-listed ETF that sits in the cost table at **119.6 bp**
+    of median spread. ``XRP`` is there at 269 bp, ``SOL`` at 41, ``ETH`` at 17.
+
+    Charging a crypto leg a micro-cap equity spread is not a small error: on
+    the eight crypto strategies in the validation set it moved Sharpe by up to
+    -0.433, and every one of those deltas was an artefact.
+
+    The catalogue index cannot settle it on its own -- it resolves ``BTC`` to
+    the ETF and ``ETH``, ``SOL``, ``XRP`` to stocks, which is the very
+    ambiguity at issue. So the suffix wins where the caller gave one, and the
+    index is consulted only for a bare symbol.
+    """
+    universe = _universe_repos()
+    out = set()
+    for symbol in symbols:
+        name = str(symbol)
+        if "." in name:
+            base, _, suffix = name.rpartition(".")
+            repo = _SUFFIX_REPOS.get(suffix.upper())
+            if repo is not None:
+                if repo in EQUITY_REPOS:
+                    out.add(base)
+                continue
+            name = base or name
+        repo = universe.get(name)
+        # Absent from the index means no evidence either way. Allowing it keeps
+        # an equity that the index has not caught up with on the measured path;
+        # a non-equity that is absent has no prices either, so it never becomes
+        # a feed.
+        if repo is None or repo in EQUITY_REPOS:
+            out.add(name)
+    return out
+
+
 def _symbol_vintages(params: dict) -> dict:
     """``{symbol: {year: half_spread}}`` -- invert the table once, not per lookup."""
     global _VINTAGE_CACHE
@@ -288,6 +370,7 @@ def get_cost_schedules(
     start_date="2020-01-01",
     end_date=None,
     max_gap: int = 3,
+    measurable=None,
 ) -> tuple[dict, dict]:
     """``({symbol: {year: half_spread}}, {symbol: Cost})`` over the traded span.
 
@@ -324,7 +407,13 @@ def get_cost_schedules(
     summary: dict[str, Cost] = {}
     uncovered = []
 
+    offclass = []
     for symbol in symbols:
+        # ``measurable`` is how a crypto or forex leg is kept out of a table
+        # measured on US equity venues; see ``equity_symbols``.
+        if measurable is not None and symbol not in measurable:
+            offclass.append(symbol)
+            continue
         have = vintages.get(symbol)
         if not have:
             uncovered.append(symbol)
@@ -348,6 +437,24 @@ def get_cost_schedules(
 
     if uncovered:
         summary.update(_roll_for(uncovered, start_date))
+
+    # A symbol outside the equity universe gets the floor, not Roll, and not
+    # the equity pool median either.
+    #
+    # Roll is documented in this module as unusable on daily bars, and off the
+    # equity universe it is worse than unusable. Measured on the stablecoin
+    # strategy in the validation set, Roll on near-constant prices returned
+    # **12 to 62 bp** for assets that trade inside 2 bp, and drove its Sharpe
+    # from +0.42 to -1.14. The equity pool median is no better: it is a
+    # statement about US stocks.
+    #
+    # So these are charged FALLBACK_HALF_SPREAD and labelled `default`, which
+    # is the honest reading -- there is no cost table for crypto, forex,
+    # futures or bonds yet. It is roughly right for majors and too low for an
+    # emerging-market cross or a small altcoin, which is why the count is
+    # printed rather than buried.
+    for symbol in offclass:
+        summary[symbol] = Cost(symbol, FALLBACK_HALF_SPREAD, SOURCE_DEFAULT, start_year)
 
     resolved = [c.half_spread for c in summary.values() if c.source != SOURCE_DEFAULT]
     default = float(np.median(resolved)) if resolved else FALLBACK_HALF_SPREAD
