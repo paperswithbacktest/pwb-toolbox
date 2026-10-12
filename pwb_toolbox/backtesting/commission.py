@@ -103,6 +103,37 @@ def roll_half_spread(price_changes) -> float | None:
 # Measured parameters
 # --------------------------------------------------------------------------- #
 
+def _read_hub_table(repo_id: str) -> pd.DataFrame:
+    """Read a dataset's parquet shards straight from the Hub.
+
+    Deliberately **not** via ``from datasets import load_dataset``. The papers
+    repository carries its own ``datasets.py``, which shadows the Hugging Face
+    package whenever a backtest runs from that directory -- the import then
+    fails, this module falls back to Roll for every symbol, and the only trace
+    is a printed warning. Going through ``huggingface_hub`` and pandas removes
+    the name clash, and the table is one small parquet anyway.
+    """
+    import huggingface_hub
+
+    token = os.getenv("HF_ACCESS_TOKEN")
+    files = [
+        f
+        for f in huggingface_hub.list_repo_files(repo_id, repo_type="dataset", token=token)
+        if f.startswith("data/") and f.endswith(".parquet")
+    ]
+    if not files:
+        raise FileNotFoundError(f"{repo_id} carries no parquet under data/")
+    frames = [
+        pd.read_parquet(
+            huggingface_hub.hf_hub_download(
+                repo_id, path, repo_type="dataset", token=token
+            )
+        )
+        for path in sorted(files)
+    ]
+    return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+
+
 _PARAMS_CACHE: dict | None = None
 _LAMBDA_CACHE: dict | None = None
 
@@ -117,14 +148,7 @@ def load_cost_params(repo_id: str = COST_PARAMS_REPO) -> dict:
     if _PARAMS_CACHE is not None:
         return _PARAMS_CACHE
     try:
-        from datasets import load_dataset
-
-        frame = load_dataset(
-            repo_id,
-            split="train",
-            token=os.getenv("HF_ACCESS_TOKEN"),
-            verification_mode="no_checks",
-        ).to_pandas()
+        frame = _read_hub_table(repo_id)
         frame = frame[frame["spread_bps"].notna()]
         _PARAMS_CACHE = {
             (s, int(y)): float(v)
@@ -286,14 +310,7 @@ def load_lambda_params(repo_id: str = COST_PARAMS_REPO) -> dict:
     if _LAMBDA_CACHE is not None:
         return _LAMBDA_CACHE
     try:
-        from datasets import load_dataset
-
-        frame = load_dataset(
-            repo_id,
-            split="train",
-            token=os.getenv("HF_ACCESS_TOKEN"),
-            verification_mode="no_checks",
-        ).to_pandas()
+        frame = _read_hub_table(repo_id)
         frame = frame[frame["lambda_bps"].notna()]
         _LAMBDA_CACHE = {
             (s, int(y)): float(v)
