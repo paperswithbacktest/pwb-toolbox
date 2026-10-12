@@ -68,6 +68,7 @@ _EPS = 1e-12
 SOURCE_MEASURED = "measured"      # from the per-year dataset
 SOURCE_ROLL = "roll"              # estimated from daily closes
 SOURCE_DEFAULT = "default"        # pool median, or the floor below
+SOURCE_EXTRAPOLATED = "extrapolated"  # nearest vintage, more than max_gap away
 
 # Used when nothing else answers: one basis point each way.
 FALLBACK_HALF_SPREAD = 1e-4
@@ -136,6 +137,7 @@ def _read_hub_table(repo_id: str) -> pd.DataFrame:
 
 _PARAMS_CACHE: dict | None = None
 _LAMBDA_CACHE: dict | None = None
+_VINTAGE_CACHE: dict | None = None
 
 
 def load_cost_params(repo_id: str = COST_PARAMS_REPO) -> dict:
@@ -267,6 +269,94 @@ def _roll_for(symbols, start_date) -> dict:
     return out
 
 
+def _symbol_vintages(params: dict) -> dict:
+    """``{symbol: {year: half_spread}}`` -- invert the table once, not per lookup."""
+    global _VINTAGE_CACHE
+    if _VINTAGE_CACHE is not None:
+        return _VINTAGE_CACHE
+    out: dict[str, dict[int, float]] = {}
+    for (symbol, year), spread_bps in params.items():
+        if not np.isfinite(spread_bps) or spread_bps <= 0:
+            continue
+        out.setdefault(symbol, {})[int(year)] = float(spread_bps) / 2.0 / 1e4
+    _VINTAGE_CACHE = out
+    return out
+
+
+def get_cost_schedules(
+    symbols,
+    start_date="2020-01-01",
+    end_date=None,
+    max_gap: int = 3,
+) -> tuple[dict, dict]:
+    """``({symbol: {year: half_spread}}, {symbol: Cost})`` over the traded span.
+
+    Why this exists, and why ``get_cost_breakdown`` was not enough
+    -------------------------------------------------------------
+    ``get_cost_breakdown`` resolves **one** vintage, the year of ``start_date``,
+    and the harness then charged it across the whole backtest. Measured on the
+    published corpus, that silently disabled the dataset: **5 802 of the
+    strategies start at ``1990-01-01``**, the table begins in 2003, and a
+    three-year tolerance cannot bridge thirteen years -- so every one of them
+    fell through to Roll on daily bars, the estimator this module exists to
+    replace. A 32-strategy validation run came back with *zero* measured
+    spreads for exactly this reason.
+
+    So the spread is resolved **per calendar year of the span**, and the scheme
+    looks up the year of the bar it is pricing. A year the table does not hold
+    takes the nearest vintage it does, labelled ``measured`` within ``max_gap``
+    and ``extrapolated`` beyond it.
+
+    The extrapolation is not free and the label is there to say so: spreads
+    before the 2001 decimalisation were **wider** than anything in the table,
+    so a 1990s leg priced off 2003 is charged too little. That is still the
+    better error -- Roll put VBK at 33 bp against 12.5 bp measured -- but a
+    break-even that rests on an extrapolated vintage is not a measurement.
+    """
+    start_year = int(str(start_date)[:4])
+    end_year = int(str(end_date)[:4]) if end_date is not None else start_year
+    if end_year < start_year:
+        start_year, end_year = end_year, start_year
+    span = range(start_year, end_year + 1)
+
+    vintages = _symbol_vintages(load_cost_params())
+    schedules: dict[str, dict[int, float]] = {}
+    summary: dict[str, Cost] = {}
+    uncovered = []
+
+    for symbol in symbols:
+        have = vintages.get(symbol)
+        if not have:
+            uncovered.append(symbol)
+            continue
+        years = sorted(have)
+        schedule, worst_gap, at_start = {}, 0, None
+        for year in span:
+            if year in have:
+                schedule[year] = have[year]
+                gap = 0
+            else:
+                nearest = min(years, key=lambda y: (abs(y - year), y))
+                schedule[year] = have[nearest]
+                gap = abs(nearest - year)
+            worst_gap = max(worst_gap, gap)
+            if at_start is None:
+                at_start = schedule[year]
+        schedules[symbol] = schedule
+        source = SOURCE_MEASURED if worst_gap <= max_gap else SOURCE_EXTRAPOLATED
+        summary[symbol] = Cost(symbol, at_start, source, start_year)
+
+    if uncovered:
+        summary.update(_roll_for(uncovered, start_date))
+
+    resolved = [c.half_spread for c in summary.values() if c.source != SOURCE_DEFAULT]
+    default = float(np.median(resolved)) if resolved else FALLBACK_HALF_SPREAD
+    for symbol in symbols:
+        if symbol not in summary:
+            summary[symbol] = Cost(symbol, default, SOURCE_DEFAULT, start_year)
+    return schedules, summary
+
+
 class SpreadImpactCommission(bt.CommInfoBase):
     """Half-spread always, Kyle impact only when explicitly enabled.
 
@@ -290,16 +380,47 @@ class SpreadImpactCommission(bt.CommInfoBase):
         ("half_spread", FALLBACK_HALF_SPREAD),
         ("lambda_bps", 0.0),
         ("book_avg_factor", 0.5),
+        # ``{year: (half_spread, lambda_bps)}`` plus the feed to read the bar's
+        # year from. With both set the rate follows the calendar instead of
+        # being frozen at the backtest's start -- see ``get_cost_schedules``.
+        ("schedule", None),
+        ("data", None),
         ("stocklike", True),
         ("commtype", bt.CommInfoBase.COMM_PERC),
         ("percabs", True),
     )
 
+    def __init__(self):
+        super().__init__()
+        self._stamp = None
+        self._rates = (self.p.half_spread, self.p.lambda_bps)
+
+    def _rates_now(self):
+        """The pair in force on the bar being priced, cached per bar.
+
+        ``_getcommission`` runs on every order and every margin pre-check, so
+        the date is converted once per bar rather than once per call.
+        """
+        schedule, data = self.p.schedule, self.p.data
+        if not schedule or data is None:
+            return self.p.half_spread, self.p.lambda_bps
+        try:
+            stamp = data.datetime[0]
+        except (IndexError, AttributeError):
+            return self.p.half_spread, self.p.lambda_bps
+        if stamp != self._stamp:
+            self._stamp = stamp
+            self._rates = schedule.get(
+                bt.num2date(stamp).year, (self.p.half_spread, self.p.lambda_bps)
+            )
+        return self._rates
+
     def _getcommission(self, size, price, pseudoexec):
+        half_spread, lambda_bps = self._rates_now()
         notional = abs(size) * price
-        cost = notional * self.p.half_spread
-        if self.p.lambda_bps > 0:
-            impact_bps = self.p.book_avg_factor * self.p.lambda_bps * (notional / 1e6)
+        cost = notional * half_spread
+        if lambda_bps > 0:
+            impact_bps = self.p.book_avg_factor * lambda_bps * (notional / 1e6)
             cost += notional * impact_bps / 1e4
         return cost
 
