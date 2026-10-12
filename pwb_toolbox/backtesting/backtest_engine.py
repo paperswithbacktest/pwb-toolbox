@@ -34,6 +34,82 @@ def _apply_broker_kwargs(broker: bt.BrokerBase, kwargs: dict) -> None:
         raise ValueError(f"Unknown broker kwarg(s): {', '.join(kwargs)}")
 
 
+def _apply_per_symbol_commissions(
+    broker, symbols, start_date, enable_impact=False, feeds=None, end_date=None
+) -> None:
+    """Charge each symbol its own spread, for the years actually being traded.
+
+    Three things the previous versions got wrong, each measured:
+
+    * **It averaged.** Every data feed is added under its own name, so
+      backtrader can price them separately -- and a basket of mega caps was
+      paying the average of a universe that included micro caps. Measured on
+      the cost dataset, the spread runs from 12 bp on high-priced names to
+      175 bp on low-priced ones, so the mean is wrong in both directions at
+      once. (``np.mean(list(get_commissions(symbols).values()))``.)
+
+    * **It ignored ``start_date``.** The argument was available here and never
+      passed, so costs were always estimated from 2020 onward -- including for
+      a backtest starting in 1990, across the 2001 decimalisation that moved
+      spreads by an order of magnitude.
+
+    * **Then it froze the start year.** Passing ``start_date`` fixed the
+      staleness and introduced a worse failure: **5 802 published strategies
+      start at ``1990-01-01``**, thirteen years before the table begins, so the
+      lookup missed, every symbol fell through to Roll, and the measured
+      dataset was never read at all. A 32-strategy validation came back with
+      zero measured spreads. The rate now follows the **year of the bar** --
+      ``feeds`` carries the data objects the scheme reads the date from.
+
+    The source of every rate is printed, because a break-even that rests on a
+    measurement, on an extrapolated vintage and on an estimate are not the same
+    claim.
+    """
+    priced = list(feeds) if feeds else list(symbols)
+    # Resolved from ``symbols``, not ``priced``: the suffix that says which
+    # asset a name refers to only exists on the caller's list, and it is the
+    # only thing separating the crypto BTC from the US-listed ETF of the same
+    # ticker that sits in the cost table at 119.6 bp.
+    schedules, summary = pwb_bt.get_cost_schedules(
+        priced,
+        start_date=start_date,
+        end_date=end_date,
+        measurable=pwb_bt.equity_symbols(symbols),
+    )
+    lambdas = pwb_bt.load_lambda_params() if enable_impact else {}
+    year = int(str(start_date)[:4])
+
+    for symbol, cost in summary.items():
+        schedule = schedules.get(symbol)
+        paired = (
+            {
+                y: (hs, lambdas.get((symbol, y), 0.0) if enable_impact else 0.0)
+                for y, hs in schedule.items()
+            }
+            if schedule
+            else None
+        )
+        scheme = pwb_bt.SpreadImpactCommission(
+            half_spread=cost.half_spread,
+            lambda_bps=lambdas.get((symbol, cost.year or year), 0.0),
+            schedule=paired,
+            data=(feeds or {}).get(symbol),
+        )
+        broker.addcommissioninfo(scheme, name=symbol)
+
+    rates = [c.half_spread for c in summary.values()]
+    sources: dict[str, int] = {}
+    for cost in summary.values():
+        sources[cost.source] = sources.get(cost.source, 0) + 1
+    detail = ", ".join(f"{n} {k}" for k, n in sorted(sources.items()))
+    span = f"{year}" if end_date is None else f"{year}-{str(end_date)[:4]}"
+    print(
+        f"Commissions: {len(rates)} symbols, {span}, "
+        f"{np.median(rates) * 1e4:.1f} bp median at {year}, "
+        f"{min(rates) * 1e4:.1f}-{max(rates) * 1e4:.1f} bp range ({detail})"
+    )
+
+
 def run_strategy(
     indicator_cls,
     indicator_kwargs,
@@ -44,6 +120,7 @@ def run_strategy(
     cash,
     cerebro_kwargs=None,
     broker_kwargs=None,
+    enable_impact=False,
 ):
     """Run a tactical asset allocation strategy with Backtrader."""
     # Load the data from https://paperswithbacktest.com/datasets
@@ -64,9 +141,13 @@ def run_strategy(
     pivot_df.ffill(inplace=True)  # forward-fill holidays
     pivot_df.bfill(inplace=True)  # back-fill leading IPO gaps
     cerebro = bt.Cerebro()
+    # Keyed by feed name, because that is what ``addcommissioninfo(name=...)``
+    # matches on, and what the scheme reads the bar date from.
+    feeds = {}
     for symbol in pivot_df.columns.levels[0]:
         data = bt.feeds.PandasData(dataname=pivot_df[symbol].copy())
         cerebro.adddata(data, name=symbol)
+        feeds[symbol] = data
     # Strategy
     cerebro.addstrategy(
         strategy_cls,
@@ -78,9 +159,14 @@ def run_strategy(
     # Broker
     cerebro.broker.set_cash(cash)
     if "commission" not in broker_kwargs:
-        commission = np.mean(list(pwb_bt.get_commissions(symbols).values()))
-        print(f"Estimated commission: {commission:.6f}")
-        broker_kwargs["commission"] = commission
+        _apply_per_symbol_commissions(
+            cerebro.broker,
+            symbols,
+            start_date,
+            enable_impact=enable_impact,
+            feeds=feeds,
+            end_date=pivot_df.index.max(),
+        )
     _apply_broker_kwargs(cerebro.broker, broker_kwargs)
     # Run the strategy
     strategy = cerebro.run()[0]
