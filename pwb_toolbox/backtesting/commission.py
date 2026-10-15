@@ -77,6 +77,45 @@ FALLBACK_HALF_SPREAD = 1e-4
 COST_PARAMS_REPO = "paperswithbacktest/Stocks-Yearly-TransactionCostParams"
 FUTURES_PARAMS_REPO = "paperswithbacktest/Futures-Yearly-FrontMonthCostParams"
 
+# PWB's futures tickers carry Bloomberg-style roots; the measured table is keyed
+# by the exchange's own. Same contract, different code -- and that is checked on
+# the 2022 average price, not on the codes looking alike:
+#
+#   W1   904.69 / ZW   874.91  (+3.4 %)   S1  1513.66 / ZS 1513.51  (+0.0 %)
+#   C1   683.99 / ZC   677.82  (+0.9 %)   O1   536.30 / ZO  532.30  (+0.8 %)
+#   RR1   16.71 / ZR    16.72  (-0.1 %)   LC1  142.45 / LE  144.64  (-1.5 %)
+#   LH1   97.15 / HE    98.04  (-0.9 %)   FC1  173.65 / GF  174.85  (-0.7 %)
+#   CO1   96.73 / BZ    97.37  (-0.7 %)   XB1    2.86 / RB    2.99  (-4.3 %)
+#
+# Without this, every one of those legs fell through to the off-class floor:
+# **661 of the 2 086 futures symbol uses in the strategy corpus**, charged 2 bp
+# round trip against 6.29 bp measured for wheat, 7.89 for RBOB, 35.00 for rough
+# rice and 60.61 for oats -- three to thirty times too little, and worst exactly
+# where it matters most, on the thin contracts a backtest can appear to trade
+# freely.
+#
+# Not mapped, on purpose:
+#   * the ICE softs -- SB sugar, KC coffee, CC cocoa, CT cotton, JO orange
+#     juice. The vendor's futures feed is CME-only, so they are absent from the
+#     table under any code; they keep the floor and keep the `default` label,
+#     which is the honest reading.
+#   * LB lumber. PWB's series averages 786.82 in 2022 against 682.91 for LBR,
+#     a 15.2 % gap: the contract was respecified and the two are not the same
+#     instrument. A plausible code is not a measurement.
+#   * P palladium, which PWB's commodity set does not carry at all.
+FUTURES_ROOT_ALIASES = {
+    "W": "ZW",    # Chicago wheat
+    "S": "ZS",    # soybeans
+    "C": "ZC",    # corn
+    "O": "ZO",    # oats
+    "RR": "ZR",   # rough rice
+    "LC": "LE",   # live cattle
+    "LH": "HE",   # lean hogs
+    "FC": "GF",   # feeder cattle
+    "CO": "BZ",   # Brent
+    "XB": "RB",   # RBOB gasoline
+}
+
 # The cost table is measured on US equity venues, so only these two may be
 # answered from it. Every other class has to fall through.
 EQUITY_REPOS = ("Stocks-Daily-Price", "ETFs-Daily-Price")
@@ -397,6 +436,18 @@ def _front_month_vintages() -> dict:
             out.setdefault(str(symbol).upper(), {})[int(year)] = (
                 float(spread_bps) / 2.0 / 1e4
             )
+        # An alias only ever fills a gap. If the vendor ever publishes a root
+        # under one of PWB's own codes, that entry is the authority for that
+        # code and the alias must not shadow it -- but silently declining to
+        # alias would leave that root on a spread nobody chose, so say so.
+        for pwb, vendor in FUTURES_ROOT_ALIASES.items():
+            if vendor not in out:
+                continue
+            if pwb in out:
+                print(f"[costs] the table now carries {pwb!r} itself; "
+                      f"keeping it over the alias to {vendor!r}")
+                continue
+            out[pwb] = out[vendor]
         _FUTURES_CACHE = out
     except Exception as exc:  # noqa: BLE001
         print(f"[costs] futures cost table unavailable ({exc}); using the floor")
@@ -511,10 +562,13 @@ def get_cost_schedules(
     # statement about US stocks.
     #
     # So these are charged FALLBACK_HALF_SPREAD and labelled `default`, which
-    # is the honest reading -- there is no cost table for crypto, forex,
-    # futures or bonds yet. It is roughly right for majors and too low for an
-    # emerging-market cross or a small altcoin, which is why the count is
-    # printed rather than buried.
+    # is the honest reading -- there is no cost table for crypto, forex or
+    # bonds. Futures now have one, so a contract reaches this line only when
+    # its root is absent from that table: the ICE softs, and anything whose
+    # root PWB spells differently and ``FUTURES_ROOT_ALIASES`` does not map.
+    # One basis point is roughly right for FX majors and far too low for an
+    # emerging-market cross, a small altcoin or an illiquid contract, which is
+    # why the count is printed rather than buried.
     for symbol in offclass:
         summary[symbol] = Cost(symbol, FALLBACK_HALF_SPREAD, SOURCE_DEFAULT, start_year)
 
