@@ -132,6 +132,13 @@ DAILY_PRICE_DATASETS = [
 ]
 
 
+#: The index composition as of 2026, frozen. Reached through the explicit
+#: ``"sp500-frozen"`` pseudo-symbol, and nothing else should use it: replaying
+#: today's 503 members over an earlier period is look-ahead twice over -- it
+#: holds names that had not yet been added, and it never holds the names that
+#: mattered then and have since been removed or delisted. ``"sp500"`` resolves
+#: to the point-in-time universe instead (see ``pit_universe``); this list is
+#: kept so the difference between the two can be measured rather than argued.
 SP500_SYMBOLS = [
     "MMM",
     "AOS",
@@ -639,6 +646,51 @@ SP500_SYMBOLS = [
 ]
 
 
+#: Size of the point-in-time universe ``"sp500"`` resolves to. 500 to match
+#: what the papers using ``"sp500"`` mean by "large US equities"; the published
+#: table carries ranks up to 1000, so this is the only line to change.
+SP500_PIT_TOP_N = 500
+
+
+def _resolve_universe(symbols):
+    """Expand the universe pseudo-symbols, and say whether to filter per date.
+
+    Returns ``(symbol_filter, pit_top_n, pit_added)``:
+
+    * ``pit_top_n`` is ``None`` unless ``"sp500"`` was asked for, in which case
+      the caller must also run :func:`pit_universe.apply_pit_membership` on the
+      loaded frame. The expansion here only widens the *load* to every name
+      that ever belonged; it is the per-date pass that keeps each one to its
+      own window.
+    * ``pit_added`` is the set the universe contributed. ``get_pricing`` needs
+      it because ``Universe-Daily-Price`` does not know these symbols: it
+      indexes 21 117 names while ``Stocks-Daily-Price`` carries 36 676 since
+      the delisted half was merged in. 553 of the 2 013 point-in-time names --
+      AABA, ABK, AET, AGN, ALTR, AKS, the bought-out and the bankrupt -- have no
+      row in the index, and routing by it alone would drop a quarter of the
+      universe behind a ``Warning`` nobody reads during a 4 178-backtest
+      campaign. They are US common stocks by construction, so they route
+      straight to ``Stocks-Daily-Price``.
+    """
+    out = list(symbols)
+
+    if "sp500-frozen" in out:
+        out.remove("sp500-frozen")
+        out += SP500_SYMBOLS
+
+    pit_top_n = None
+    pit_added = frozenset()
+    if "sp500" in out:
+        from .pit_universe import pit_symbols
+
+        out.remove("sp500")
+        pit_top_n = SP500_PIT_TOP_N
+        pit_added = frozenset(pit_symbols(pit_top_n))
+        out += sorted(pit_added)
+
+    return out, pit_top_n, pit_added
+
+
 def load_dataset(
     path,
     symbols=None,
@@ -654,12 +706,13 @@ def load_dataset(
     # Resolve the symbol filter up front (on a copy, so the caller's list is
     # never mutated) so it can be pushed down to the per-shard parquet reads
     # instead of concatenating every shard in memory and filtering afterwards.
+    if isinstance(symbols, str):
+        symbols = [symbols]  # 29 callers pass the bare string, so honour it
+
     symbol_filter = None
+    pit_top_n = None
     if isinstance(symbols, list):
-        symbol_filter = list(symbols)
-        if "sp500" in symbol_filter:
-            symbol_filter.remove("sp500")
-            symbol_filter += SP500_SYMBOLS
+        symbol_filter, pit_top_n, _ = _resolve_universe(symbols)
 
     if pwb_api_key and not use_hf:
         df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=symbol_filter)
@@ -685,6 +738,13 @@ def load_dataset(
             df = df[
                 df["symbols"].apply(lambda cell: _symbols_overlap(cell, symbol_set))
             ].copy()
+
+    # The load above widened to every name that ever belonged to the universe.
+    # This is the pass that keeps each one to the dates it actually belonged.
+    if pit_top_n is not None:
+        from .pit_universe import apply_pit_membership
+
+        df = apply_pit_membership(df, pit_top_n)
 
     if path in DAILY_PRICE_DATASETS:
         if adjust and "adj_close" in df.columns:
@@ -1044,9 +1104,13 @@ def get_pricing(
         fields = ["close"]
     if isinstance(symbol_list, str):
         symbol_list = [symbol_list]
-    if isinstance(symbol_list, list) and "sp500" in symbol_list:
-        symbol_list.remove("sp500")
-        symbol_list += SP500_SYMBOLS
+    pit_top_n = None
+    pit_added = frozenset()
+    if isinstance(symbol_list, list):
+        # _resolve_universe copies, where the previous code mutated the
+        # caller's list in place: a strategy that kept ``SYMS = ["sp500"]`` and
+        # called twice lost the pseudo-symbol on the second call.
+        symbol_list, pit_top_n, pit_added = _resolve_universe(symbol_list)
 
     fields = [f.lower() for f in fields]
     bad = [f for f in fields if f not in ALLOWED_FIELDS]
@@ -1087,6 +1151,12 @@ def get_pricing(
         repo_id = repo_full.split("/")[1] if isinstance(repo_full, str) else None
         if repo_id:
             grouped[repo_id].append(sym)
+        elif sym in pit_added:
+            # Universe-Daily-Price is stale with respect to the merged price
+            # dataset and misses the delisted names -- which are exactly the
+            # ones the survivorship fix exists to bring back. The universe is
+            # built from US common stocks, so route there without the index.
+            grouped["Stocks-Daily-Price"].append(sym)
         else:
             print(f"Warning: No dataset found for symbol '{sym}'")
             unmapped.append(sym)
@@ -1099,6 +1169,15 @@ def get_pricing(
             frames.append(df_part)
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    # The per-repo loads above were given concrete symbols, so load_dataset
+    # never saw the pseudo-symbol and could not filter per date. Do it here,
+    # while the frame is still long: after the pivot, membership would have to
+    # be expressed as a mask over a (date, symbol) grid.
+    if pit_top_n is not None and not df.empty:
+        from .pit_universe import apply_pit_membership
+
+        df = apply_pit_membership(df, pit_top_n)
 
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
