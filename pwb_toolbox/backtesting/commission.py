@@ -155,6 +155,36 @@ def _read_hub_table(repo_id: str) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
 
+def _why_unreachable(repo_id: str, exc: Exception) -> str:
+    """Why a Hub table could not be read, in terms the reader can act on.
+
+    A gated dataset answers 401 without a token and 403 with one that has not
+    accepted its terms, and ``huggingface_hub`` reports both as
+    ``RepositoryNotFoundError: Repository Not Found``. Printed as-is, that reads
+    as "this dataset does not exist", and the reader goes looking for a typo
+    instead of visiting the dataset page -- while every spread silently falls
+    back to Roll, the estimator this module exists to replace. The prices keep
+    loading either way, so nothing else in the run looks wrong.
+    """
+    text = str(exc)
+    gated = (type(exc).__name__ == "GatedRepoError"
+             or "401" in text or "403" in text)
+    if not gated:
+        return f"{repo_id} unreachable ({exc})"
+    # Which of the two it is comes from whether a token was sent, not from the
+    # status code: measured against the live gated repo, the refusal arrives as
+    # ``GatedRepoError`` carrying a 401 either way, so reading the code would
+    # tell a reader who has a token that they have none.
+    if os.getenv("HF_ACCESS_TOKEN"):
+        what = ("the token has not been granted access -- accept the terms at "
+                f"https://huggingface.co/datasets/{repo_id}")
+    else:
+        what = ("no token was sent -- accept the terms at "
+                f"https://huggingface.co/datasets/{repo_id} and export "
+                "HF_ACCESS_TOKEN")
+    return f"{repo_id} is gated and {what}"
+
+
 _PARAMS_CACHE: dict | None = None
 _LAMBDA_CACHE: dict | None = None
 _VINTAGE_CACHE: dict | None = None
@@ -177,7 +207,7 @@ def load_cost_params(repo_id: str = COST_PARAMS_REPO) -> dict:
             for s, y, v in zip(frame["symbol"], frame["year"], frame["spread_bps"])
         }
     except Exception as exc:  # noqa: BLE001 - absence is a degraded mode, not a crash
-        print(f"[costs] measured parameters unavailable ({exc}); falling back to Roll")
+        print(f"[costs] {_why_unreachable(repo_id, exc)}; falling back to Roll")
         _PARAMS_CACHE = {}
     return _PARAMS_CACHE
 
@@ -399,7 +429,8 @@ def _front_month_vintages() -> dict:
             )
         _FUTURES_CACHE = out
     except Exception as exc:  # noqa: BLE001
-        print(f"[costs] futures cost table unavailable ({exc}); using the floor")
+        print(f"[costs] {_why_unreachable(FUTURES_PARAMS_REPO, exc)}; "
+              f"using the floor")
         _FUTURES_CACHE = {}
     return _FUTURES_CACHE
 
