@@ -167,15 +167,22 @@ def _why_unreachable(repo_id: str, exc: Exception) -> str:
     loading either way, so nothing else in the run looks wrong.
     """
     text = str(exc)
-    code = "401" if "401" in text else "403" if "403" in text else None
-    if code is None and type(exc).__name__ != "GatedRepoError":
+    gated = (type(exc).__name__ == "GatedRepoError"
+             or "401" in text or "403" in text)
+    if not gated:
         return f"{repo_id} unreachable ({exc})"
-    what = ("no token was sent" if code == "401"
-            else "the token has not been granted access")
-    return (
-        f"{repo_id} is gated and {what}. Accept the terms at "
-        f"https://huggingface.co/datasets/{repo_id} and export HF_ACCESS_TOKEN"
-    )
+    # Which of the two it is comes from whether a token was sent, not from the
+    # status code: measured against the live gated repo, the refusal arrives as
+    # ``GatedRepoError`` carrying a 401 either way, so reading the code would
+    # tell a reader who has a token that they have none.
+    if os.getenv("HF_ACCESS_TOKEN"):
+        what = ("the token has not been granted access -- accept the terms at "
+                f"https://huggingface.co/datasets/{repo_id}")
+    else:
+        what = ("no token was sent -- accept the terms at "
+                f"https://huggingface.co/datasets/{repo_id} and export "
+                "HF_ACCESS_TOKEN")
+    return f"{repo_id} is gated and {what}"
 
 
 _PARAMS_CACHE: dict | None = None
