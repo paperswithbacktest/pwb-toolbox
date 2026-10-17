@@ -194,6 +194,55 @@ def _read_hub_table(repo_id: str) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
 
+def _read_cost_table(repo_id: str) -> pd.DataFrame:
+    """Read a cost table through the subscriber API when a key is set.
+
+    Every other dataset in this package routes on ``PWB_API_KEY``; this module
+    was the exception, and it was the exception in the one place where the
+    consequence is not a missing table but a wrong price. A subscriber who sets
+    ``PWB_API_KEY`` and no ``HF_ACCESS_TOKEN`` -- the documented way to use the
+    API -- read nothing here, fell through to Roll on daily bars and then to
+    ``FALLBACK_HALF_SPREAD``: **2 bp a round trip against the table's measured
+    median of 37.8 bp**, charged silently. The cost of a missing token should be
+    a failure to load, not a nineteen-fold discount.
+
+    Nothing was needed on the backend: ``/v1/datasets/{name}`` is a generic
+    proxy with no whitelist, so both tables were already being served -- the
+    whole gap was this function.
+
+    The Hub stays as the fallback rather than the other way round, and a failed
+    API read falls back to it rather than raising, for the same reason: the
+    alternative to a cost table is not an error the user sees, it is Roll on
+    daily bars, which this module exists to replace.
+    """
+    if not os.getenv("PWB_API_KEY"):
+        return _read_hub_table(repo_id)
+
+    name = repo_id.split("/")[-1]
+    try:
+        from ..datasets import load_dataset
+
+        frame = load_dataset(name)
+        if frame is None or frame.empty:
+            raise ValueError("the API returned an empty table")
+        return frame
+    except Exception as exc:  # noqa: BLE001 - the Hub is still worth trying
+        print(f"[costs] {name} unreachable through the API "
+              f"({_redact(exc)}); trying the Hub")
+        return _read_hub_table(repo_id)
+
+
+# ``requests`` repeats the failing URL back inside its own exception message, and
+# the API client passes the key as a query parameter, so an unredacted print puts
+# the subscriber's key into every log and notebook that captured the warning.
+_API_KEY_RE = re.compile(r"(pwb_api_key=)[^&\s]+")
+
+
+def _redact(text) -> str:
+    """The message with any ``pwb_api_key`` value replaced by stars."""
+    return _API_KEY_RE.sub(r"\1***", str(text))
+
+
 def _why_unreachable(repo_id: str, exc: Exception) -> str:
     """Why a Hub table could not be read, in terms the reader can act on.
 
@@ -205,11 +254,11 @@ def _why_unreachable(repo_id: str, exc: Exception) -> str:
     back to Roll, the estimator this module exists to replace. The prices keep
     loading either way, so nothing else in the run looks wrong.
     """
-    text = str(exc)
+    text = _redact(exc)
     gated = (type(exc).__name__ == "GatedRepoError"
              or "401" in text or "403" in text)
     if not gated:
-        return f"{repo_id} unreachable ({exc})"
+        return f"{repo_id} unreachable ({text})"
     # Which of the two it is comes from whether a token was sent, not from the
     # status code: measured against the live gated repo, the refusal arrives as
     # ``GatedRepoError`` carrying a 401 either way, so reading the code would
@@ -217,6 +266,13 @@ def _why_unreachable(repo_id: str, exc: Exception) -> str:
     if os.getenv("HF_ACCESS_TOKEN"):
         what = ("the token has not been granted access -- accept the terms at "
                 f"https://huggingface.co/datasets/{repo_id}")
+    elif os.getenv("PWB_API_KEY"):
+        # The Hub is the second attempt in this case, so saying only "export a
+        # token" would send a subscriber to fix the wrong credential.
+        what = ("no token was sent, and the API refused the key that was -- "
+                "check PWB_API_KEY, or accept the terms at "
+                f"https://huggingface.co/datasets/{repo_id} and export "
+                "HF_ACCESS_TOKEN")
     else:
         what = ("no token was sent -- accept the terms at "
                 f"https://huggingface.co/datasets/{repo_id} and export "
@@ -239,7 +295,7 @@ def load_cost_params(repo_id: str = COST_PARAMS_REPO) -> dict:
     if _PARAMS_CACHE is not None:
         return _PARAMS_CACHE
     try:
-        frame = _read_hub_table(repo_id)
+        frame = _read_cost_table(repo_id)
         frame = frame[frame["spread_bps"].notna()]
         _PARAMS_CACHE = {
             (s, int(y)): float(v)
@@ -456,7 +512,7 @@ def _front_month_vintages() -> dict:
     if _FUTURES_CACHE is not None:
         return _FUTURES_CACHE
     try:
-        frame = _read_hub_table(FUTURES_PARAMS_REPO)
+        frame = _read_cost_table(FUTURES_PARAMS_REPO)
         out: dict[str, dict[int, float]] = {}
         for symbol, year, spread_bps in zip(
             frame["symbol"], frame["year"], frame["spread_bps"]
@@ -685,7 +741,7 @@ def load_lambda_params(repo_id: str = COST_PARAMS_REPO) -> dict:
     if _LAMBDA_CACHE is not None:
         return _LAMBDA_CACHE
     try:
-        frame = _read_hub_table(repo_id)
+        frame = _read_cost_table(repo_id)
         frame = frame[frame["lambda_bps"].notna()]
         _LAMBDA_CACHE = {
             (s, int(y)): float(v)
