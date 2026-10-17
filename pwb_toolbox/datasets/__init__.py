@@ -657,21 +657,29 @@ SP500_PIT_TOP_N = 500
 #: liquid mid-cap market rather than its top -- industry reversals, the
 #: small-stock premium, anything that sorts on characteristics within a wide
 #: panel. Both are enforced per date by :func:`pit_universe.apply_pit_membership`.
+#:
+#: Each value is ``(top_n, min_months)``: the rank the universe cuts at, and
+#: the point-in-time tenure a name needs before it counts (see
+#: :func:`pit_universe.load_pit_universe`). ``"liquid1000"`` carries a
+#: twelve-month floor because the strategies written for a wide cross-section
+#: cannot afford a feed per brief visitor: 3,954 names ever in the top 1000
+#: against 2,674 with a year of tenure, and the backtest time follows the
+#: feed count.
 PIT_UNIVERSES = {
-    "sp500": SP500_PIT_TOP_N,
-    "liquid1000": 1000,
+    "sp500": (SP500_PIT_TOP_N, 0),
+    "liquid1000": (1000, 12),
 }
 
 
 def _resolve_universe(symbols):
     """Expand the universe pseudo-symbols, and say whether to filter per date.
 
-    Returns ``(symbol_filter, pit_top_n, pit_added)``:
+    Returns ``(symbol_filter, pit_spec, pit_added)``:
 
-    * ``pit_top_n`` is ``None`` unless a point-in-time universe was asked for
+    * ``pit_spec`` is ``None`` unless a point-in-time universe was asked for
       (``"sp500"`` or ``"liquid1000"``, see :data:`PIT_UNIVERSES`), in which
-      case the caller must also run :func:`pit_universe.apply_pit_membership`
-      on the loaded frame. Asking for both in one call is refused: they would
+      case it is the ``(top_n, min_months)`` pair and the caller must also run
+      :func:`pit_universe.apply_pit_membership` with it on the loaded frame. Asking for both in one call is refused: they would
       need two different per-date cuts on the same frame. The expansion here only widens the *load* to every name
       that ever belonged; it is the per-date pass that keeps each one to its
       own window.
@@ -705,7 +713,7 @@ def _resolve_universe(symbols):
         name = asked[0]
         out.remove(name)
         pit_top_n = PIT_UNIVERSES[name]
-        pit_added = frozenset(pit_symbols(pit_top_n))
+        pit_added = frozenset(pit_symbols(*pit_top_n))
         out += sorted(pit_added)
 
     return out, pit_top_n, pit_added
@@ -764,7 +772,7 @@ def load_dataset(
     if pit_top_n is not None:
         from .pit_universe import apply_pit_membership
 
-        df = apply_pit_membership(df, pit_top_n)
+        df = apply_pit_membership(df, *pit_top_n)
 
     if path in DAILY_PRICE_DATASETS:
         if adjust and "adj_close" in df.columns:
@@ -1197,7 +1205,7 @@ def get_pricing(
     if pit_top_n is not None and not df.empty:
         from .pit_universe import apply_pit_membership
 
-        df = apply_pit_membership(df, pit_top_n)
+        df = apply_pit_membership(df, *pit_top_n)
 
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
