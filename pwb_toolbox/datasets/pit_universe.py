@@ -8,7 +8,11 @@ of 2026, and never holds the names that mattered then and died since.
 
 This module replaces both. At each session it asks which names were actually
 trading and how much, and keeps the largest by median dollar volume over the
-preceding 60 sessions.
+preceding 60 sessions. Two depths are exposed as pseudo-symbols: ``"sp500"``
+cuts at rank 500; ``"liquid1000"`` at rank 1000, the full depth of the
+published table, with a twelve-month point-in-time tenure floor (see
+:func:`load_pit_universe`) so a backtest does not carry a feed for every
+brief visitor.
 
 Why liquidity and not index membership: the vendor serves no historical index
 constituents (every candidate endpoint 404s), so "the S&P 500 as of 2010" is not
@@ -48,14 +52,27 @@ _LOCAL_DIR_ENV = "PWB_PIT_UNIVERSE_DIR"
 _cache = {}
 
 
-def load_pit_universe(top_n: int = 500) -> pd.DataFrame:
+def load_pit_universe(top_n: int = 500, min_months: int = 0) -> pd.DataFrame:
     """The ``(date, symbol, rank)`` membership table, ranks 1..``top_n``.
 
-    Cached per ``top_n``: a campaign runs thousands of backtests in one process
-    and the table is the same for all of them.
+    ``min_months`` is a **point-in-time tenure** floor: a name only counts as
+    a member once it has spent that many calendar months in the top ``top_n``,
+    counted up to the date in question and never beyond it. It exists to cut
+    the number of price feeds a backtest carries: every name that ever passed
+    through the universe needs one, backtrader pays for each at every bar, and
+    the brief visitors are the majority -- of the 3,954 names ever in the top
+    1000, 1,280 spent less than a year there. Measured with ``min_months=12``:
+    2,674 feeds instead of 3,954, and still 840 names per session in 2004, the
+    first full year of the table. A longer floor empties the early years
+    (24 months loses 2004, 36 loses 2005-2006), because the table starts in
+    October 2003 and tenure cannot be known before it.
+
+    Cached per ``(top_n, min_months)``: a campaign runs thousands of backtests
+    in one process and the table is the same for all of them.
     """
-    if top_n in _cache:
-        return _cache[top_n]
+    key = (top_n, min_months)
+    if key in _cache:
+        return _cache[key]
 
     local = os.getenv(_LOCAL_DIR_ENV)
     if local:
@@ -87,12 +104,24 @@ def load_pit_universe(top_n: int = 500) -> pd.DataFrame:
 
     df = df[df["rank"] <= top_n].copy()
     df["date"] = pd.to_datetime(df["date"])
+    if min_months:
+        df = _with_tenure(df)
+        df = df[df["tenure"] >= min_months].drop(columns=["tenure"])
     df = df.sort_values(["date", "rank"])[["date", "symbol", "rank"]]
-    _cache[top_n] = df
+    _cache[key] = df
     return df
 
 
-def pit_symbols(top_n: int = 500) -> list:
+def _with_tenure(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach each row's point-in-time tenure: months in the universe so far, this one included."""
+    out = df.assign(month=df["date"].dt.to_period("M"))
+    tenure = out[["symbol", "month"]].drop_duplicates().sort_values(["symbol", "month"])
+    tenure["tenure"] = tenure.groupby("symbol").cumcount() + 1
+    out = out.merge(tenure, on=["symbol", "month"], how="left")
+    return out.drop(columns=["month"])
+
+
+def pit_symbols(top_n: int = 500, min_months: int = 0) -> list:
     """Every symbol that was in the universe at any point.
 
     This is what has to be *loaded*: a backtest spanning 2003-2026 needs the
@@ -101,10 +130,10 @@ def pit_symbols(top_n: int = 500) -> list:
     :func:`apply_pit_membership`, so the extra names cost loading time but never
     enter a position outside their own window.
     """
-    return sorted(load_pit_universe(top_n)["symbol"].unique().tolist())
+    return sorted(load_pit_universe(top_n, min_months)["symbol"].unique().tolist())
 
 
-def apply_pit_membership(df: pd.DataFrame, top_n: int = 500) -> pd.DataFrame:
+def apply_pit_membership(df: pd.DataFrame, top_n: int = 500, min_months: int = 0) -> pd.DataFrame:
     """Drop every row whose symbol was not in the universe on its own date.
 
     Rows are dropped rather than masked: in the long format every consumer
@@ -119,7 +148,7 @@ def apply_pit_membership(df: pd.DataFrame, top_n: int = 500) -> pd.DataFrame:
     if "symbol" not in df.columns or "date" not in df.columns or df.empty:
         return df
 
-    universe = load_pit_universe(top_n)
+    universe = load_pit_universe(top_n, min_months)
 
     out = df.copy()
     original_dtype = out["date"].dtype
