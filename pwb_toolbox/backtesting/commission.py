@@ -562,8 +562,32 @@ def get_cost_schedules(
     end_date=None,
     max_gap: int = 3,
     measurable=None,
+    active_years=None,
 ) -> tuple[dict, dict]:
     """``({symbol: {year: half_spread}}, {symbol: Cost})`` over the traded span.
+
+    ``active_years`` -- ``{symbol: {year, ...}}``, the years in which the price
+    series actually has a bar -- is what keeps a vintage from being bridged
+    across a hole in the prices. A ticker is the only identity either table
+    has, and tickers get reused: ``BTC`` in ``Stocks-Daily-Price`` is a 2003-2013
+    micro cap, a 2021 listing and the Grayscale ETF since July 2024, with no
+    bars 2014-2020 or 2022-2023, and the cost table mirrors it year for year
+    (94-350 bp before 2013, 18 bp in 2021, 3 bp since 2024). Each row is right
+    for its own era; what was wrong was the bridge -- ``2015-2017`` inherited
+    the 2013 micro cap's 128 bp, and the harness, which forward-fills the hole,
+    then charged a dead instrument's spread on a flat series at every
+    rebalance. Measured on ``the_financialization_of_cryptocurrencies``:
+    Sharpe −0.146 → −0.960 between the old engine and the new, in a class
+    where nothing else moved. 2 027 symbols of the table (5.6 %) have a hole of
+    three full years or more; 461 published strategies cite one whose earlier
+    spread exceeds the later by 10×.
+
+    So a year with no bar is charged ``FALLBACK_HALF_SPREAD`` and labelled
+    nothing: it is an absent instrument, not an illiquid one, and the nearest
+    vintage is the wrong instrument's. Only the priced years decide the
+    ``measured``/``extrapolated`` label, and a symbol with no priced year in
+    the span is ``default``. Without ``active_years`` the behaviour is as
+    before -- the caller that has the prices is ``run_strategy``.
 
     Why this exists, and why ``get_cost_breakdown`` was not enough
     -------------------------------------------------------------
@@ -619,8 +643,14 @@ def get_cost_schedules(
                 uncovered.append(symbol)
                 continue
         years = sorted(have)
+        active = active_years.get(symbol) if active_years else None
         schedule, worst_gap, at_start = {}, 0, None
         for year in span:
+            if active is not None and year not in active:
+                # No bar this year: the instrument is absent, not illiquid, and
+                # the nearest vintage belongs to whatever else wore the ticker.
+                schedule[year] = FALLBACK_HALF_SPREAD
+                continue
             if year in have:
                 schedule[year] = have[year]
                 gap = 0
@@ -630,9 +660,15 @@ def get_cost_schedules(
                 gap = abs(nearest - year)
             worst_gap = max(worst_gap, gap)
             if at_start is None:
+                # The rate at the first year the instrument trades, not at the
+                # first year of the span: a 1990 start on a 2024 listing would
+                # otherwise summarise as the floor.
                 at_start = schedule[year]
         schedules[symbol] = schedule
-        source = SOURCE_MEASURED if worst_gap <= max_gap else SOURCE_EXTRAPOLATED
+        if at_start is None:
+            at_start, source = FALLBACK_HALF_SPREAD, SOURCE_DEFAULT
+        else:
+            source = SOURCE_MEASURED if worst_gap <= max_gap else SOURCE_EXTRAPOLATED
         summary[symbol] = Cost(symbol, at_start, source, start_year)
 
     if uncovered:

@@ -1,4 +1,5 @@
 import copy
+import os
 import backtrader as bt
 import itertools
 import pandas as pd
@@ -35,7 +36,8 @@ def _apply_broker_kwargs(broker: bt.BrokerBase, kwargs: dict) -> None:
 
 
 def _apply_per_symbol_commissions(
-    broker, symbols, start_date, enable_impact=False, feeds=None, end_date=None
+    broker, symbols, start_date, enable_impact=False, feeds=None, end_date=None,
+    active_years=None,
 ) -> None:
     """Charge each symbol its own spread, for the years actually being traded.
 
@@ -64,6 +66,11 @@ def _apply_per_symbol_commissions(
     The source of every rate is printed, because a break-even that rests on a
     measurement, on an extrapolated vintage and on an estimate are not the same
     claim.
+
+    ``active_years`` (``{symbol: {year, ...}}`` with a bar) stops a vintage from
+    being bridged across a hole in the prices -- see ``get_cost_schedules``. A
+    year without a bar is charged the floor, and how many symbols that touches
+    is printed with the rest.
     """
     priced = list(feeds) if feeds else list(symbols)
     # Resolved from ``symbols``, not ``priced``: the suffix that says which
@@ -75,9 +82,18 @@ def _apply_per_symbol_commissions(
         start_date=start_date,
         end_date=end_date,
         measurable=pwb_bt.equity_symbols(symbols),
+        active_years=active_years,
     )
     lambdas = pwb_bt.load_lambda_params() if enable_impact else {}
     year = int(str(start_date)[:4])
+    end_year = int(str(end_date)[:4]) if end_date is not None else year
+    span_years = range(min(year, end_year), max(year, end_year) + 1)
+    absent = sum(
+        1
+        for symbol in summary
+        if active_years and symbol in active_years
+        and any(y not in active_years[symbol] for y in span_years)
+    )
 
     for symbol, cost in summary.items():
         schedule = schedules.get(symbol)
@@ -102,6 +118,8 @@ def _apply_per_symbol_commissions(
     for cost in summary.values():
         sources[cost.source] = sources.get(cost.source, 0) + 1
     detail = ", ".join(f"{n} {k}" for k, n in sorted(sources.items()))
+    if absent:
+        detail += f"; {absent} with years without a bar, charged the floor there"
     span = f"{year}" if end_date is None else f"{year}-{str(end_date)[:4]}"
     print(
         f"Commissions: {len(rates)} symbols, {span}, "
@@ -123,6 +141,66 @@ DELEVERAGE_MAX_STEPS = 5
 # Share of orders a run may fail to fund before it counts as underfunded. An
 # isolated rejection on a gap day is noise; a systematic one freezes the NAV.
 MARGIN_TOLERANCE = 0.02
+
+
+def _era_cuts(closes: pd.DataFrame, gap_years: int) -> dict:
+    """``{symbol: (first bar kept, first bar on disk, earlier eras)}``.
+
+    A hole is ``gap_years`` full calendar years with no bar, bars on both
+    sides. Only symbols with at least one hole are returned, cut at the last
+    one.
+    """
+    cuts = {}
+    for symbol in closes.columns:
+        dates = closes.index[closes[symbol].notna()]
+        if len(dates) < 2:
+            continue
+        gaps = dates[1:] - dates[:-1]
+        holes = [i for i, gap in enumerate(gaps) if gap.days >= 365 * gap_years + 1]
+        if holes:
+            cuts[symbol] = (dates[holes[-1] + 1], dates[0], len(holes))
+    return cuts
+
+
+class FillAudit(bt.Analyzer):
+    """Count the bars a position is held in a year where the symbol has no bar.
+
+    ``run_strategy`` forward- and back-fills the price panel so every feed is
+    aligned, which is right for holidays and wrong for a hole of several years:
+    a ticker that changed hands (``BTC``: a micro cap to 2013, a listing in
+    2021, an ETF since 2024) is then held on a flat series through 2014-2020
+    and charged a spread at every rebalance. The cost side is handled by
+    ``active_years``; this analyzer is the measurement of the other half -- how
+    much of the book sat in an instrument that did not exist. It changes
+    nothing; it says whether the fill should.
+
+    ``inactive`` -- ``{symbol: {year, ...}}`` without a single bar.
+    """
+
+    params = (("inactive", None),)
+
+    def start(self):
+        self.held = {}
+
+    def next(self):
+        inactive = self.p.inactive or {}
+        for data in self.datas:
+            years = inactive.get(data._name)
+            if not years:
+                continue
+            year = data.datetime.date(0).year
+            if year not in years:
+                continue
+            if self.strategy.getposition(data).size:
+                entry = self.held.setdefault(data._name, {"bars": 0, "years": set()})
+                entry["bars"] += 1
+                entry["years"].add(year)
+
+    def get_analysis(self):
+        return {
+            symbol: {"bars": entry["bars"], "years": sorted(entry["years"])}
+            for symbol, entry in sorted(self.held.items())
+        }
 
 
 class FundingAudit(bt.Analyzer):
@@ -279,8 +357,22 @@ def run_strategy(
     enable_impact=False,
     deleverage=True,
     margin_tolerance=MARGIN_TOLERANCE,
+    era_gap_years=None,
 ):
     """Run a tactical asset allocation strategy with Backtrader.
+
+    ``era_gap_years`` -- when set, a symbol whose price series has a hole of
+    at least that many full calendar years keeps only what follows its **last**
+    such hole. A ticker is the only identity the price panel has and tickers
+    get reused: ``BTC`` is a 2003-2013 micro cap, a 2021 listing and the
+    Grayscale ETF since July 2024, and the forward-fill below stitches them
+    into one series with a +1 000 % day and a −90 % day at the seams. The
+    instrument the strategy names is the one trading today, so the earlier
+    eras are dropped (the leading back-fill then makes them a flat line, which
+    the cost schedule charges at the floor and ``FillAudit`` reports). Unset
+    by default; ``PWB_ERA_GAP_YEARS`` in the environment sets it for a whole
+    campaign without touching the strategies, which is how it is measured
+    before it becomes the default.
 
     With ``deleverage`` on, a run that cannot fund what the strategy asks for is
     repeated with its gross exposure stepped down the ``EXPOSURE_LADDER`` until
@@ -304,11 +396,42 @@ def run_strategy(
         start_date=start_date,
         extend=True,  # Extend the dataset with proxy data
     )
+    # Which years each symbol actually has a bar in, read before the fill
+    # below erases the holes. The cost schedule charges the floor in a year
+    # without a bar instead of bridging a vintage across it, and ``FillAudit``
+    # counts what the strategy holds there. Both exist because a ticker is the
+    # only identity the price panel has, and tickers get reused.
+    closes = (
+        pivot_df.xs("close", axis=1, level=1)
+        if isinstance(pivot_df.columns, pd.MultiIndex)
+        else pivot_df
+    )
+    if era_gap_years is None and os.getenv("PWB_ERA_GAP_YEARS"):
+        era_gap_years = int(os.getenv("PWB_ERA_GAP_YEARS"))
+    if era_gap_years:
+        cuts = _era_cuts(closes, era_gap_years)
+        for symbol, (cut, dropped_from, eras) in cuts.items():
+            pivot_df.loc[pivot_df.index < cut, symbol] = np.nan
+            closes.loc[closes.index < cut, symbol] = np.nan
+            print(
+                f"Era cut: {symbol} keeps bars from {cut.date()}, dropped "
+                f"{dropped_from.date()} to the last hole ({eras} earlier instrument"
+                f"{'s' if eras > 1 else ''} under the ticker)"
+            )
+    present = closes.notna()
+    active_years = {
+        symbol: set(present.index[present[symbol]].year) for symbol in present.columns
+    }
     # Create trading-day index (optional but keeps Cerebro happy)
     trading_days = pd.bdate_range(pivot_df.index.min(), pivot_df.index.max())
     pivot_df = pivot_df.reindex(trading_days)
     pivot_df.ffill(inplace=True)  # forward-fill holidays
     pivot_df.bfill(inplace=True)  # back-fill leading IPO gaps
+    all_years = set(trading_days.year)
+    inactive = {
+        symbol: all_years - years for symbol, years in active_years.items()
+        if all_years - years
+    }
 
     cap, steps, strategy, as_published = 1.0, 0, None, None
     while True:
@@ -330,6 +453,7 @@ def run_strategy(
             **strategy_kwargs,
         )
         cerebro.addanalyzer(FundingAudit, _name="funding")
+        cerebro.addanalyzer(FillAudit, _name="fill", inactive=inactive)
         # Broker. ``_apply_broker_kwargs`` pops what it consumes, so each
         # attempt gets its own copy -- otherwise the second run of a
         # de-leveraging sequence would silently lose the caller's commission
@@ -344,6 +468,7 @@ def run_strategy(
                 enable_impact=enable_impact,
                 feeds=feeds,
                 end_date=pivot_df.index.max(),
+                active_years=active_years,
             )
         _apply_broker_kwargs(cerebro.broker, run_broker_kwargs)
         # Run the strategy
@@ -352,6 +477,14 @@ def run_strategy(
         audit["requested_gross"] = strategy.requested_gross
         strategy.exposure_cap = cap
         strategy.funding_audit = audit
+        strategy.fill_audit = strategy.analyzers.fill.get_analysis()
+        if strategy.fill_audit:
+            worst = max(strategy.fill_audit.items(), key=lambda kv: kv[1]["bars"])
+            print(
+                f"Held while absent: {len(strategy.fill_audit)} symbols with a position "
+                f"in a year without a bar, e.g. {worst[0]} {worst[1]['years'][0]}-"
+                f"{worst[1]['years'][-1]} ({worst[1]['bars']} bars)"
+            )
         if as_published is None:
             as_published = strategy
 
