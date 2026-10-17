@@ -8,7 +8,9 @@ of 2026, and never holds the names that mattered then and died since.
 
 This module replaces both. At each session it asks which names were actually
 trading and how much, and keeps the largest by median dollar volume over the
-preceding 60 sessions.
+preceding 60 sessions. Two depths are exposed as pseudo-symbols: ``"sp500"``
+cuts at rank 500, ``"liquid1000"`` at rank 1000, the full depth of the
+published table.
 
 Why liquidity and not index membership: the vendor serves no historical index
 constituents (every candidate endpoint 404s), so "the S&P 500 as of 2010" is not
