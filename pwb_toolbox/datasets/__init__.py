@@ -1094,6 +1094,54 @@ def __extend_etfs(df_etfs):
 ALLOWED_FIELDS = {"open", "high", "low", "close", "volume"}
 
 
+# Which repository a bare ticker resolves to when ``Universe-Daily-Price`` lists
+# it in several, first match wins. ``Universe-Daily-Price`` carries one row per
+# (symbol, repo_id) and no preference, and until 2026-10-18 the reader took the
+# last row -- which is ``Stocks-Daily-Price`` by alphabetical accident. That was
+# harmless while the stock feed held stocks only. Since the Massive merge of
+# 2026-10-11 it also holds every US-listed ETF and the 2024-25 crypto ETFs, so
+# the index regenerated on 2026-10-17 sent 6 229 bare tickers to the stock feed:
+# 5 155 ETFs, 1 058 crypto. Measured on the published strategies: 816 of them
+# name a bare ETF ticker -- SPY 484, TLT 128, IEF 123, GLD 105, IWM 104, QQQ 92 --
+# and for each the series now started on 2003-09-10 (the first Massive session)
+# instead of 1993 for SPY, 1999 for QQQ, 2002 for TLT, and ``__extend_etfs``'
+# proxies (SPY <- SPX, GLD <- GC1 ...) no longer applied, since they act on the
+# ETF feed alone.
+#
+# The ETF feed goes first: it holds nothing but ETFs, is adjusted for total
+# return, and is the longer history. Stocks stay ahead of everything else, which
+# is what the last-row rule always did: a ticker that is both a stock and a
+# coin -- ABT, CAKE, STX, LTC, DASH, SOL, LINK -- is used as the stock by 583
+# published strategies against 463 crypto-themed ones, and the ``.CRP``,
+# ``.IDX`` suffixes exist for the rest.
+_BARE_SYMBOL_PRIORITY = (
+    "ETFs-Daily-Price",
+    "Stocks-Daily-Price",
+    "Indices-Daily-Price",
+    "Cryptocurrencies-Daily-Price",
+    "Bonds-Daily-Price",
+    "Commodities-Daily-Price",
+    "Forex-Daily-Price",
+)
+
+
+def _bare_symbol_routes(universe: pd.DataFrame) -> dict:
+    """``{symbol: repo_id}`` from the index, one repository per bare ticker.
+
+    Ties are broken by ``_BARE_SYMBOL_PRIORITY``; a repository the list does
+    not know sorts after every one it does, so a new feed cannot silently
+    capture a ticker.
+    """
+    rank = {name: i for i, name in enumerate(_BARE_SYMBOL_PRIORITY)}
+    frame = universe[["symbol", "repo_id"]].dropna().copy()
+    frame["_rank"] = [
+        rank.get(str(r).split("/")[-1], len(rank)) for r in frame["repo_id"]
+    ]
+    frame = frame.sort_values(["symbol", "_rank"], kind="stable")
+    frame = frame.drop_duplicates("symbol", keep="first")
+    return dict(zip(frame["symbol"], frame["repo_id"]))
+
+
 def get_pricing(
     symbol_list,
     fields=None,  # ← default set below
@@ -1157,8 +1205,7 @@ def get_pricing(
         "BND": "paperswithbacktest/Bonds-Daily-Price",
     }
 
-    mapping = load_dataset("Universe-Daily-Price")
-    mapping = mapping.set_index("symbol")["repo_id"].to_dict()
+    mapping = _bare_symbol_routes(load_dataset("Universe-Daily-Price"))
 
     grouped = defaultdict(list)
     unmapped = []
