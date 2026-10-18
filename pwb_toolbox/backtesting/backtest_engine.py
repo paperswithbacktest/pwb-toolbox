@@ -141,6 +141,8 @@ DELEVERAGE_MAX_STEPS = 5
 # Share of orders a run may fail to fund before it counts as underfunded. An
 # isolated rejection on a gap day is noise; a systematic one freezes the NAV.
 MARGIN_TOLERANCE = 0.02
+# Full calendar years of missing bars that split one ticker into two instruments.
+ERA_GAP_YEARS = 3
 
 
 def _era_cuts(closes: pd.DataFrame, gap_years: int) -> dict:
@@ -361,18 +363,22 @@ def run_strategy(
 ):
     """Run a tactical asset allocation strategy with Backtrader.
 
-    ``era_gap_years`` -- when set, a symbol whose price series has a hole of
-    at least that many full calendar years keeps only what follows its **last**
-    such hole. A ticker is the only identity the price panel has and tickers
-    get reused: ``BTC`` is a 2003-2013 micro cap, a 2021 listing and the
-    Grayscale ETF since July 2024, and the forward-fill below stitches them
+    ``era_gap_years`` -- a symbol whose price series has a hole of at least
+    that many full calendar years keeps only what follows its **last** such
+    hole. Default ``ERA_GAP_YEARS`` (3); ``0`` keeps every bar on disk. A
+    ticker is the only identity the price panel has and tickers get reused:
+    ``BTC`` is a 2003-2013 micro cap, a 2021 listing and the Grayscale ETF
+    since July 2024, and the forward-fill below stitches them
     into one series with a +1 000 % day and a −90 % day at the seams. The
     instrument the strategy names is the one trading today, so the earlier
     eras are dropped (the leading back-fill then makes them a flat line, which
-    the cost schedule charges at the floor and ``FillAudit`` reports). Unset
-    by default; ``PWB_ERA_GAP_YEARS`` in the environment sets it for a whole
-    campaign without touching the strategies, which is how it is measured
-    before it becomes the default.
+    the cost schedule charges at the floor and ``FillAudit`` reports). It is
+    the default since 0.1.36: measured on/off on the 80 published strategies
+    most exposed to ticker reuse, 10 received a cut, 7 of them moved by less
+    than the sampling noise of a Sharpe, 2 gained and the 1 that lost had
+    earned its Sharpe on another instrument's bars. ``PWB_ERA_GAP_YEARS`` in
+    the environment overrides it for a whole campaign without touching the
+    strategies (``PWB_ERA_GAP_YEARS=0`` switches it off).
 
     With ``deleverage`` on, a run that cannot fund what the strategy asks for is
     repeated with its gross exposure stepped down the ``EXPOSURE_LADDER`` until
@@ -406,8 +412,8 @@ def run_strategy(
         if isinstance(pivot_df.columns, pd.MultiIndex)
         else pivot_df
     )
-    if era_gap_years is None and os.getenv("PWB_ERA_GAP_YEARS"):
-        era_gap_years = int(os.getenv("PWB_ERA_GAP_YEARS"))
+    if era_gap_years is None:
+        era_gap_years = int(os.getenv("PWB_ERA_GAP_YEARS", ERA_GAP_YEARS))
     if era_gap_years:
         cuts = _era_cuts(closes, era_gap_years)
         for symbol, (cut, dropped_from, eras) in cuts.items():
