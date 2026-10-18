@@ -366,8 +366,9 @@ def run_strategy(
     ``era_gap_years`` -- a symbol whose price series has a hole of at least
     that many full calendar years keeps only what follows its **last** such
     hole. Default ``ERA_GAP_YEARS`` (3); ``0`` keeps every bar on disk. A
-    ticker is the only identity the price panel has and tickers get reused: ``BTC`` is a 2003-2013 micro cap, a 2021 listing and the
-    Grayscale ETF since July 2024, and the forward-fill below stitches them
+    ticker is the only identity the price panel has and tickers get reused:
+    ``BTC`` is a 2003-2013 micro cap, a 2021 listing and the Grayscale ETF
+    since July 2024, and the forward-fill below stitches them
     into one series with a +1 000 % day and a −90 % day at the seams. The
     instrument the strategy names is the one trading today, so the earlier
     eras are dropped (the leading back-fill then makes them a flat line, which
