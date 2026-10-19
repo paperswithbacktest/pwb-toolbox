@@ -116,9 +116,17 @@ FUTURES_ROOT_ALIASES = {
     "XB": "RB",   # RBOB gasoline
 }
 
-# The cost table is measured on US equity venues, so only these two may be
-# answered from it. Every other class has to fall through.
-EQUITY_REPOS = ("Stocks-Daily-Price", "ETFs-Daily-Price")
+# The cost table is measured on US equity venues -- the consolidated quotes of
+# every US-listed security, preferred shares, warrants and structured products
+# included -- so only these feeds may be answered from it. Every other class
+# has to fall through.
+EQUITY_REPOS = (
+    "Stocks-Daily-Price",
+    "ETFs-Daily-Price",
+    "Preferreds-Daily-Price",
+    "Warrants-Daily-Price",
+    "StructuredProducts-Daily-Price",
+)
 
 # ``get_pricing``'s own suffix map, repeated rather than imported: the lookup
 # has to agree with how the prices were actually routed, and a divergence here
