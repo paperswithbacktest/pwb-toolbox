@@ -164,7 +164,10 @@ DAILY_PRICE_DATASETS = [
     "ETFs-Daily-Price",
     "Forex-Daily-Price",
     "Indices-Daily-Price",
+    "Preferreds-Daily-Price",
     "Stocks-Daily-Price",
+    "StructuredProducts-Daily-Price",
+    "Warrants-Daily-Price",
 ]
 
 
@@ -1150,6 +1153,14 @@ ALLOWED_FIELDS = {"open", "high", "low", "close", "volume"}
 # coin -- ABT, CAKE, STX, LTC, DASH, SOL, LINK -- is used as the stock by 583
 # published strategies against 463 crypto-themed ones, and the ``.CRP``,
 # ``.IDX`` suffixes exist for the rest.
+#
+# The three repositories at the tail hold what the US equity feed used to mix
+# into ``Stocks-Daily-Price`` -- preferred shares, warrants / rights / units,
+# and structured products (ETNs excepted, which stay ETFs) -- sorted upstream
+# by instrument type since the split of 2026-11. A ticker that changed class
+# over its life (a SPAC unit that became a common stock, a preferred whose
+# ticker was later reused) can sit in two of these feeds at once; the stock
+# reading wins, which is also what an untyped symbol defaults to upstream.
 _BARE_SYMBOL_PRIORITY = (
     "ETFs-Daily-Price",
     "Stocks-Daily-Price",
@@ -1158,6 +1169,9 @@ _BARE_SYMBOL_PRIORITY = (
     "Bonds-Daily-Price",
     "Commodities-Daily-Price",
     "Forex-Daily-Price",
+    "Preferreds-Daily-Price",
+    "Warrants-Daily-Price",
+    "StructuredProducts-Daily-Price",
 )
 
 

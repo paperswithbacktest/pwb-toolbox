@@ -42,6 +42,9 @@ df = pwb_ds.load_dataset("ETFs-Daily-Price")
 df = pwb_ds.load_dataset("Forex-Daily-Price")
 df = pwb_ds.load_dataset("Indices-Daily-Price")
 df = pwb_ds.load_dataset("Stocks-Daily-Price")
+df = pwb_ds.load_dataset("Preferreds-Daily-Price")
+df = pwb_ds.load_dataset("Warrants-Daily-Price")
+df = pwb_ds.load_dataset("StructuredProducts-Daily-Price")
 ```
 
 For more, see [docs/datasets.md](/docs/datasets.md).
