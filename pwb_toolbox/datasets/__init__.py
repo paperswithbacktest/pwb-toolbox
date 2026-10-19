@@ -56,6 +56,34 @@ def _read_one_parquet(source, symbols=None) -> pd.DataFrame:
         symbol_set = set(symbols)
         df = df[df["symbols"].apply(lambda cell: _symbols_overlap(cell, symbol_set))]
 
+    return _normalise_symbol(df)
+
+
+def _normalise_symbol(df: pd.DataFrame) -> pd.DataFrame:
+    """``symbol`` as plain ``object`` strings, and no row without one.
+
+    The contract of every PWB feed has been an ``object`` symbol column, and
+    strategies lean on it: 106 published ones merge the stock feed on
+    ``symbol`` against a fundamentals frame, others loop over
+    ``df["symbol"].unique()``. A shard written with pandas metadata hands back
+    ``string[python]`` instead, and that is enough to kill both patterns --
+    ``pd.merge_asof`` refuses "incompatible merge keys string[python] and
+    object", and ``"-" in s`` raises on a ``pd.NA`` symbol. Measured on the
+    2026-10-19 campaign: two published strategies died exactly that way after
+    ``Stocks-Daily-Price`` was rebuilt as monthly shards on 2026-10-11.
+
+    The feed is fixed upstream, but a reader must not depend on how a shard
+    was written. A row without a symbol is unusable and is dropped.
+    """
+    if "symbol" not in df.columns:
+        return df
+    symbol = df["symbol"]
+    if symbol.dtype != object or symbol.isna().any():
+        keep = symbol.notna()
+        if not keep.all():
+            df = df[keep]
+        df = df.copy()
+        df["symbol"] = df["symbol"].astype(object)
     return df
 
 
