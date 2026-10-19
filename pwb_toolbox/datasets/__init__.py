@@ -3,6 +3,7 @@ from datetime import date
 from io import BytesIO
 import os
 import re
+import time
 
 from huggingface_hub import HfApi, hf_hub_download
 import numpy as np
@@ -58,6 +59,43 @@ def _read_one_parquet(source, symbols=None) -> pd.DataFrame:
     return df
 
 
+# A dataset read through the subscriber API is one GET per shard, 778 of them for
+# ``Stocks-Daily-Price``, and the Hub path caches nothing across them. Measured
+# 2026-10-18: a single ``SSL: UNEXPECTED_EOF_WHILE_READING`` on shard 645 lost the
+# thirteen minutes before it. One dropped connection in several hundred is the
+# normal case for a transfer that long, so a shard is retried before the read
+# fails, with a pause that doubles each time.
+_HTTP_ATTEMPTS = 4
+_HTTP_BACKOFF_SECONDS = 2.0
+_HTTP_TIMEOUT_SECONDS = 120
+
+
+def _http_get(url: str) -> bytes:
+    """The body at ``url``, retrying transient transport and server errors.
+
+    Retried: any ``requests`` transport failure (reset, SSL EOF, timeout,
+    truncated body) and a 5xx or 429 answer. Not retried: a 4xx other than
+    429, which says the request itself is wrong -- a bad key or a missing
+    shard -- and will not improve with waiting.
+    """
+    last_exc = None
+    for attempt in range(_HTTP_ATTEMPTS):
+        try:
+            resp = requests.get(url, timeout=_HTTP_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+            return resp.content
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status is not None and status != 429 and status < 500:
+                raise
+            last_exc = exc
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+        if attempt < _HTTP_ATTEMPTS - 1:
+            time.sleep(_HTTP_BACKOFF_SECONDS * 2**attempt)
+    raise last_exc
+
+
 def _read_parquet_files(paths: list[str], desc: str, symbols=None) -> pd.DataFrame:
     if not paths:
         raise ValueError("No parquet files provided.")
@@ -66,9 +104,7 @@ def _read_parquet_files(paths: list[str], desc: str, symbols=None) -> pd.DataFra
     frames = []
     for path in iterator:
         if isinstance(path, str) and path.startswith(("http://", "https://")):
-            resp = requests.get(path, timeout=120)
-            resp.raise_for_status()
-            frames.append(_read_one_parquet(BytesIO(resp.content), symbols))
+            frames.append(_read_one_parquet(BytesIO(_http_get(path)), symbols))
         else:
             frames.append(_read_one_parquet(path, symbols))
     return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
