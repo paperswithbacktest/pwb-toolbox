@@ -144,6 +144,10 @@ MARGIN_TOLERANCE = 0.02
 # Full calendar years of missing bars that split one ticker into two instruments.
 ERA_GAP_YEARS = 3
 
+# Refuse orders on a symbol before its first real bar, instead of letting the
+# back-fill below sell a flat line. ``PWB_REFUSE_BEFORE_LISTING=0`` switches it off.
+REFUSE_BEFORE_LISTING = True
+
 
 def _era_cuts(closes: pd.DataFrame, gap_years: int) -> dict:
     """``{symbol: (first bar kept, first bar on disk, earlier eras)}``.
@@ -264,6 +268,54 @@ def _underfunded(audit: dict, tolerance: float) -> bool:
     return audit["min_value"] is not None and audit["min_value"] <= 0
 
 
+def _refuse_before_listing(broker, first_bar: dict) -> dict:
+    """Make ``broker`` reject any order dated before its symbol's first real bar.
+
+    ``run_strategy`` back-fills the panel so every feed starts on the same day,
+    which is what keeps backtrader's feeds aligned and is harmless for a
+    holiday. For a symbol listed years after ``start_date`` it paints a flat
+    line the strategy can buy: ``FillAudit`` found the crypto books holding
+    XRP for 2 711 bars of 2014-2024 -- an ETF listed in 2024, read from
+    ``Stocks-Daily-Price`` and extended backwards at a constant price. The
+    position earns nothing, pays the floor spread at every rebalance, and
+    dilutes the book: a 1/N allocation over ten ETFs of which four did not
+    exist yet is a 60 % invested book reported as 100 %.
+
+    The guard sits on the broker rather than in the strategy because the
+    strategy is the published ``strategy.py``: orders reach the broker by
+    ``buy``, ``sell``, ``order_target_*`` or ``close``, and this is the one
+    place they all pass. A refused order is notified as ``Rejected``, which is
+    what a real broker answers for an instrument that does not trade yet.
+    After the first bar the guard does nothing: the flat tail after a symbol's
+    last bar, and the holes between, are a different matter -- an instrument
+    that stopped printing may still be held or sold.
+
+    Returns the audit, filled as the run goes: ``{symbol: {"orders": n,
+    "first": date, "last": date}}`` of the refusals.
+    """
+    audit = {}
+    original = broker.submit
+
+    def submit(order, check=True):
+        data = order.data
+        listed = first_bar.get(getattr(data, "_name", None))
+        if listed is not None:
+            today = data.datetime.date(0)
+            if today < listed.date():
+                entry = audit.setdefault(
+                    data._name, {"orders": 0, "first": today, "last": today}
+                )
+                entry["orders"] += 1
+                entry["last"] = today
+                order.reject(broker)
+                broker.notify(order)
+                return order
+        return original(order, check=check)
+
+    broker.submit = submit
+    return audit
+
+
 def _with_exposure_cap(strategy_cls, cap: float):
     """Subclass ``strategy_cls`` to scale, and record, every target it asks for.
 
@@ -360,6 +412,7 @@ def run_strategy(
     deleverage=True,
     margin_tolerance=MARGIN_TOLERANCE,
     era_gap_years=None,
+    refuse_before_listing=None,
 ):
     """Run a tactical asset allocation strategy with Backtrader.
 
@@ -379,6 +432,16 @@ def run_strategy(
     earned its Sharpe on another instrument's bars. ``PWB_ERA_GAP_YEARS`` in
     the environment overrides it for a whole campaign without touching the
     strategies (``PWB_ERA_GAP_YEARS=0`` switches it off).
+
+    ``refuse_before_listing`` -- the broker rejects any order on a symbol dated
+    before that symbol's first real bar (default ``REFUSE_BEFORE_LISTING``,
+    ``PWB_REFUSE_BEFORE_LISTING=0`` in the environment switches it off). The
+    panel is back-filled so every feed starts on the same day, which paints a
+    flat line in front of a symbol listed after ``start_date``; a strategy
+    that buys it holds a position earning nothing, pays the floor spread at
+    each rebalance and reports a 1/N book as fully invested when part of it
+    did not exist. See ``_refuse_before_listing``; the refusals are on the
+    returned strategy as ``listing_audit``.
 
     With ``deleverage`` on, a run that cannot fund what the strategy asks for is
     repeated with its gross exposure stepped down the ``EXPOSURE_LADDER`` until
@@ -428,6 +491,17 @@ def run_strategy(
     active_years = {
         symbol: set(present.index[present[symbol]].year) for symbol in present.columns
     }
+    # The first real bar of each symbol, read before the back-fill below
+    # paints a flat line in front of it; what ``_refuse_before_listing`` guards.
+    first_bar = {
+        symbol: present.index[present[symbol]].min()
+        for symbol in present.columns
+        if present[symbol].any()
+    }
+    if refuse_before_listing is None:
+        refuse_before_listing = os.getenv(
+            "PWB_REFUSE_BEFORE_LISTING", "1" if REFUSE_BEFORE_LISTING else "0"
+        ) != "0"
     # Create trading-day index (optional but keeps Cerebro happy)
     trading_days = pd.bdate_range(pivot_df.index.min(), pivot_df.index.max())
     pivot_df = pivot_df.reindex(trading_days)
@@ -477,8 +551,22 @@ def run_strategy(
                 active_years=active_years,
             )
         _apply_broker_kwargs(cerebro.broker, run_broker_kwargs)
+        listing_audit = (
+            _refuse_before_listing(cerebro.broker, first_bar)
+            if refuse_before_listing
+            else {}
+        )
         # Run the strategy
         strategy = cerebro.run()[0]
+        strategy.listing_audit = listing_audit
+        if listing_audit:
+            worst = max(listing_audit.items(), key=lambda kv: kv[1]["orders"])
+            refused = sum(entry["orders"] for entry in listing_audit.values())
+            print(
+                f"Refused before listing: {refused} orders on {len(listing_audit)} "
+                f"symbols, e.g. {worst[0]} {worst[1]['first']} to {worst[1]['last']} "
+                f"(first bar {first_bar[worst[0]].date()})"
+            )
         audit = strategy.analyzers.funding.get_analysis()
         audit["requested_gross"] = strategy.requested_gross
         strategy.exposure_cap = cap
