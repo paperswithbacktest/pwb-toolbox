@@ -1273,7 +1273,7 @@ def get_pricing(
         # _resolve_universe copies, where the previous code mutated the
         # caller's list in place: a strategy that kept ``SYMS = ["sp500"]`` and
         # called twice lost the pseudo-symbol on the second call.
-        symbol_list, pit_top_n, pit_added = _resolve_universe(symbol_list)
+        symbol_list, pit_top_n, pit_added, explicit = _resolve_universe(symbol_list)
 
     fields = [f.lower() for f in fields]
     bad = [f for f in fields if f not in ALLOWED_FIELDS]
