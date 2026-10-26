@@ -133,7 +133,12 @@ def pit_symbols(top_n: int = 500, min_months: int = 0) -> list:
     return sorted(load_pit_universe(top_n, min_months)["symbol"].unique().tolist())
 
 
-def apply_pit_membership(df: pd.DataFrame, top_n: int = 500, min_months: int = 0) -> pd.DataFrame:
+def apply_pit_membership(
+    df: pd.DataFrame,
+    top_n: int = 500,
+    min_months: int = 0,
+    only=None,
+) -> pd.DataFrame:
     """Drop every row whose symbol was not in the universe on its own date.
 
     Rows are dropped rather than masked: in the long format every consumer
@@ -144,9 +149,25 @@ def apply_pit_membership(df: pd.DataFrame, top_n: int = 500, min_months: int = 0
     Matching is a backward as-of join on the date, so a row stamped between
     sessions resolves to the last session's membership -- which makes this
     correct for quarterly fundamentals as well as for daily prices.
+
+    ``only`` restricts the cut to the symbols the universe itself contributed.
+    A strategy that asks for ``["sp500", "SPY", "TLT"]`` wants the index
+    members by date *and* its two hedges on every date; without this the
+    membership pass dropped SPY and TLT entirely, because no ETF ever sat in
+    the top 500 by market value -- and the strategy then failed on a missing
+    feed, or ran without its hedge. Rows whose symbol is not in ``only`` are
+    kept as they came.
     """
     if "symbol" not in df.columns or "date" not in df.columns or df.empty:
         return df
+
+    if only is not None:
+        exempt = ~df["symbol"].astype(str).isin({str(s) for s in only})
+        if exempt.all():
+            return df
+        if exempt.any():
+            cut = apply_pit_membership(df[~exempt], top_n, min_months)
+            return pd.concat([cut, df[exempt]]).sort_index()
 
     universe = load_pit_universe(top_n, min_months)
 

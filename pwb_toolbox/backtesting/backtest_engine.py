@@ -328,6 +328,14 @@ def _with_exposure_cap(strategy_cls, cap: float):
     ``requested_gross`` is the high-water mark of what the strategy asked for
     before scaling, which is what sizes the next attempt: a book asking for
     200 % needs halving, and guessing that by steps would cost five backtests.
+
+    The wrapper's own state lives under ``_pwb_cap_*`` names. It used to be
+    ``self._targets``, ``self._record`` and ``self._scaling``, set *after* the
+    strategy's ``__init__`` had run: a strategy keeping its target book in
+    ``self._targets`` found it replaced by an empty dict, one defining its own
+    ``_record(...)`` had it called with the wrapper's two arguments, and 21 of
+    the published strategies use one of those names. A subclass that is not
+    the strategy's author must not pick the names its author would.
     """
 
     class _Capped(strategy_cls):
@@ -335,13 +343,13 @@ def _with_exposure_cap(strategy_cls, cap: float):
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self._targets: dict = {}
-            self._scaling = False
+            self._pwb_cap_targets: dict = {}
+            self._pwb_cap_scaling = False
             self.requested_gross = 0.0
 
-        def _record(self, data, share):
-            self._targets[getattr(data, "_name", id(data))] = abs(share)
-            gross = sum(self._targets.values())
+        def _pwb_cap_record(self, data, share):
+            self._pwb_cap_targets[getattr(data, "_name", id(data))] = abs(share)
+            gross = sum(self._pwb_cap_targets.values())
             if gross > self.requested_gross:
                 self.requested_gross = gross
 
@@ -350,33 +358,33 @@ def _with_exposure_cap(strategy_cls, cap: float):
             # calls order_target_value, which lands back here. Without the
             # guard the cap is applied twice -- 0.495 became 0.245 -- and the
             # recorded gross is overwritten by the already-scaled figure.
-            if self._scaling:
+            if self._pwb_cap_scaling:
                 return super().order_target_percent(
                     data=data, target=target, **kwargs
                 )
-            self._record(data, target)
-            self._scaling = True
+            self._pwb_cap_record(data, target)
+            self._pwb_cap_scaling = True
             try:
                 return super().order_target_percent(
                     data=data, target=target * cap, **kwargs
                 )
             finally:
-                self._scaling = False
+                self._pwb_cap_scaling = False
 
         def order_target_value(self, data=None, target=0.0, **kwargs):
-            if self._scaling:
+            if self._pwb_cap_scaling:
                 return super().order_target_value(
                     data=data, target=target, **kwargs
                 )
             value = self.broker.getvalue()
-            self._record(data, target / value if value else 0.0)
-            self._scaling = True
+            self._pwb_cap_record(data, target / value if value else 0.0)
+            self._pwb_cap_scaling = True
             try:
                 return super().order_target_value(
                     data=data, target=target * cap, **kwargs
                 )
             finally:
-                self._scaling = False
+                self._pwb_cap_scaling = False
 
     _Capped.__name__ = f"{strategy_cls.__name__}Capped{round(cap * 100)}"
     _Capped.__qualname__ = _Capped.__name__
