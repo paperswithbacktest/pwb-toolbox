@@ -741,7 +741,7 @@ PIT_UNIVERSES = {
 def _resolve_universe(symbols):
     """Expand the universe pseudo-symbols, and say whether to filter per date.
 
-    Returns ``(symbol_filter, pit_spec, pit_added)``:
+    Returns ``(symbol_filter, pit_spec, pit_added, explicit)``:
 
     * ``pit_spec`` is ``None`` unless a point-in-time universe was asked for
       (``"sp500"`` or ``"liquid1000"``, see :data:`PIT_UNIVERSES`), in which
@@ -759,6 +759,11 @@ def _resolve_universe(symbols):
       universe behind a ``Warning`` nobody reads during a 4 178-backtest
       campaign. They are US common stocks by construction, so they route
       straight to ``Stocks-Daily-Price``.
+    * ``explicit`` is what the caller named itself, pseudo-symbols aside. The
+      per-date cut must spare these: ``["sp500", "SPY"]`` means the members by
+      date plus SPY on every date, and SPY was never a member. Applied to the
+      whole frame, the cut used to delete every such hedge or benchmark, and
+      the strategy then died on a missing feed or ran unhedged.
     """
     out = list(symbols)
 
@@ -774,6 +779,7 @@ def _resolve_universe(symbols):
             f"{asked} name two point-in-time universes of different depth; "
             "load them in two calls, each gets its own per-date membership"
         )
+    explicit = frozenset(s for s in out if s not in PIT_UNIVERSES)
     if asked:
         from .pit_universe import pit_symbols
 
@@ -781,9 +787,9 @@ def _resolve_universe(symbols):
         out.remove(name)
         pit_top_n = PIT_UNIVERSES[name]
         pit_added = frozenset(pit_symbols(*pit_top_n))
-        out += sorted(pit_added)
+        out += sorted(pit_added - explicit)
 
-    return out, pit_top_n, pit_added
+    return out, pit_top_n, pit_added, explicit
 
 
 def load_dataset(
@@ -806,8 +812,10 @@ def load_dataset(
 
     symbol_filter = None
     pit_top_n = None
+    pit_only = None
     if isinstance(symbols, list):
-        symbol_filter, pit_top_n, _ = _resolve_universe(symbols)
+        symbol_filter, pit_top_n, pit_added, explicit = _resolve_universe(symbols)
+        pit_only = pit_added - explicit
 
     if pwb_api_key and not use_hf:
         df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=symbol_filter)
@@ -835,11 +843,12 @@ def load_dataset(
             ].copy()
 
     # The load above widened to every name that ever belonged to the universe.
-    # This is the pass that keeps each one to the dates it actually belonged.
+    # This is the pass that keeps each one to the dates it actually belonged;
+    # the names the caller asked for by itself are not its business.
     if pit_top_n is not None:
         from .pit_universe import apply_pit_membership
 
-        df = apply_pit_membership(df, *pit_top_n)
+        df = apply_pit_membership(df, *pit_top_n, only=pit_only)
 
     if path in DAILY_PRICE_DATASETS:
         if adjust and "adj_close" in df.columns:
@@ -1330,7 +1339,9 @@ def get_pricing(
     if pit_top_n is not None and not df.empty:
         from .pit_universe import apply_pit_membership
 
-        df = apply_pit_membership(df, *pit_top_n)
+        # Only the names the universe brought in: a hedge or benchmark named
+        # by the caller next to "sp500" stays on every date.
+        df = apply_pit_membership(df, *pit_top_n, only=pit_added - explicit)
 
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
