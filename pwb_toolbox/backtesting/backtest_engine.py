@@ -7,6 +7,8 @@ import numpy as np
 import pwb_toolbox.backtesting as pwb_bt
 import pwb_toolbox.datasets as pwb_ds
 
+from .feeds import ArrayPandasData
+
 
 def _apply_broker_kwargs(broker: bt.BrokerBase, kwargs: dict) -> None:
     """Translate `broker_kwargs` into the correct broker setters."""
@@ -463,7 +465,12 @@ def run_strategy(
     bottom of the ladder is returned with both set, so the caller can refuse it
     rather than record a number.
     """
-    cerebro_kwargs = cerebro_kwargs or {}
+    # The default observers (Broker, BuySell, Trades) exist for plotting and
+    # cost about a tenth of the engine loop; nothing in the harness or in the
+    # published strategies reads them, and the dozen strategies that build
+    # their own Cerebro already pass ``stdstats=False``. A caller who plots
+    # passes ``cerebro_kwargs={"stdstats": True}``.
+    cerebro_kwargs = {"stdstats": False, **(cerebro_kwargs or {})}
     broker_kwargs = broker_kwargs or {}
     # Load the data from https://paperswithbacktest.com/datasets -- once, and
     # reused across attempts, because the ladder must not re-download anything.
@@ -529,7 +536,7 @@ def run_strategy(
         # matches on, and what the scheme reads the bar date from.
         feeds = {}
         for symbol in pivot_df.columns.levels[0]:
-            data = bt.feeds.PandasData(dataname=pivot_df[symbol].copy())
+            data = ArrayPandasData(dataname=pivot_df[symbol].copy())
             cerebro.adddata(data, name=symbol)
             feeds[symbol] = data
         # Strategy
