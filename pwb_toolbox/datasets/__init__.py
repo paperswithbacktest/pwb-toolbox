@@ -6,6 +6,7 @@ import re
 import time
 
 from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.constants import HF_HUB_CACHE
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -164,10 +165,63 @@ def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]
     return sorted([f for f in repo_files if f.endswith(".parquet") and f"/{split}" in f])
 
 
+_HUB_SNAPSHOTS: dict = {}
+
+
+def _local_snapshot(repo_id: str):
+    """The newest snapshot of ``repo_id`` in the Hub cache: ``(sha, files)``, or ``None``."""
+    root = os.path.join(HF_HUB_CACHE, f"datasets--{repo_id.replace('/', '--')}", "snapshots")
+    if not os.path.isdir(root):
+        return None
+    snapshots = [os.path.join(root, d) for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))]
+    if not snapshots:
+        return None
+    newest = max(snapshots, key=os.path.getmtime)
+    files = []
+    for dirpath, _dirs, names in os.walk(newest):
+        for name in names:
+            files.append(os.path.relpath(os.path.join(dirpath, name), newest))
+    return os.path.basename(newest), sorted(files)
+
+
+def _hub_snapshot(repo_id: str, hf_token: str):
+    """``(sha, files)`` of the dataset's current revision: one Hub request per
+    dataset and per process, none at all with ``PWB_HF_OFFLINE=1``.
+
+    The previous loader asked the Hub for the file list, then let
+    ``hf_hub_download`` revalidate every shard against the Hub before reading
+    it from the cache: 778 shards for the daily stock prices, one HTTPS round
+    trip each, 173 s of a 187 s load on a warm cache (measured 30 Oct 2026,
+    ``_ssl.SSLSocket.read`` 802 calls), against 1 s to read the parquet files.
+    Pinning the revision to the commit hash lets ``hf_hub_download`` return a
+    cached file without a request; a new commit on the Hub changes the hash and
+    downloads what it must. Offline, or when the Hub is unreachable, the newest
+    local snapshot is used and said so.
+    """
+    if repo_id in _HUB_SNAPSHOTS:
+        return _HUB_SNAPSHOTS[repo_id]
+    offline = os.getenv("PWB_HF_OFFLINE", "0") != "0" or os.getenv("HF_HUB_OFFLINE", "0") not in ("", "0")
+    if not offline:
+        try:
+            info = HfApi(token=hf_token).dataset_info(repo_id, files_metadata=False)
+            snapshot = (info.sha, sorted(sibling.rfilename for sibling in info.siblings))
+            _HUB_SNAPSHOTS[repo_id] = snapshot
+            return snapshot
+        except Exception as exc:  # noqa: BLE001 - the local copy is the fallback
+            print(f"[datasets] Hub unreachable for {repo_id} ({type(exc).__name__}); using the local snapshot")
+    snapshot = _local_snapshot(repo_id)
+    if snapshot is None:
+        raise RuntimeError(
+            f"No local snapshot of {repo_id} in {HF_HUB_CACHE} and the Hub was not consulted "
+            f"(offline={offline})."
+        )
+    _HUB_SNAPSHOTS[repo_id] = snapshot
+    return snapshot
+
+
 def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=None) -> pd.DataFrame:
     repo_id = f"paperswithbacktest/{dataset_name}"
-    api = HfApi(token=hf_token)
-    repo_files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
+    sha, repo_files = _hub_snapshot(repo_id, hf_token)
     parquet_files = _list_hf_split_parquet_files(repo_files, split)
     if not parquet_files:
         raise ValueError(f"No parquet files found for split '{split}' in dataset '{repo_id}'.")
@@ -178,12 +232,12 @@ def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=
             repo_id=repo_id,
             repo_type="dataset",
             filename=file_name,
+            revision=sha,
             token=hf_token,
         )
         for file_name in iterator
     ]
     return _read_parquet_files(local_files, desc=f"Load {dataset_name}", symbols=symbols)
-
 
 DAILY_PRICE_DATASETS = [
     "Bonds-Daily-Price",
