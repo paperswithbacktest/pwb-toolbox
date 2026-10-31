@@ -4,6 +4,7 @@ from .commission import (
     get_cost_breakdown,
     get_cost_schedules,
     equity_symbols,
+    currency_symbols,
     cost_sources,
     roll_half_spread,
     measured_half_spread,
@@ -17,6 +18,8 @@ from .commission import (
     SOURCE_DEFAULT,
     EQUITY_REPOS,
     FUTURES_PARAMS_REPO,
+    FOREX_PARAMS_REPO,
+    CRYPTO_PARAMS_REPO,
     futures_root,
 )
 from .backtest_engine import (
