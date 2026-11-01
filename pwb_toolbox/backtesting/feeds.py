@@ -19,10 +19,17 @@ from __future__ import annotations
 
 import numpy as np
 import backtrader as bt
-from backtrader.utils.date import date2num
+
+if not hasattr(bt.feeds.PandasData, "_colmapping"):
+    # An engine whose PandasData already reads its bars from arrays (Tradewind):
+    # nothing to speed up, and none of the internals below exist.
+    ArrayPandasData = bt.feeds.PandasData
+else:
+    from backtrader.utils.date import date2num
+    ArrayPandasData = None  # replaced by the class below
 
 
-class ArrayPandasData(bt.feeds.PandasData):
+class _ArrayPandasData(bt.feeds.PandasData if ArrayPandasData is None else object):
     """``PandasData`` with the frame flattened into arrays at ``start()``."""
 
     def start(self):
@@ -53,3 +60,7 @@ class ArrayPandasData(bt.feeds.PandasData):
             getattr(lines, datafield)[0] = values[idx]
         lines.datetime[0] = self._pwb_dtnum[idx]
         return True
+
+
+if ArrayPandasData is None:
+    ArrayPandasData = _ArrayPandasData
