@@ -76,6 +76,18 @@ FALLBACK_HALF_SPREAD = 1e-4
 
 COST_PARAMS_REPO = "paperswithbacktest/Stocks-Yearly-TransactionCostParams"
 FUTURES_PARAMS_REPO = "paperswithbacktest/Futures-Yearly-FrontMonthCostParams"
+FOREX_PARAMS_REPO = "paperswithbacktest/Forex-Yearly-TransactionCostParams"
+CRYPTO_PARAMS_REPO = "paperswithbacktest/Cryptocurrencies-Yearly-TransactionCostParams"
+
+# The two currency tables, keyed by the price repository whose legs they price.
+# Forex is measured from quotes over London and New York hours; crypto is the
+# Roll estimate on consolidated prints (the vendor has no crypto quotes). Both
+# are keyed by pair, base then quote (``EURUSD``, ``BTCUSD``), see
+# ``_currency_keys`` for how a PWB symbol is spelled against them.
+CURRENCY_REPOS = {
+    "Forex-Daily-Price": FOREX_PARAMS_REPO,
+    "Cryptocurrencies-Daily-Price": CRYPTO_PARAMS_REPO,
+}
 
 # PWB's futures tickers carry Bloomberg-style roots; the measured table is keyed
 # by the exchange's own. Same contract, different code -- and that is checked on
@@ -291,6 +303,7 @@ def _why_unreachable(repo_id: str, exc: Exception) -> str:
 _PARAMS_CACHE: dict | None = None
 _LAMBDA_CACHE: dict | None = None
 _VINTAGE_CACHE: dict | None = None
+_CURRENCY_CACHE: dict | None = None
 
 
 def load_cost_params(repo_id: str = COST_PARAMS_REPO) -> dict:
@@ -487,6 +500,90 @@ def equity_symbols(symbols) -> set:
     return out
 
 
+def currency_symbols(symbols) -> dict:
+    """``{base name: price repository}`` for the forex and crypto legs.
+
+    The mirror of ``equity_symbols``: that one says which names the US equity
+    table may answer for, this one says which names the two currency tables
+    may answer for, and under which class. The suffix wins where the caller
+    gave one (``BTC.CRP`` is the coin whatever the index says about ``BTC``),
+    and the catalogue index decides a bare name. A name that is neither forex
+    nor crypto is simply absent from the result.
+    """
+    universe = _universe_repos()
+    out = {}
+    for symbol in symbols:
+        name = str(symbol)
+        repo = None
+        if "." in name:
+            base, _, suffix = name.rpartition(".")
+            repo = _SUFFIX_REPOS.get(suffix.upper())
+            name = base or name
+        if repo is None:
+            repo = universe.get(name)
+        if repo in CURRENCY_REPOS:
+            out[name] = repo
+    return out
+
+
+def _currency_keys(name: str, repo: str) -> list:
+    """How a PWB symbol is spelled in its currency table, most likely first.
+
+    Forex: the table holds ``EURUSD`` and ``USDJPY`` as the feed quotes them;
+    PWB's feed may hand the pair back inverted (``JPYUSD`` once ``to_usd`` has
+    flipped it), and a pair and its inverse have the same relative spread, so
+    both orders are tried. Crypto: ``Cryptocurrencies-Daily-Price`` keys a coin
+    by its bare symbol quoted in USD, so ``BTC`` is ``BTCUSD`` in the table.
+    """
+    name = str(name).upper()
+    if repo == "Forex-Daily-Price":
+        keys = [name]
+        if len(name) == 6:
+            keys.append(name[3:] + name[:3])
+        return keys
+    return [name + "USD", name]
+
+
+def _currency_vintages() -> dict:
+    """``{price repo: {pair: {year: half_spread}}}`` for the two currency tables.
+
+    Loaded once per process. An absent or unreachable table is not an error:
+    its legs fall through to the floor exactly as they did before the table
+    existed, and the reason is printed once.
+    """
+    global _CURRENCY_CACHE
+    if _CURRENCY_CACHE is not None:
+        return _CURRENCY_CACHE
+    out: dict[str, dict] = {}
+    for price_repo, params_repo in CURRENCY_REPOS.items():
+        table: dict[str, dict[int, float]] = {}
+        try:
+            frame = _read_cost_table(params_repo)
+            for symbol, year, spread_bps in zip(
+                frame["symbol"], frame["year"], frame["spread_bps"]
+            ):
+                if not np.isfinite(spread_bps) or spread_bps <= 0:
+                    continue
+                table.setdefault(str(symbol).upper(), {})[int(year)] = (
+                    float(spread_bps) / 2.0 / 1e4
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[costs] {_why_unreachable(params_repo, exc)}; using the floor")
+        out[price_repo] = table
+    _CURRENCY_CACHE = out
+    return out
+
+
+def _currency_have(name: str, repo: str):
+    """The ``{year: half_spread}`` vintages of a currency leg, or None."""
+    table = _currency_vintages().get(repo) or {}
+    for key in _currency_keys(name, repo):
+        have = table.get(key)
+        if have:
+            return have
+    return None
+
+
 _FUTURES_ROOT_RE = re.compile(r"^([A-Z]{1,4})\d+$")
 
 
@@ -571,8 +668,15 @@ def get_cost_schedules(
     max_gap: int = 3,
     measurable=None,
     active_years=None,
+    currencies=None,
 ) -> tuple[dict, dict]:
     """``({symbol: {year: half_spread}}, {symbol: Cost})`` over the traded span.
+
+    ``currencies`` -- ``{symbol: price repository}`` from ``currency_symbols``
+    -- names the forex and crypto legs, which are priced from their own tables
+    (``FOREX_PARAMS_REPO``, ``CRYPTO_PARAMS_REPO``) instead of the floor. It is
+    consulted only for a symbol already judged non-equity, like the futures
+    table, and for the same reason.
 
     ``active_years`` -- ``{symbol: {year, ...}}``, the years in which the price
     series actually has a bar -- is what keeps a vintage from being bridged
@@ -642,6 +746,8 @@ def get_cost_schedules(
             # be a stock that merely looks like a contract root.
             root = futures_root(symbol)
             have = futures.get(root) if root else None
+            if not have and currencies and symbol in currencies:
+                have = _currency_have(symbol, currencies[symbol])
             if not have:
                 offclass.append(symbol)
                 continue
@@ -693,13 +799,14 @@ def get_cost_schedules(
     # statement about US stocks.
     #
     # So these are charged FALLBACK_HALF_SPREAD and labelled `default`, which
-    # is the honest reading -- there is no cost table for crypto, forex or
-    # bonds. Futures now have one, so a contract reaches this line only when
-    # its root is absent from that table: the ICE softs, and anything whose
-    # root PWB spells differently and ``FUTURES_ROOT_ALIASES`` does not map.
-    # One basis point is roughly right for FX majors and far too low for an
-    # emerging-market cross, a small altcoin or an illiquid contract, which is
-    # why the count is printed rather than buried.
+    # is the honest reading -- there is no cost table for bonds. Futures,
+    # forex and crypto now have one each, so a leg reaches this line only when
+    # its class table does not hold it: the ICE softs and anything whose root
+    # PWB spells differently and ``FUTURES_ROOT_ALIASES`` does not map, a pair
+    # or a coin the vendor never quoted, or a caller that gave no
+    # ``currencies`` map. One basis point is roughly right for FX majors and
+    # far too low for an emerging-market cross, a small altcoin or an illiquid
+    # contract, which is why the count is printed rather than buried.
     for symbol in offclass:
         summary[symbol] = Cost(symbol, FALLBACK_HALF_SPREAD, SOURCE_DEFAULT, start_year)
 

@@ -85,6 +85,7 @@ def _apply_per_symbol_commissions(
         end_date=end_date,
         measurable=pwb_bt.equity_symbols(symbols),
         active_years=active_years,
+        currencies=pwb_bt.currency_symbols(symbols),
     )
     lambdas = pwb_bt.load_lambda_params() if enable_impact else {}
     year = int(str(start_date)[:4])
