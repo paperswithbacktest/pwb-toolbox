@@ -579,8 +579,11 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
 
     What the book asked for is recorded at the end of each bar that set a
     target: the targets of that bar, plus what every other name holds once its
-    open orders are filled. ``requested_long`` and ``requested_gross`` are the
-    peaks of that record. 0.1.31-0.1.42 kept a target per name that only
+    open orders are filled, at the weight the strategy asked for (a holding
+    sent at a scale below 1 is divided by it, so a scaled run measures the
+    same book). ``requested_long`` and ``requested_gross`` are the peaks of
+    that record; what the bar holds as sent, scaled targets included, is
+    ``_pwb_cap_funded``. 0.1.31-0.1.42 kept a target per name that only
     another target could reset, so a name exited by ``close()``, by size or
     through a refused order stayed in the sum for good: 4.9 for a book that
     never held more than 0.98 (``tests/test_exposure_cap.py``).
@@ -612,6 +615,8 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
             self._pwb_cap_orders = {}  # name -> orders not yet known to be dead
             self._pwb_cap_records = []  # (day, long, short) at the end of each bar with targets
             self._pwb_cap_applied = {}  # day -> scale below 1 sent with that bar's targets
+            self._pwb_cap_sent = {}  # name -> scale sent with its latest order
+            self._pwb_cap_funded = []  # (day, long) as sent: the bar's scaled targets + holdings
             self._pwb_ms_next = 0
             self._pwb_ms_watch = set()
             self._pwb_ms_filled = set()
@@ -638,12 +643,14 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
             if day != self._pwb_cap_day:
                 self._pwb_cap_close_bar()
                 self._pwb_cap_day = day
-            self._pwb_cap_req[getattr(data, "_name", None) or id(data)] = (data, float(weight))
+            name = getattr(data, "_name", None) or id(data)
+            self._pwb_cap_req[name] = (data, float(weight))
             scale = cap
             if days and day is not None:
                 i = bisect.bisect_right(days, day) - 1
                 if i >= 0:
                     scale *= scales[i]
+            self._pwb_cap_sent[name] = scale
             if scale < 1.0 and weight and day is not None:
                 self._pwb_cap_applied[day] = min(scale, self._pwb_cap_applied.get(day, 1.0))
             return scale
@@ -686,6 +693,8 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
             if order is not None:
                 name = getattr(order.data, "_name", None) or id(order.data)
                 self._pwb_cap_live[name] = order.data
+                if not self._pwb_cap_scaling:  # by size or close(): nothing was scaled
+                    self._pwb_cap_sent[name] = 1.0
                 orders = [o for o in self._pwb_cap_orders.get(name, ()) if o.alive()]
                 orders.append(order)
                 self._pwb_cap_orders[name] = orders
@@ -707,6 +716,8 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
             req, self._pwb_cap_req = self._pwb_cap_req, {}
             long = sum(w for _, w in req.values() if w > 0)
             short = -sum(w for _, w in req.values() if w < 0)
+            sent = self._pwb_cap_sent
+            funded = sum(w * sent.get(name, 1.0) for name, (_, w) in req.items() if w > 0)
             value = self.broker.getvalue()
             for name, data in list(self._pwb_cap_live.items()):
                 held = self._pwb_cap_held(name, data)
@@ -718,10 +729,16 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
                     continue
                 weight = held * float(data.close[0]) / value
                 if weight > 0:
+                    funded += weight
+                # In what the strategy asked for, not in what the cap let
+                # through, so that a scaled run measures the same book.
+                weight /= sent.get(name, 1.0)
+                if weight > 0:
                     long += weight
                 else:
                     short -= weight
             self._pwb_cap_records.append((self._pwb_cap_day, long, short))
+            self._pwb_cap_funded.append((self._pwb_cap_day, funded))
             self.requested_long = max(self.requested_long, long)
             self.requested_gross = max(self.requested_gross, long + short)
 
@@ -891,7 +908,15 @@ def run_strategy(
     so a book without a target is not re-run at all. If the scaled run is still
     underfunded, the targets are stepped down by ``DELEVERAGE_STEP`` up to
     ``DELEVERAGE_MAX_STEPS`` times; if nothing works the run as published is
-    returned. ``max_leverage`` cannot exceed 1: backtrader refuses at execution
+    returned. A bar schedule that one step did not fund, and whose run held
+    more than ``max_leverage`` on over ``margin_tolerance`` of its bars with
+    positions an earlier bar had sized, is replaced by one scale for the whole
+    run (0.99 over the peak, ``run_report["scaling_used"] == "uniform"``): a
+    book that keeps positions across bars without re-targeting them -- daily
+    cohorts held two days -- carries each one at the scale of the bar that
+    sent it, which no schedule of the next bars can correct. At one scale, a
+    step goes straight to 0.99 over the peak that run measured when it is
+    lower than the step. ``max_leverage`` cannot exceed 1: backtrader refuses at execution
     any buy the cash does not cover, ``checksubmit`` or not, so leverage above
     the account is not something the harness can fund.
 
@@ -1081,6 +1106,7 @@ def run_strategy(
         report = {
             "attempts": attempts,
             "scaling": scaling,
+            "scaling_used": "uniform" if fallback else scaling,
             "max_leverage": max_leverage,
             "exposure_cap": min([cap] + applied),
             "step_cap": cap,
@@ -1128,6 +1154,7 @@ def run_strategy(
             "requested_gross": round(report["requested_gross"], 6),
             "attempts": attempts,
             "scaling": scaling,
+            "scaling_used": report["scaling_used"],
             "reject_rate": round(funding["reject_rate"], 6),
             "min_cash_ratio": (
                 None if funding["min_cash_ratio"] is None
@@ -1138,6 +1165,7 @@ def run_strategy(
         return strategy
 
     cap, schedule, steps, attempts, as_published = 1.0, None, 0, 0, None
+    fallback = False
     while True:
         strategy = attempt(cap, schedule)
         attempts += 1
@@ -1185,13 +1213,48 @@ def run_strategy(
                         f"{max_leverage:.0%} long scaled to it (peak {peak:.0%})"
                     )
                 continue
+        if schedule is not None and steps:
+            # Bar scaling sizes the targets of a bar against what that bar
+            # asks for, and leaves every name it does not re-target at the
+            # scale of the bar that sent it. A book that holds positions
+            # across bars -- a cohort entered every day and held two, a
+            # rotation of part of the book -- carries a position sized at
+            # 99 % into a bar whose own targets are scaled for 200 %: the
+            # account is over whatever that bar's scale, and stepping the
+            # schedule down shrinks every bar without curing it (0.1.43:
+            # five steps, 59 % of a schedule whose refusals then changed
+            # the path). One scale for the whole run fits such a book.
+            over = max_leverage + debit_tolerance
+            funded = strategy._pwb_cap_funded
+            carried = sum(1 for _, long in funded if long > over)
+            if carried > margin_tolerance * max(len(funded), 1):
+                peak = as_published.requested_long
+                schedule, cap, fallback = None, max_leverage / peak, True
+                print(
+                    f"Underfunded: {why} -- {carried} bars above {over:.0%} long with "
+                    f"positions sized on an earlier bar; re-running every target at "
+                    f"{cap:.1%} (the book peaks at {peak:.0%} long)"
+                )
+                continue
         if steps >= DELEVERAGE_MAX_STEPS:
             print(
                 f"Underfunded at {cap:.1%}: {why} -- no exposure makes it "
                 f"fundable, returning it as published"
             )
             return finish(as_published, as_published, attempts, 1.0, True)
-        cap, steps = cap * DELEVERAGE_STEP, steps + 1
+        step = cap * DELEVERAGE_STEP
+        peak = max([0.0] + [long for _, long, _ in strategy._pwb_cap_records])
+        if schedule is None and peak > max_leverage and max_leverage / peak < step:
+            # Run at one scale, this run measured what the book asks for on
+            # the path it takes funded -- more than the refusals as published
+            # let through (a third cohort that was always refused).
+            cap, steps = max_leverage / peak, steps + 1
+            print(
+                f"Underfunded: {why} -- stepping every target down to {cap:.1%} "
+                f"(the book peaks at {peak:.0%} long once funded)"
+            )
+            continue
+        cap, steps = step, steps + 1
         print(f"Underfunded: {why} -- stepping every target down to {cap:.1%}")
 
 

@@ -132,6 +132,86 @@ class PeakLeverageTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _run(panel({"A": np.full(10, 100.0)}), VariableLeverage, max_leverage=2.0)
 
+class Cohorts(_Harnessed):
+    """slow_capital...: a cohort at 100 % every bar, held ``hold`` bars after its fill.
+
+    Each bar buys five names not already held, at 20 % each, and exits the
+    cohort it filled ``hold`` bars ago with a target of zero -- the exits
+    submitted before the entries, as in the published strategy. With
+    ``hold=1`` two cohorts are held at every close: the book asks for 200 %.
+    """
+
+    params = (("hold", 1),)
+
+    def __init__(self):
+        super().__init__()
+        self.entry = {}
+        self.exposure = []
+
+    def next(self):
+        super().next()
+        now = len(self)
+        value = self.broker.getvalue()
+        self.exposure.append(
+            sum(self.getposition(d).size * d.close[0] for d in self.datas) / value
+        )
+        for d in self.datas:
+            if not self.getposition(d).size:
+                self.entry.pop(d._name, None)
+                continue
+            entered = self.entry.setdefault(d._name, now)
+            if now - entered >= self.p.hold:
+                self.order_target_percent(d, 0.0)
+                del self.entry[d._name]
+        picks = [self.datas[(now * 5 + j) % len(self.datas)] for j in range(5)]
+        picks = [d for d in picks if not self.getposition(d).size]
+        for d in picks:
+            self.order_target_percent(d, 1.0 / len(picks))
+            self.entry[d._name] = now + 1
+
+
+def _cohorts(hold):
+    class Book(Cohorts):
+        params = (("hold", hold),)
+
+    rng = np.random.default_rng(0)
+    close = {
+        f"S{j}": 100 * np.exp(np.cumsum(rng.normal(0.0003, 0.01, 300))) for j in range(20)
+    }
+    return _run(panel(close), Book, commission=0.001, symbols=tuple(close))
+
+
+class CarriedPositionsTest(unittest.TestCase):
+    """A book that does not re-target what it holds is scaled as one book.
+
+    As published every other cohort is refused, so the bars after a refusal
+    read 100 % and the bar schedule sent their cohort at 99 %; the next
+    cohort, scaled for 200 %, then found the account full. 0.1.43 stepped the
+    whole schedule down until the refusals fell under 2 % (exposure cap
+    0.325, 6 runs; 59 % and Sharpe 0.019 on the published strategy).
+    """
+
+    def test_two_overlapping_cohorts_are_funded_at_99_percent(self):
+        strategy = _cohorts(hold=1)
+        report = strategy.run_report
+        self.assertAlmostEqual(strategy.requested_long, 2.0, places=3)
+        self.assertAlmostEqual(strategy.exposure_cap, 0.99 / 2.0, places=3)
+        self.assertEqual(strategy.funding_audit["margin"], 0)
+        self.assertAlmostEqual(float(np.median(strategy.exposure[10:])), 0.99, delta=0.01)
+        # as published, the bar schedule, one step at 90 %, then one scale
+        self.assertEqual(report["attempts"], 4)
+        self.assertEqual(report["scaling_used"], "uniform")
+
+    def test_a_cohort_the_refusals_hid_is_measured_on_the_funded_run(self):
+        # three cohorts held at each close; as published the third was always
+        # refused, so the book read 200 %, not 300 %
+        strategy = _cohorts(hold=2)
+        self.assertAlmostEqual(strategy.requested_long, 2.0, places=3)
+        self.assertAlmostEqual(strategy.exposure_cap, 0.99 / 3.0, delta=0.005)
+        self.assertEqual(strategy.funding_audit["margin"], 0)
+        self.assertAlmostEqual(float(np.median(strategy.exposure[10:])), 0.99, delta=0.015)
+
+
 class UnderfundedTriggerTest(unittest.TestCase):
     def _audit(self, min_cash, ratio):
         return {
