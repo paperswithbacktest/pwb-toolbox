@@ -220,6 +220,25 @@ is refused (`order.Rejected`) until it is a member again; `strategy.membership_a
 lists both. Its bars outside are flat in the feed (`BaseStrategy.is_tradable` returns
 `False` on them), so screen on tradable names to keep the book invested.
 
+### Fees a strategy sets itself
+
+Each symbol is charged its measured half-spread for the year of the bar. A strategy's
+own `self.broker.setcommission(...)` can only make fills dearer: **each fill pays the
+higher of the two**.
+
+* A percentage scheme (`commission=0.001`, i.e. 0.1 %; `percabs=False` reads `0.1` as
+  0.1 %) is a floor on the rate: `max(measured half-spread, requested rate)`. A request
+  of 0, or below the measured spread, changes nothing.
+* A per-unit scheme (`commtype=COMM_FIXED`, or a `margin`) competes fill by fill:
+  `max(spread cost, fee x |size|)`. Its `margin`, `mult`, `stocklike`, `interest` and
+  `leverage` are not taken (they would turn a stock into a future); they are listed
+  as ignored.
+* `name="<symbol>"` applies to that symbol only; each call replaces the previous one.
+
+What was applied is in `strategy.run_report["commission_policy"]` and on one
+`Commission policy: {...}` line. `run_strategy(broker_kwargs={"commission": x})` still
+replaces the measured schemes altogether.
+
 ## List of strategies
 
 Samples of Papers With Backtest strategies:
