@@ -27,7 +27,9 @@ from .backtest_engine import (
     generate_sensitivity_results,
     FundingAudit,
     TARGET_GROSS,
+    MAX_LEVERAGE,
     MARGIN_TOLERANCE,
+    DEBIT_TOLERANCE,
 )
 from .optimization_engine import optimize_strategy_ga
 from .indicators import SigmoidLongCompositeIndicator

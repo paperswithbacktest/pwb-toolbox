@@ -1,4 +1,6 @@
+import bisect
 import copy
+import json
 import os
 import backtrader as bt
 import itertools
@@ -131,19 +133,34 @@ def _apply_per_symbol_commissions(
     )
 
 
-# What a fundable book is allowed to ask for. The missing 1 % is the commission:
-# a book at exactly 100 % has no cash left to pay for the trade that got it
-# there, so backtrader refuses the order and the NAV stops moving.
-TARGET_GROSS = 0.99
+# What a fundable book is allowed to ask for: its long exposure as a share of
+# the NAV. The missing 1 % is the commission: a book at exactly 100 % has no
+# cash left to pay for the trade that got it there, so backtrader refuses the
+# order and the NAV stops moving. Short legs are not counted -- their sale
+# credits the cash that funds them, so a dollar-neutral book at gross 2 is
+# fundable as it stands, and capping the gross halved it (0.1.31-0.1.42).
+MAX_LEVERAGE = 0.99
+# The name it had in 0.1.31-0.1.42, when it bounded the gross.
+TARGET_GROSS = MAX_LEVERAGE
 
-# Fallback step, applied when scaling to TARGET_GROSS was not enough, and the
-# number of times it may be applied before the run is given up on.
+# Fallback step, applied when scaling the over-exposed bars was not enough
+# (orders refused for another reason: buys submitted before the sells that
+# fund them, an overnight gap), and the number of times it may be applied
+# before the run is given up on.
 DELEVERAGE_STEP = 0.90
 DELEVERAGE_MAX_STEPS = 5
 
 # Share of orders a run may fail to fund before it counts as underfunded. An
 # isolated rejection on a gap day is noise; a systematic one freezes the NAV.
 MARGIN_TOLERANCE = 0.02
+# Debit a run may show, as a share of the NAV of the same bar, before it
+# counts as underfunded. A debit of a dollar used to re-run the whole backtest.
+DEBIT_TOLERANCE = 0.01
+# How targets above MAX_LEVERAGE are brought back under it: on the bars that
+# ask for it ("bar"), or over the whole run by the peak ("uniform", which keeps
+# the shape of a book whose leverage is the strategy -- managed volatility,
+# betting-against-beta -- and divides its returns instead).
+SCALINGS = ("bar", "uniform")
 # Full calendar years of missing bars that split one ticker into two instruments.
 ERA_GAP_YEARS = 3
 
@@ -223,6 +240,8 @@ class FundingAudit(bt.Analyzer):
       This is the one that freezes a NAV and publishes as a Sharpe of zero.
     * ``min_cash``  -- the low-water mark of the balance where the broker funds
       the order anyway and lets the account run a debit.
+    * ``min_cash_ratio`` -- the same low-water mark as a share of that bar's
+      NAV, which is what ``DEBIT_TOLERANCE`` is read against.
     * ``min_value`` -- the low-water mark of the NAV itself. A geared book that
       loses enough does not merely draw down, it goes through zero.
     """
@@ -231,6 +250,7 @@ class FundingAudit(bt.Analyzer):
         self.margin = 0
         self.submitted = 0
         self.min_cash = None
+        self.min_cash_ratio = None
         self.min_value = None
 
     def notify_order(self, order):
@@ -246,6 +266,10 @@ class FundingAudit(bt.Analyzer):
         value = self.strategy.broker.getvalue()
         if self.min_value is None or value < self.min_value:
             self.min_value = value
+        if value > 0:
+            ratio = cash / value
+            if self.min_cash_ratio is None or ratio < self.min_cash_ratio:
+                self.min_cash_ratio = ratio
 
     def get_analysis(self):
         submitted = max(self.submitted, 1)
@@ -254,19 +278,25 @@ class FundingAudit(bt.Analyzer):
             "submitted": self.submitted,
             "reject_rate": self.margin / submitted,
             "min_cash": self.min_cash,
+            "min_cash_ratio": self.min_cash_ratio,
             "min_value": self.min_value,
         }
 
 
-def _underfunded(audit: dict, tolerance: float) -> bool:
+def _underfunded(audit: dict, tolerance: float, debit_tolerance: float = DEBIT_TOLERANCE) -> bool:
     """True when the run outgrew the account: refused, in debit, or wiped out.
 
     The margin check itself stays in force -- this only decides whether the
-    same strategy is worth re-running smaller.
+    same strategy is worth re-running smaller. A debit counts only beyond
+    ``debit_tolerance`` of the NAV: one day a dollar short used to re-run the
+    whole backtest at a fraction of its exposure.
     """
     if audit["reject_rate"] > tolerance:
         return True
-    if audit["min_cash"] is not None and audit["min_cash"] < 0:
+    ratio = audit.get("min_cash_ratio")
+    if ratio is None and audit.get("min_cash") is not None:
+        ratio = -float("inf") if audit["min_cash"] < 0 else 0.0  # an audit without the ratio
+    if ratio is not None and ratio < -debit_tolerance:
         return True
     return audit["min_value"] is not None and audit["min_value"] <= 0
 
@@ -291,7 +321,9 @@ def _refuse_before_listing(broker, first_bar: dict) -> dict:
     what a real broker answers for an instrument that does not trade yet.
     After the first bar the guard does nothing: the flat tail after a symbol's
     last bar, and the holes between, are a different matter -- an instrument
-    that stopped printing may still be held or sold.
+    that stopped printing may still be held or sold. For a name a
+    point-in-time universe brought in, the bars outside its membership are
+    guarded by ``_refuse_outside_universe``.
 
     Returns the audit, filled as the run goes: ``{symbol: {"orders": n,
     "first": date, "last": date}}`` of the refusals.
@@ -319,7 +351,127 @@ def _refuse_before_listing(broker, first_bar: dict) -> dict:
     return audit
 
 
-def _with_exposure_cap(strategy_cls, cap: float):
+class _Membership:
+    """The bars on which a point-in-time name is outside its universe.
+
+    ``out`` -- ``{symbol: bool array over the trading days}``, only for the
+    names that have at least one such bar, and only after their first real
+    bar: before it ``_refuse_before_listing`` is the guard, as it always was.
+    ``exits`` -- ``[(date, symbol)]`` sorted, the first bar of each absence.
+    """
+
+    def __init__(self, days: pd.DatetimeIndex, out: pd.DataFrame):
+        self.day_index = {day.date(): i for i, day in enumerate(days)}
+        self.out = {}
+        exits = []
+        for symbol in out.columns:
+            flags = out[symbol].to_numpy(dtype=bool)
+            if not flags.any():
+                continue
+            self.out[symbol] = flags
+            starts = np.flatnonzero(flags & ~np.r_[False, flags[:-1]])
+            exits.extend((days[i].date(), symbol) for i in starts)
+        self.exits = sorted(exits)
+
+    def is_out(self, symbol, day) -> bool:
+        flags = self.out.get(symbol)
+        if flags is None:
+            return False
+        i = self.day_index.get(day)
+        return i is not None and bool(flags[i])
+
+
+def _pit_membership(symbols, present: pd.DataFrame, trading_days) -> "_Membership | None":
+    """Where each name a point-in-time universe brought in sits outside it.
+
+    ``present`` is the panel's row mask before any fill. A bar is outside when
+    the name was not a member on that session *and* has no price row: the rows
+    ``apply_pit_membership`` keeps (its as-of tolerance, a member's real bar)
+    stay tradable, and so does a hole in a member's prices -- that one is a
+    data gap, not an exit. Names the caller listed itself (``["sp500", "SPY"]``)
+    are never cut, as in ``get_pricing``.
+    """
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    _, spec, added, explicit = pwb_ds._resolve_universe(list(symbols))
+    if spec is None:
+        return None
+    names = [s for s in present.columns if s in added and s not in explicit]
+    if not names:
+        return None
+    from pwb_toolbox.datasets.pit_universe import membership_mask
+
+    member = membership_mask(trading_days, names, *spec).to_numpy()
+    rows = present[names].reindex(trading_days, fill_value=False).to_numpy(dtype=bool)
+    listed = np.maximum.accumulate(rows, axis=0)  # from the first real bar on
+    out = ~member & ~rows & listed
+    return _Membership(trading_days, pd.DataFrame(out, index=trading_days, columns=names))
+
+
+def _flatten_out_bars(pivot_df: pd.DataFrame, membership: "_Membership") -> None:
+    """Make every bar outside the universe a flat bar at the last member close.
+
+    The forward fill copies the whole last bar, its open included, so an order
+    filled on the first bar outside would trade at a price already a day old.
+    A flat bar at the last close is the price the liquidation gets, and it
+    earns nothing while the name is away.
+    """
+    names = list(membership.out)
+    if not names:
+        return
+    mask = np.column_stack([membership.out[s] for s in names])
+    close = pivot_df[[(s, "close") for s in names]].to_numpy()
+    for field in ("open", "high", "low"):
+        columns = [(s, field) for s in names]
+        if any(c not in pivot_df.columns for c in columns):
+            continue
+        block = pivot_df[columns].to_numpy(copy=True)
+        block[mask] = close[mask]
+        pivot_df[columns] = block
+
+
+def _refuse_outside_universe(broker, membership: "_Membership", state: dict) -> dict:
+    """Make ``broker`` reject any order on a name outside its point-in-time universe.
+
+    The bars outside are a flat line (``_flatten_out_bars``), with a volatility,
+    a beta and a correlation of zero: a low-volatility or a minimum-variance
+    sort picks them first. Accepting the order would hold a position that
+    earns nothing while the name is away and then takes, in one bar, the whole
+    move it made in the meantime (CIT on 2009-12-10, 0.7 to 29 dollars). A
+    real broker answers ``Rejected`` for an instrument the account may not
+    trade, and the strategy is notified the same way. The liquidation the
+    harness itself places at the exit passes (``state["liquidating"]``).
+
+    Returns the audit, filled as the run goes: ``{symbol: {"orders": n,
+    "first": date, "last": date}}``.
+    """
+    audit = {}
+    original = broker.submit
+
+    def submit(order, check=True):
+        if not state.get("liquidating"):
+            data = order.data
+            symbol = getattr(data, "_name", None)
+            today = data.datetime.date(0)
+            if membership.is_out(symbol, today):
+                entry = audit.setdefault(symbol, {"orders": 0, "first": today, "last": today})
+                entry["orders"] += 1
+                entry["last"] = today
+                order.reject(broker)
+                broker.notify(order)
+                return order
+        return original(order, check=check)
+
+    broker.submit = submit
+    return audit
+
+
+def _signed(order) -> float:
+    size = abs(order.size)
+    return size if order.isbuy() else -size
+
+
+def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership=None, guard=None):
     """Subclass ``strategy_cls`` to scale, and record, every target it asks for.
 
     Acts on the order, not on a ``leverage`` parameter, because declaring one
@@ -328,11 +480,26 @@ def _with_exposure_cap(strategy_cls, cap: float):
     literal 1.0, and 1 803 of the 5 831 published strategies declare no such
     parameter at all. Scaling the request is the only lever that always exists.
 
-    ``requested_gross`` is the high-water mark of what the strategy asked for
-    before scaling, which is what sizes the next attempt: a book asking for
-    200 % needs halving, and guessing that by steps would cost five backtests.
+    A target of ``order_target_percent`` or ``order_target_value`` is sent at
+    ``target x cap x schedule(bar)``; ``schedule`` is ``(days, scales)``, read
+    as of the bar's date, and comes from a first run of the same strategy (see
+    ``run_strategy``). Orders by size, ``buy``/``sell`` and ``close`` are not
+    scaled -- there is no target in them to scale.
 
-    The wrapper's own state lives under ``_pwb_cap_*`` names. It used to be
+    What the book asked for is recorded at the end of each bar that set a
+    target: the targets of that bar, plus what every other name holds once its
+    open orders are filled. ``requested_long`` and ``requested_gross`` are the
+    peaks of that record. 0.1.31-0.1.42 kept a target per name that only
+    another target could reset, so a name exited by ``close()``, by size or
+    through a refused order stayed in the sum for good: 4.9 for a book that
+    never held more than 0.98 (``tests/test_exposure_cap.py``).
+
+    With ``membership``, a position in a name that leaves its point-in-time
+    universe is closed on the first bar outside (filled at the last member
+    close, see ``_flatten_out_bars``); ``guard`` is the flag that lets that one
+    order past ``_refuse_outside_universe``.
+
+    The wrapper's own state lives under ``_pwb_*`` names. It used to be
     ``self._targets``, ``self._record`` and ``self._scaling``, set *after* the
     strategy's ``__init__`` had run: a strategy keeping its target book in
     ``self._targets`` found it replaced by an empty dict, one defining its own
@@ -340,73 +507,222 @@ def _with_exposure_cap(strategy_cls, cap: float):
     the published strategies use one of those names. A subclass that is not
     the strategy's author must not pick the names its author would.
     """
+    days, scales = schedule if schedule else ((), ())
+    guard = guard if guard is not None else {}
 
     class _Capped(strategy_cls):
         exposure_cap = cap
 
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self._pwb_cap_targets: dict = {}
             self._pwb_cap_scaling = False
+            self._pwb_cap_day = None
+            self._pwb_cap_req = {}  # name -> (data, weight) asked on the current bar
+            self._pwb_cap_live = {}  # name -> data that may hold a position or an open order
+            self._pwb_cap_orders = {}  # name -> orders not yet known to be dead
+            self._pwb_cap_records = []  # (day, long, short) at the end of each bar with targets
+            self._pwb_cap_applied = {}  # day -> scale below 1 sent with that bar's targets
+            self._pwb_ms_next = 0
+            self._pwb_ms_watch = set()
+            self._pwb_ms_filled = set()
+            self._pwb_ms_orders = {}
+            self._pwb_ms_feeds = None
             self.requested_gross = 0.0
+            self.requested_long = 0.0
+            self.membership_liquidations = {}
+            super().__init__(*args, **kwargs)
 
-        def _pwb_cap_record(self, data, share):
-            self._pwb_cap_targets[getattr(data, "_name", id(data))] = abs(share)
-            gross = sum(self._pwb_cap_targets.values())
-            if gross > self.requested_gross:
-                self.requested_gross = gross
+        # -- targets ----------------------------------------------------------
+        def _pwb_feed(self, data):
+            if data is None:
+                return self.datas[0]
+            if isinstance(data, str):
+                return self.getdatabyname(data)
+            return data
+
+        def _pwb_cap_request(self, data, weight) -> float:
+            try:
+                day = data.datetime.date(0)
+            except (IndexError, ValueError):  # an order placed before the first bar
+                day = None
+            if day != self._pwb_cap_day:
+                self._pwb_cap_close_bar()
+                self._pwb_cap_day = day
+            self._pwb_cap_req[getattr(data, "_name", None) or id(data)] = (data, float(weight))
+            scale = cap
+            if days and day is not None:
+                i = bisect.bisect_right(days, day) - 1
+                if i >= 0:
+                    scale *= scales[i]
+            if scale < 1.0 and weight and day is not None:
+                self._pwb_cap_applied[day] = min(scale, self._pwb_cap_applied.get(day, 1.0))
+            return scale
 
         def order_target_percent(self, data=None, target=0.0, **kwargs):
             # backtrader's own order_target_percent multiplies by the NAV and
             # calls order_target_value, which lands back here. Without the
             # guard the cap is applied twice -- 0.495 became 0.245 -- and the
-            # recorded gross is overwritten by the already-scaled figure.
+            # recorded request is overwritten by the already-scaled figure.
             if self._pwb_cap_scaling:
-                return super().order_target_percent(
-                    data=data, target=target, **kwargs
-                )
-            self._pwb_cap_record(data, target)
+                return super().order_target_percent(data=data, target=target, **kwargs)
+            scale = self._pwb_cap_request(self._pwb_feed(data), target)
             self._pwb_cap_scaling = True
             try:
-                return super().order_target_percent(
-                    data=data, target=target * cap, **kwargs
-                )
+                return super().order_target_percent(data=data, target=target * scale, **kwargs)
             finally:
                 self._pwb_cap_scaling = False
 
         def order_target_value(self, data=None, target=0.0, **kwargs):
             if self._pwb_cap_scaling:
-                return super().order_target_value(
-                    data=data, target=target, **kwargs
-                )
+                return super().order_target_value(data=data, target=target, **kwargs)
             value = self.broker.getvalue()
-            self._pwb_cap_record(data, target / value if value else 0.0)
+            scale = self._pwb_cap_request(
+                self._pwb_feed(data), target / value if value else 0.0
+            )
             self._pwb_cap_scaling = True
             try:
-                return super().order_target_value(
-                    data=data, target=target * cap, **kwargs
-                )
+                return super().order_target_value(data=data, target=target * scale, **kwargs)
             finally:
                 self._pwb_cap_scaling = False
+
+        # -- every order, whatever sent it ----------------------------------------
+        def buy(self, *args, **kwargs):
+            return self._pwb_track(super().buy(*args, **kwargs))
+
+        def sell(self, *args, **kwargs):
+            return self._pwb_track(super().sell(*args, **kwargs))
+
+        def _pwb_track(self, order):
+            if order is not None:
+                name = getattr(order.data, "_name", None) or id(order.data)
+                self._pwb_cap_live[name] = order.data
+                orders = [o for o in self._pwb_cap_orders.get(name, ()) if o.alive()]
+                orders.append(order)
+                self._pwb_cap_orders[name] = orders
+            return order
+
+        def _pwb_cap_held(self, name, data):
+            """Shares held once the open orders fill, or None when nothing is left."""
+            orders = [o for o in self._pwb_cap_orders.get(name, ()) if o.alive()]
+            self._pwb_cap_orders[name] = orders
+            size = self.getposition(data).size
+            if not size and not orders:
+                return None
+            return size + sum(_signed(o) for o in orders)
+
+        def _pwb_cap_close_bar(self):
+            """Record what the bar's targets and every other holding add up to."""
+            if not self._pwb_cap_req:
+                return
+            req, self._pwb_cap_req = self._pwb_cap_req, {}
+            long = sum(w for _, w in req.values() if w > 0)
+            short = -sum(w for _, w in req.values() if w < 0)
+            value = self.broker.getvalue()
+            for name, data in list(self._pwb_cap_live.items()):
+                held = self._pwb_cap_held(name, data)
+                if held is None:
+                    del self._pwb_cap_live[name]
+                    self._pwb_cap_orders.pop(name, None)
+                    continue
+                if name in req or value <= 0:
+                    continue
+                weight = held * float(data.close[0]) / value
+                if weight > 0:
+                    long += weight
+                else:
+                    short -= weight
+            self._pwb_cap_records.append((self._pwb_cap_day, long, short))
+            self.requested_long = max(self.requested_long, long)
+            self.requested_gross = max(self.requested_gross, long + short)
+
+        # -- names leaving the universe -----------------------------------------
+        def _pwb_ms_step(self):
+            day = self.datas[0].datetime.date(0)
+            exits = membership.exits
+            while self._pwb_ms_next < len(exits) and exits[self._pwb_ms_next][0] <= day:
+                self._pwb_ms_watch.add(exits[self._pwb_ms_next][1])
+                self._pwb_ms_next += 1
+            if self._pwb_ms_filled:
+                self._pwb_ms_watch |= self._pwb_ms_filled
+                self._pwb_ms_filled = set()
+            if not self._pwb_ms_watch:
+                return
+            if self._pwb_ms_feeds is None:
+                self._pwb_ms_feeds = {getattr(d, "_name", None): d for d in self.datas}
+            for name in sorted(self._pwb_ms_watch):
+                data = self._pwb_ms_feeds.get(name)
+                if data is None or not membership.is_out(name, day):
+                    self._pwb_ms_watch.discard(name)
+                    continue
+                pending = self._pwb_ms_orders.get(name)
+                if pending is not None and pending.alive():
+                    continue
+                if not self.getposition(data).size:
+                    self._pwb_ms_watch.discard(name)
+                    continue
+                guard["liquidating"] = True
+                try:
+                    order = self.close(data)
+                finally:
+                    guard["liquidating"] = False
+                self._pwb_ms_orders[name] = order
+                entry = self.membership_liquidations.setdefault(
+                    name, {"orders": 0, "first": day, "prices": []}
+                )
+                entry["orders"] += 1
+
+        def notify_order(self, order):
+            if membership is not None and order.status == order.Completed:
+                name = getattr(order.data, "_name", None)
+                if name in membership.out:
+                    self._pwb_ms_filled.add(name)
+                    mine = self._pwb_ms_orders.get(name)
+                    if mine is not None and mine.ref == order.ref:
+                        self.membership_liquidations[name]["prices"].append(
+                            order.executed.price
+                        )
+            return super().notify_order(order)
+
+        # -- end of each bar --------------------------------------------------------
+        def _pwb_after_bar(self):
+            self._pwb_cap_close_bar()
+            if membership is not None and self.datas:
+                self._pwb_ms_step()
+
+        def prenext(self):
+            super().prenext()
+            self._pwb_after_bar()
+
+        def next(self):
+            super().next()
+            self._pwb_after_bar()
+
+        def stop(self):
+            self._pwb_cap_close_bar()
+            return super().stop()
 
     _Capped.__name__ = f"{strategy_cls.__name__}Capped{round(cap * 100)}"
     _Capped.__qualname__ = _Capped.__name__
     return _Capped
 
 
-def _next_cap(cap: float, requested_gross: float, steps: int):
-    """The exposure to try next, or None once the attempts are spent.
+def _bar_schedule(records, max_leverage: float):
+    """``(days, scales)``: each bar's targets brought under ``max_leverage``.
 
-    The first retry is computed, not guessed: a strategy that asked for 200 %
-    gross is scaled to fit TARGET_GROSS in one go. Only if that still cannot be
-    funded does it fall back to stepping down, which is for the cases where the
-    shortfall is not gross exposure -- a short leg posting margin, say.
+    ``records`` is ``(day, long, short)`` per bar that set a target, from a run
+    of the strategy as published. A bar that asked for more long exposure than
+    the account funds is scaled to fit; every other bar is left at 1. 0.1.31-
+    0.1.42 divided every bar by the peak of the whole run instead: a book
+    levered to 200 % for a few weeks ran at a quarter of its targets for the
+    other twenty years.
     """
-    if steps == 0 and requested_gross > TARGET_GROSS:
-        return TARGET_GROSS / requested_gross
-    if steps >= DELEVERAGE_MAX_STEPS:
-        return None
-    return cap * DELEVERAGE_STEP
+    asked = {}
+    for day, long, _ in records:
+        asked[day] = max(asked.get(day, 0.0), long)
+    days = sorted(asked)
+    scales = [
+        max_leverage / asked[d] if asked[d] > max_leverage else 1.0 for d in days
+    ]
+    return days, scales
 
 
 def run_strategy(
@@ -424,6 +740,9 @@ def run_strategy(
     margin_tolerance=MARGIN_TOLERANCE,
     era_gap_years=None,
     refuse_before_listing=None,
+    max_leverage=MAX_LEVERAGE,
+    scaling="bar",
+    debit_tolerance=DEBIT_TOLERANCE,
 ):
     """Run a tactical asset allocation strategy with Backtrader.
 
@@ -454,18 +773,54 @@ def run_strategy(
     did not exist. See ``_refuse_before_listing``; the refusals are on the
     returned strategy as ``listing_audit``.
 
-    With ``deleverage`` on, a run that cannot fund what the strategy asks for is
-    repeated with its gross exposure stepped down the ``EXPOSURE_LADDER`` until
-    it can. The margin check stays in force: a fully invested book plus a
-    commission costs more than the account holds, so backtrader refuses every
-    rebalance and the NAV goes flat -- which then publishes as a Sharpe of zero,
-    or of NaN, rather than as the error it is.
+    **Point-in-time universes** (``"sp500"``, ``"liquid1000"``). A name that
+    leaves the universe has no row until it comes back; the forward fill used
+    to make that a flat line the strategy could buy and hold, and the move the
+    name made while away then landed in one bar at its return. Now a position
+    is closed on the first bar outside, at the last member close; any other
+    order on the name is refused (``Rejected``) until it is a member again. A
+    hole in the prices of a *member* is still forward-filled. The refusals and
+    liquidations are on the returned strategy as ``membership_audit``. The
+    flat bars are still in the feed -- a strategy can skip them with
+    ``BaseStrategy.is_tradable`` -- so a screen that keeps choosing them ends
+    up partly in cash rather than in a phantom.
 
-    The applied exposure is on the returned strategy as ``exposure_cap``, and
-    the funding audit as ``funding_audit``. A run that stays underfunded at the
-    bottom of the ladder is returned with both set, so the caller can refuse it
-    rather than record a number.
+    **Funding.** The run is first made as published. If it outgrew the account
+    -- more than ``margin_tolerance`` of its orders refused for margin, a debit
+    beyond ``debit_tolerance`` of the NAV, or the NAV through zero -- and
+    ``deleverage`` is on, it is run again with each target of
+    ``order_target_percent``/``order_target_value`` scaled on the bars that
+    asked for more long exposure than ``max_leverage`` (default 0.99: a 100 %
+    book plus its commission is refused by backtrader, at 99 % it trades).
+    Short legs do not count, their proceeds fund them. With
+    ``scaling="uniform"`` the whole run is divided by its peak instead, which
+    keeps the shape of a book whose time-varying leverage *is* the strategy
+    (returns, volatility and drawdowns shrink by that factor, the Sharpe ratio
+    does not). Orders by size, ``buy``/``sell`` and ``close`` are never scaled,
+    so a book without a target is not re-run at all. If the scaled run is still
+    underfunded, the targets are stepped down by ``DELEVERAGE_STEP`` up to
+    ``DELEVERAGE_MAX_STEPS`` times; if nothing works the run as published is
+    returned. ``max_leverage`` cannot exceed 1: backtrader refuses at execution
+    any buy the cash does not cover, ``checksubmit`` or not, so leverage above
+    the account is not something the harness can fund.
+
+    The returned strategy carries ``exposure_cap`` (the smallest scale sent
+    with any target, 1.0 when none was scaled), ``requested_long`` and
+    ``requested_gross`` (the peaks of what the book asked for, as published),
+    ``funding_audit`` and ``run_report`` (all of it, plus the number of runs
+    and of scaled bars); the same summary is printed on one ``Exposure:`` line.
+    A run that stays underfunded is returned with ``run_report["underfunded"]``
+    set, so the caller can refuse it rather than record a number.
     """
+    if not 0 < max_leverage <= 1:
+        raise ValueError(
+            f"max_leverage={max_leverage}: it must be in (0, 1]. backtrader refuses "
+            "at execution any buy the cash does not cover, so a book levered "
+            "above its account cannot be funded; use scaling='uniform' to keep "
+            "the shape of a levered book at a fundable level."
+        )
+    if scaling not in SCALINGS:
+        raise ValueError(f"scaling={scaling!r}: one of {SCALINGS}")
     # The default observers (Broker, BuySell, Trades) exist for plotting and
     # cost about a tenth of the engine loop; nothing in the harness or in the
     # published strategies reads them, and the dozen strategies that build
@@ -474,7 +829,7 @@ def run_strategy(
     cerebro_kwargs = {"stdstats": False, **(cerebro_kwargs or {})}
     broker_kwargs = broker_kwargs or {}
     # Load the data from https://paperswithbacktest.com/datasets -- once, and
-    # reused across attempts, because the ladder must not re-download anything.
+    # reused across attempts, because a re-run must not re-download anything.
     pivot_df = pwb_ds.get_pricing(
         symbol_list=symbols,
         fields=["open", "high", "low", "close"],
@@ -528,9 +883,11 @@ def run_strategy(
         symbol: all_years - years for symbol, years in active_years.items()
         if all_years - years
     }
+    membership = _pit_membership(symbols, present, trading_days)
+    if membership is not None:
+        _flatten_out_bars(pivot_df, membership)
 
-    cap, steps, strategy, as_published = 1.0, 0, None, None
-    while True:
+    def attempt(cap, schedule):
         # Engine configuration
         cerebro = bt.Cerebro(**cerebro_kwargs)
         # Keyed by feed name, because that is what ``addcommissioninfo(name=...)``
@@ -540,9 +897,12 @@ def run_strategy(
             data = ArrayPandasData(dataname=pivot_df[symbol].copy())
             cerebro.adddata(data, name=symbol)
             feeds[symbol] = data
+        guard = {"liquidating": False}
         # Strategy
         cerebro.addstrategy(
-            _with_exposure_cap(strategy_cls, cap),
+            _with_exposure_cap(
+                strategy_cls, cap, schedule=schedule, membership=membership, guard=guard
+            ),
             total_days=len(trading_days),
             indicator_cls=indicator_cls,
             indicator_kwargs=indicator_kwargs,
@@ -567,6 +927,13 @@ def run_strategy(
                 active_years=active_years,
             )
         _apply_broker_kwargs(cerebro.broker, run_broker_kwargs)
+        # Inner guard first: an order dated before the listing is refused by
+        # the listing guard and counted there, as before the membership one.
+        refused_outside = (
+            _refuse_outside_universe(cerebro.broker, membership, guard)
+            if membership is not None
+            else {}
+        )
         listing_audit = (
             _refuse_before_listing(cerebro.broker, first_bar)
             if refuse_before_listing
@@ -583,9 +950,20 @@ def run_strategy(
                 f"symbols, e.g. {worst[0]} {worst[1]['first']} to {worst[1]['last']} "
                 f"(first bar {first_bar[worst[0]].date()})"
             )
+        strategy.membership_audit = {
+            "refused": refused_outside,
+            "liquidated": strategy.membership_liquidations,
+        }
+        if refused_outside or strategy.membership_liquidations:
+            refused = sum(entry["orders"] for entry in refused_outside.values())
+            print(
+                f"Out of universe: {refused} orders refused on {len(refused_outside)} "
+                f"symbols, {len(strategy.membership_liquidations)} positions closed "
+                f"at their last member price"
+            )
         audit = strategy.analyzers.funding.get_analysis()
         audit["requested_gross"] = strategy.requested_gross
-        strategy.exposure_cap = cap
+        audit["requested_long"] = strategy.requested_long
         strategy.funding_audit = audit
         strategy.fill_audit = strategy.analyzers.fill.get_analysis()
         if strategy.fill_audit:
@@ -595,27 +973,75 @@ def run_strategy(
                 f"in a year without a bar, e.g. {worst[0]} {worst[1]['years'][0]}-"
                 f"{worst[1]['years'][-1]} ({worst[1]['bars']} bars)"
             )
+        return strategy
+
+    def finish(strategy, as_published, attempts, cap, underfunded):
+        applied = list(strategy._pwb_cap_applied.values())
+        scaled = [s for s in applied if s < 1.0]
+        report = {
+            "attempts": attempts,
+            "scaling": scaling,
+            "max_leverage": max_leverage,
+            "exposure_cap": min([cap] + applied),
+            "step_cap": cap,
+            "requested_long": as_published.requested_long,
+            "requested_gross": as_published.requested_gross,
+            "target_bars": len({r[0] for r in strategy._pwb_cap_records}),
+            "scaled_bars": len(scaled),
+            "median_scale": float(np.median(scaled)) if scaled else 1.0,
+            "underfunded": bool(underfunded),
+            "funding": dict(strategy.funding_audit),
+            "funding_as_published": (
+                dict(as_published.funding_audit) if as_published is not strategy else None
+            ),
+            "membership": {
+                "refused_orders": sum(
+                    e["orders"] for e in strategy.membership_audit["refused"].values()
+                ),
+                "refused_symbols": len(strategy.membership_audit["refused"]),
+                "liquidated_symbols": len(strategy.membership_audit["liquidated"]),
+            },
+        }
+        strategy.exposure_cap = report["exposure_cap"]
+        strategy.requested_long = as_published.requested_long
+        strategy.requested_gross = as_published.requested_gross
+        strategy.run_report = report
+        funding = strategy.funding_audit
+        print("Exposure: " + json.dumps({
+            "exposure_cap": round(report["exposure_cap"], 6),
+            "scaled_bars": report["scaled_bars"],
+            "target_bars": report["target_bars"],
+            "median_scale": round(report["median_scale"], 6),
+            "requested_long": round(report["requested_long"], 6),
+            "requested_gross": round(report["requested_gross"], 6),
+            "attempts": attempts,
+            "scaling": scaling,
+            "reject_rate": round(funding["reject_rate"], 6),
+            "min_cash_ratio": (
+                None if funding["min_cash_ratio"] is None
+                else round(funding["min_cash_ratio"], 6)
+            ),
+            "underfunded": bool(underfunded),
+        }))
+        return strategy
+
+    cap, schedule, steps, attempts, as_published = 1.0, None, 0, 0, None
+    while True:
+        strategy = attempt(cap, schedule)
+        attempts += 1
         if as_published is None:
             as_published = strategy
+        audit = strategy.funding_audit
+        underfunded = _underfunded(audit, margin_tolerance, debit_tolerance)
+        if not underfunded or not deleverage:
+            return finish(strategy, as_published, attempts, cap, underfunded)
 
-        if not _underfunded(audit, margin_tolerance):
-            if steps:
-                print(
-                    f"Funded at {cap:.1%} of the requested exposure "
-                    f"(the book asked for {strategy.requested_gross:.0%} gross)"
-                )
-            return strategy
-        if not deleverage:
-            return strategy
-
-        nxt = _next_cap(cap, strategy.requested_gross, steps)
-        print(
-            f"Underfunded at {cap:.1%} of a {strategy.requested_gross:.0%} gross "
-            f"book: {audit['margin']}/{audit['submitted']} orders refused for "
-            f"margin"
+        why = (
+            f"{audit['margin']}/{audit['submitted']} orders refused for margin"
             + (
-                f", min cash {audit['min_cash']:,.0f}"
-                if audit["min_cash"] is not None and audit["min_cash"] < 0
+                f", min cash {audit['min_cash']:,.0f} ({audit['min_cash_ratio']:.2%} of NAV)"
+                if audit["min_cash_ratio"] is not None
+                and audit["min_cash_ratio"] < -debit_tolerance
                 else ""
             )
             + (
@@ -623,18 +1049,38 @@ def run_strategy(
                 if audit["min_value"] is not None and audit["min_value"] <= 0
                 else ""
             )
-            + (
-                f" -- retrying at {nxt:.1%}"
-                if nxt
-                else " -- no exposure makes it fundable, returning it as published"
-            )
         )
-        if nxt is None:
-            # Nothing was found that works, so the honest record is the
-            # strategy as published, not an arbitrarily shrunk version of it
-            # that is neither what was published nor fundable either.
-            return as_published
-        cap, steps = nxt, steps + 1
+        if attempts == 1:
+            if not as_published._pwb_cap_records:
+                # Nothing set a target, so there is nothing a re-run could
+                # scale: 0.1.31-0.1.42 re-ran such a book five more times.
+                print(f"Underfunded as published: {why} -- no target to scale, not re-run")
+                return finish(strategy, as_published, attempts, cap, underfunded)
+            peak = as_published.requested_long
+            if peak > max_leverage:
+                if scaling == "uniform":
+                    cap = max_leverage / peak
+                    print(
+                        f"Underfunded as published: {why} -- re-running every target "
+                        f"at {cap:.1%} (the book peaks at {peak:.0%} long)"
+                    )
+                else:
+                    schedule = _bar_schedule(as_published._pwb_cap_records, max_leverage)
+                    over = sum(1 for s in schedule[1] if s < 1.0)
+                    print(
+                        f"Underfunded as published: {why} -- re-running with the "
+                        f"{over} of {len(schedule[0])} target bars above "
+                        f"{max_leverage:.0%} long scaled to it (peak {peak:.0%})"
+                    )
+                continue
+        if steps >= DELEVERAGE_MAX_STEPS:
+            print(
+                f"Underfunded at {cap:.1%}: {why} -- no exposure makes it "
+                f"fundable, returning it as published"
+            )
+            return finish(as_published, as_published, attempts, 1.0, True)
+        cap, steps = cap * DELEVERAGE_STEP, steps + 1
+        print(f"Underfunded: {why} -- stepping every target down to {cap:.1%}")
 
 
 def _perturb_parameter(base_kwargs: dict, param_path: tuple[str, ...], new_value):
