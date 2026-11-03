@@ -857,6 +857,13 @@ class SpreadImpactCommission(bt.CommInfoBase):
         super().__init__()
         self._stamp = None
         self._rates = (self.p.half_spread, self.p.lambda_bps)
+        # What the strategy itself asked for through ``broker.setcommission``
+        # (see ``backtest_engine._strategy_commission_floor``). A strategy can
+        # only make the fill dearer: the measured half-spread is the floor of
+        # the rate, and a per-unit fee is charged when it costs more than the
+        # spread on the same fill.
+        self.floor_perc = 0.0
+        self.floor_fixed = 0.0
 
     def _rates_now(self):
         """The pair in force on the bar being priced, cached per bar.
@@ -881,11 +888,19 @@ class SpreadImpactCommission(bt.CommInfoBase):
     def _getcommission(self, size, price, pseudoexec):
         half_spread, lambda_bps = self._rates_now()
         notional = abs(size) * price
-        cost = notional * half_spread
+        cost = notional * max(half_spread, self.floor_perc)
+        if self.floor_fixed > 0:
+            cost = max(cost, abs(size) * self.floor_fixed)
         if lambda_bps > 0:
             impact_bps = self.p.book_avg_factor * lambda_bps * (notional / 1e6)
             cost += notional * impact_bps / 1e4
         return cost
+
+    def measured_rates(self):
+        """Every half-spread this scheme can charge, across its schedule."""
+        if self.p.schedule:
+            return [hs for hs, _ in self.p.schedule.values()]
+        return [self.p.half_spread]
 
 
 def load_lambda_params(repo_id: str = COST_PARAMS_REPO) -> dict:

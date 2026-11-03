@@ -102,6 +102,7 @@ def _apply_per_symbol_commissions(
         and any(y not in active_years[symbol] for y in span_years)
     )
 
+    schemes = {}
     for symbol, cost in summary.items():
         schedule = schedules.get(symbol)
         paired = (
@@ -119,6 +120,7 @@ def _apply_per_symbol_commissions(
             data=(feeds or {}).get(symbol),
         )
         broker.addcommissioninfo(scheme, name=symbol)
+        schemes[symbol] = scheme
 
     rates = [c.half_spread for c in summary.values()]
     sources: dict[str, int] = {}
@@ -133,6 +135,93 @@ def _apply_per_symbol_commissions(
         f"{np.median(rates) * 1e4:.1f} bp median at {year}, "
         f"{min(rates) * 1e4:.1f}-{max(rates) * 1e4:.1f} bp range ({detail})"
     )
+    return schemes
+
+
+# ``broker.setcommission``'s positional order, the same on both engines.
+_SETCOMMISSION_ARGS = (
+    "commission", "margin", "mult", "commtype", "percabs", "stocklike",
+    "interest", "interest_long", "leverage", "automargin", "name",
+)
+
+
+def _strategy_commission_floor(broker, schemes: dict) -> dict:
+    """Let a strategy's own ``broker.setcommission`` raise its fees, never lower them.
+
+    The measured per-symbol schemes are registered by name before the strategy
+    exists, and a named scheme always wins over the default one, so a
+    strategy's ``self.broker.setcommission(commission=0.001)`` used to set a
+    scheme nothing ever consulted: a 1 bp name was charged 0.10 on a 1 000
+    fill where the strategy asked for 1.00. 67 published strategies call it.
+
+    The rule (decided 2026-11-03): **a strategy pays the higher of the two.**
+
+    * A percentage scheme (``commtype`` ``COMM_PERC``, or ``None`` with no
+      ``margin``) becomes a floor on the rate: each name pays
+      ``max(measured half-spread of the year, requested rate)`` on every fill.
+      A request of 0, or below the measured spread, changes nothing.
+    * A per-unit scheme (``COMM_FIXED``, or ``None`` with a ``margin``) is
+      compared fill by fill: the fill pays ``max(spread cost, fee x |size|)``.
+      Nothing else of that scheme is taken -- ``margin``, ``mult``,
+      ``stocklike``, ``interest`` and ``leverage`` would turn a stock into a
+      future and move the NAV through position accounting rather than through
+      costs. They are listed under ``ignored`` instead.
+    * ``name=None`` applies to every measured name, ``name=<symbol>`` to that
+      one only; a name the harness did not price falls through to the engine.
+      Each call replaces the previous one, as ``setcommission`` itself does.
+
+    Returns the policy dict that ``run_report["commission_policy"]`` exports.
+    """
+    perc = getattr(bt.CommInfoBase, "COMM_PERC", 0)
+    policy = {"mode": "measured", "calls": [], "floor_perc": 0.0, "floor_fixed": 0.0,
+              "raised_symbols": 0, "symbols": len(schemes)}
+    original = broker.setcommission
+
+    def setcommission(*args, **kwargs):
+        call = dict(zip(_SETCOMMISSION_ARGS, args))
+        call.update(kwargs)
+        name = call.get("name")
+        targets = [schemes[name]] if name in schemes else (
+            list(schemes.values()) if name is None else []
+        )
+        if name is None or not targets:
+            # The default scheme, as the engine would set it: consulted only
+            # by a feed the harness did not price.
+            original(*args, **kwargs)
+        if not targets:
+            return
+        commission = float(call.get("commission", 0.0) or 0.0)
+        commtype = call.get("commtype")
+        margin = call.get("margin")
+        is_perc = commtype == perc if commtype is not None else margin is None
+        if is_perc:
+            rate = commission if call.get("percabs", True) else commission / 100.0
+            kind, value = "perc", max(rate, 0.0)
+        else:
+            kind, value = "fixed", max(commission, 0.0)
+        for scheme in targets:
+            scheme.floor_perc = value if kind == "perc" else 0.0
+            scheme.floor_fixed = value if kind == "fixed" else 0.0
+        defaults = {"mult": 1.0, "stocklike": False, "interest": 0.0,
+                    "interest_long": False, "leverage": 1.0, "automargin": False}
+        ignored = sorted(
+            k for k, v in call.items()
+            if (k == "margin" and v is not None) or (k in defaults and v != defaults[k])
+        )
+        raised = sum(
+            1 for sc in schemes.values()
+            if (sc.floor_perc > 0 and sc.floor_perc > min(sc.measured_rates()))
+            or sc.floor_fixed > 0
+        )
+        policy["calls"].append({"name": name, "kind": kind, "value": value,
+                                "symbols": len(targets), "ignored": ignored})
+        policy["floor_perc"] = max((sc.floor_perc for sc in schemes.values()), default=0.0)
+        policy["floor_fixed"] = max((sc.floor_fixed for sc in schemes.values()), default=0.0)
+        policy["raised_symbols"] = raised
+        policy["mode"] = "higher_of_measured_and_strategy"
+
+    broker.setcommission = setcommission
+    return policy
 
 
 # What a fundable book is allowed to ask for: its long exposure as a share of
@@ -919,7 +1008,7 @@ def run_strategy(
         run_broker_kwargs = copy.deepcopy(broker_kwargs)
         cerebro.broker.set_cash(cash)
         if "commission" not in run_broker_kwargs:
-            _apply_per_symbol_commissions(
+            schemes = _apply_per_symbol_commissions(
                 cerebro.broker,
                 symbols,
                 start_date,
@@ -928,7 +1017,15 @@ def run_strategy(
                 end_date=pivot_df.index.max(),
                 active_years=active_years,
             )
+        else:
+            schemes = None
         _apply_broker_kwargs(cerebro.broker, run_broker_kwargs)
+        # After the caller's kwargs, so only the strategy's own calls are seen.
+        commission_policy = (
+            _strategy_commission_floor(cerebro.broker, schemes)
+            if schemes
+            else {"mode": "caller", "commission": broker_kwargs.get("commission")}
+        )
         # Inner guard first: an order dated before the listing is refused by
         # the listing guard and counted there, as before the membership one.
         refused_outside = (
@@ -943,6 +1040,7 @@ def run_strategy(
         )
         # Run the strategy
         strategy = cerebro.run()[0]
+        strategy.commission_policy = commission_policy
         strategy.listing_audit = listing_audit
         if listing_audit:
             worst = max(listing_audit.items(), key=lambda kv: kv[1]["orders"])
@@ -996,6 +1094,7 @@ def run_strategy(
             "funding_as_published": (
                 dict(as_published.funding_audit) if as_published is not strategy else None
             ),
+            "commission_policy": getattr(strategy, "commission_policy", None),
             "membership": {
                 "refused_orders": sum(
                     e["orders"] for e in strategy.membership_audit["refused"].values()
@@ -1008,6 +1107,17 @@ def run_strategy(
         strategy.requested_long = as_published.requested_long
         strategy.requested_gross = as_published.requested_gross
         strategy.run_report = report
+        policy = report["commission_policy"] or {}
+        if policy.get("calls"):
+            print("Commission policy: " + json.dumps({
+                "mode": policy["mode"],
+                "floor_perc": policy["floor_perc"],
+                "floor_fixed": policy["floor_fixed"],
+                "raised_symbols": policy["raised_symbols"],
+                "symbols": policy["symbols"],
+                "calls": len(policy["calls"]),
+                "ignored": sorted({k for c in policy["calls"] for k in c["ignored"]}),
+            }))
         funding = strategy.funding_audit
         print("Exposure: " + json.dumps({
             "exposure_cap": round(report["exposure_cap"], 6),
