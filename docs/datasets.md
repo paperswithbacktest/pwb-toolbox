@@ -78,3 +78,23 @@ df = pwb_ds.load_dataset(
     to_usd=False,
 )
 ```
+### Forex pairs: either spelling
+
+`Forex-Daily-Price` holds each currency pair under one spelling, the one with the
+longest history (`USDJPY` since 1971, `XAUUSD` since 1970). A pair can be asked
+for under either spelling; the loader reads the series the table keeps and
+inverts it when the other spelling was asked for (`open`, `close` → `1/x`,
+`high` → `1/low`, `low` → `1/high`, volume unchanged).
+
+```python
+import pwb_toolbox.datasets as pwb_ds
+
+# Default to_usd=True: every pair comes back as dollars per unit of the other
+# currency, named XXXUSD, whichever spelling was asked for.
+pwb_ds.load_dataset("Forex-Daily-Price", ["USDJPY"])  # symbol JPYUSD, ~0.0063
+pwb_ds.load_dataset("Forex-Daily-Price", ["JPYUSD"])  # the same series
+
+# to_usd=False: each name as spelled.
+pwb_ds.load_dataset("Forex-Daily-Price", ["USDJPY", "JPYUSD"], to_usd=False)
+# USDJPY ~158 (raw) and JPYUSD ~0.0063 (its inverse)
+```
