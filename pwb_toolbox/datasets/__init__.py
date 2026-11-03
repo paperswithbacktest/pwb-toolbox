@@ -846,6 +846,186 @@ def _resolve_universe(symbols):
     return out, pit_top_n, pit_added, explicit
 
 
+# ---------------------------------------------------------------- forex pairs
+#
+# ``Forex-Daily-Price`` carries each currency pair under ONE spelling once the
+# table is republished from data-api #52: the one whose series starts first
+# (``USDJPY`` since 1971, ``XAUUSD`` since 1970). Until then 27 pairs sit in the
+# table twice -- the long series and a stub of the other spelling (``JPYUSD``
+# since 2009, ``USDXAU``...) -- and ``to_usd`` renamed the long one onto the
+# stub's name, so every common date loaded twice. After the republication the
+# stubs are gone, and a strategy that names one (``symbols=["JPYUSD"]``) would
+# receive nothing, without an error.
+#
+# The loader therefore resolves a pair, not a spelling. It always reads both
+# spellings of every name it is asked for, keeps the one series the published
+# rule keeps (the same rule as data-api ``public/forex/pairs.py``, so the table
+# before and after the republication loads identically), and serves the name
+# that was asked for from it, inverted when the spellings differ.
+FOREX_DAILY_DATASET = "Forex-Daily-Price"
+
+#: Columns a quote inversion maps to ``1 / x`` in place.
+_INVERTED_IN_PLACE = ("open", "close", "adj_open", "adj_close")
+#: Columns that trade places under ``1 / x``: the day's low of USD/JPY is the
+#: day's high of JPY/USD. Inverting them in place leaves ``high < low`` on every
+#: bar, which is what ``to_usd`` used to hand back for the 29 inverted pairs.
+_INVERTED_SWAPPED = (("high", "low"), ("adj_high", "adj_low"))
+
+
+def forex_inverse(symbol) -> str:
+    """``USDJPY`` -> ``JPYUSD``. A name that is not two 3-letter codes is its own inverse."""
+    name = str(symbol)
+    if len(name) != 6 or not name.isalpha():
+        return name
+    return name[3:] + name[:3]
+
+
+def _invert_quotes(frame: pd.DataFrame) -> pd.DataFrame:
+    """Prices of the inverse pair: ``1/x`` for open/close, high and low swapped.
+
+    Volume and every other column are left as they are. Works on a copy.
+    """
+    out = frame.copy()
+    for col in _INVERTED_IN_PLACE:
+        if col in out.columns:
+            out[col] = 1.0 / out[col].astype("float64")
+    for high, low in _INVERTED_SWAPPED:
+        if high in out.columns and low in out.columns:
+            hi = 1.0 / out[low].astype("float64")
+            lo = 1.0 / out[high].astype("float64")
+            out[high], out[low] = hi, lo
+        else:
+            for col in (high, low):
+                if col in out.columns:
+                    out[col] = 1.0 / out[col].astype("float64")
+    return out
+
+
+def forex_shadow_directions(frame: pd.DataFrame) -> dict:
+    """``{dropped: kept}`` for every pair present under both spellings.
+
+    The rule of data-api ``public/forex/pairs.py``: the spelling whose series
+    starts first, then the one with more rows, then the ``USD``-first one.
+    Empty once the table is republished, since it then holds one spelling per
+    pair; until then it names the 27 stubs (``JPYUSD``, ``USDXAU``...).
+    """
+    if frame.empty or "symbol" not in frame.columns or "date" not in frame.columns:
+        return {}
+    dates = pd.to_datetime(frame["date"])
+    span = dates.groupby(frame["symbol"]).agg(["min", "count"])
+    symbols = set(span.index)
+    out = {}
+    for symbol in sorted(symbols):
+        other = forex_inverse(symbol)
+        if other == symbol or other not in symbols or symbol in out or other in out:
+            continue
+        a, b = span.loc[symbol], span.loc[other]
+        key_a = (a["min"], -int(a["count"]), not symbol.startswith("USD"))
+        key_b = (b["min"], -int(b["count"]), not other.startswith("USD"))
+        kept, dropped = (symbol, other) if key_a <= key_b else (other, symbol)
+        out[dropped] = kept
+    return out
+
+
+def _forex_widen_filter(symbol_filter):
+    """The names to read for a request: each one and its inverse."""
+    if symbol_filter is None:
+        return None
+    out = list(symbol_filter)
+    seen = set(out)
+    for symbol in symbol_filter:
+        other = forex_inverse(symbol)
+        if other not in seen:
+            out.append(other)
+            seen.add(other)
+    return out
+
+
+def _forex_resolve_directions(df: pd.DataFrame, requested, to_usd: bool) -> pd.DataFrame:
+    """One series per pair, served under the requested names.
+
+    ``df`` is the raw read of the requested names and their inverses.
+
+    * The shadow spelling of a pair present twice is dropped first (see
+      :func:`forex_shadow_directions`), so the published table before and
+      after data-api #52 gives the same answer.
+    * ``to_usd=True`` stops there: the conversion that follows renames every
+      pair to ``XXXUSD`` and inverts what needs it, so asking for ``JPYUSD``,
+      ``USDJPY`` or both yields the one ``JPYUSD`` series, never two and never
+      inverted twice.
+    * ``to_usd=False`` returns each requested name as spelled: the raw rows
+      when the table keeps that spelling, the inverted rows of the kept
+      spelling otherwise (``JPYUSD`` from ``USDJPY``). A pair asked for under
+      both spellings comes back under both, one the inverse of the other.
+    """
+    if df.empty or "symbol" not in df.columns:
+        return df
+    shadows = forex_shadow_directions(df)
+    if shadows:
+        df = df[~df["symbol"].isin(shadows)]
+    if to_usd or requested is None:
+        return df.reset_index(drop=True)
+
+    present = set(df["symbol"].unique())
+    frames = []
+    for symbol in dict.fromkeys(requested):
+        if symbol in present:
+            frames.append(df[df["symbol"] == symbol])
+            continue
+        other = forex_inverse(symbol)
+        if other != symbol and other in present:
+            inverted = _invert_quotes(df[df["symbol"] == other])
+            inverted["symbol"] = symbol
+            frames.append(inverted)
+    if not frames:
+        return df.iloc[0:0].reset_index(drop=True)
+    return pd.concat(frames, ignore_index=True)
+
+
+def _forex_to_usd(df: pd.DataFrame) -> pd.DataFrame:
+    """Every pair quoted as dollars per unit of the other currency, named ``XXXUSD``.
+
+    ``USDJPY`` at 158 becomes ``JPYUSD`` at 0.0063; a pair already ending in
+    ``USD`` is left alone. High and low are swapped by the inversion, see
+    :func:`_invert_quotes`.
+    """
+    if df.empty or "symbol" not in df.columns:
+        return df
+    flip = ~df["symbol"].astype(str).str.endswith("USD")
+    if not flip.any():
+        return df
+    df = df.copy()
+    inverted = _invert_quotes(df.loc[flip])
+    inverted["symbol"] = inverted["symbol"].astype(str).str[3:] + "USD"
+    df.loc[flip] = inverted
+    return df
+
+
+def _with_forex_inverse_names(universe: pd.DataFrame) -> pd.DataFrame:
+    """The catalogue index, plus each forex pair under its other spelling.
+
+    The loader answers ``JPYUSD`` from ``USDJPY`` (see
+    :func:`_forex_resolve_directions`), so the index must route both spellings
+    to ``Forex-Daily-Price``: ``get_pricing`` and the cost model look a bare
+    name up there, and after the republication drops the 27 stubs from the
+    index ``JPYUSD`` would otherwise be "no dataset found". A spelling the index
+    already knows, under any repository, is never overridden.
+    """
+    if universe.empty or not {"symbol", "repo_id"}.issubset(universe.columns):
+        return universe
+    is_fx = universe["repo_id"].astype(str).str.split("/").str[-1] == FOREX_DAILY_DATASET
+    fx = universe[is_fx]
+    if fx.empty:
+        return universe
+    known = set(universe["symbol"].astype(str))
+    alias = fx.assign(symbol=fx["symbol"].astype(str).map(forex_inverse))
+    alias = alias[(alias["symbol"] != fx["symbol"].astype(str)) & ~alias["symbol"].isin(known)]
+    alias = alias.drop_duplicates("symbol")
+    if alias.empty:
+        return universe
+    return pd.concat([universe, alias], ignore_index=True)
+
+
 def load_dataset(
     path,
     symbols=None,
@@ -871,13 +1051,19 @@ def load_dataset(
         symbol_filter, pit_top_n, pit_added, explicit = _resolve_universe(symbols)
         pit_only = pit_added - explicit
 
+    # A forex pair is read under both spellings: the table keeps one per pair
+    # and the caller may name the other (see _forex_resolve_directions).
+    read_filter = symbol_filter
+    if path == FOREX_DAILY_DATASET:
+        read_filter = _forex_widen_filter(symbol_filter)
+
     if pwb_api_key and not use_hf:
-        df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=symbol_filter)
+        df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=read_filter)
     else:
         hf_token = os.getenv("HF_ACCESS_TOKEN")
         if not hf_token:
             raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
-        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token, symbols=symbol_filter)
+        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token, symbols=read_filter)
 
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -887,11 +1073,11 @@ def load_dataset(
 
     # Safety net: the reads above already push the symbol filter down, but keep a
     # post-filter so the result is identical regardless of the shard column layout.
-    if symbol_filter is not None:
+    if read_filter is not None:
         if "symbol" in df.columns:
-            df = df[df["symbol"].isin(symbol_filter)].copy()
+            df = df[df["symbol"].isin(read_filter)].copy()
         if "symbols" in df.columns:
-            symbol_set = set(symbol_filter)
+            symbol_set = set(read_filter)
             df = df[
                 df["symbols"].apply(lambda cell: _symbols_overlap(cell, symbol_set))
             ].copy()
@@ -903,6 +1089,12 @@ def load_dataset(
         from .pit_universe import apply_pit_membership
 
         df = apply_pit_membership(df, *pit_top_n, only=pit_only)
+
+    if path == FOREX_DAILY_DATASET:
+        df = _forex_resolve_directions(df, symbol_filter, to_usd=to_usd)
+
+    if path == "Universe-Daily-Price":
+        df = _with_forex_inverse_names(df)
 
     if path in DAILY_PRICE_DATASETS:
         if adjust and "adj_close" in df.columns:
@@ -928,15 +1120,8 @@ def load_dataset(
         df = __extend_etfs(df)
 
     if path in DAILY_PRICE_DATASETS and to_usd:
-        if path == "Forex-Daily-Price":
-            for index, row in df.iterrows():
-                if row["symbol"].endswith("USD"):
-                    continue
-                df.at[index, "open"] = 1 / row["open"]
-                df.at[index, "high"] = 1 / row["high"]
-                df.at[index, "low"] = 1 / row["low"]
-                df.at[index, "close"] = 1 / row["close"]
-                df.at[index, "symbol"] = row["symbol"][3:] + "USD"
+        if path == FOREX_DAILY_DATASET:
+            df = _forex_to_usd(df)
         elif path == "Indices-Daily-Price":
             df_forex = load_dataset("Forex-Daily-Price", to_usd=True)
             df = __convert_indices_to_usd(df, df_forex)
