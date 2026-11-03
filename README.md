@@ -54,6 +54,8 @@ For more, see [docs/datasets.md](/docs/datasets.md).
 
 The `pwb_toolbox.backtesting` module offers simple building blocks for running Backtrader simulations.
 
+It runs on backtrader by default, or on [Tradewind](https://github.com/paperswithbacktest/tradewind), the Apache 2.0 engine with the same API (`pip install pwb-toolbox[tradewind]`). Choose once, before `pwb_toolbox.backtesting` is imported: `PWB_BACKTEST_ENGINE=tradewind` in the environment, or `pwb_toolbox.engine.select("tradewind")` in code. The engine that was not chosen is never imported, and `pwb_toolbox.backtesting.bt` is the one that was.
+
 Here is a strategy example:
 
 ```python

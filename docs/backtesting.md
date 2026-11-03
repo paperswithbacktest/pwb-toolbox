@@ -1,5 +1,15 @@
 # Backtesting
 
+## Choosing the engine
+
+Every class in `pwb_toolbox.backtesting` is built on one engine, bound when the package is imported: backtrader by default, or [Tradewind](https://github.com/paperswithbacktest/tradewind), the Apache 2.0 engine compatible with the backtrader API. Choose before the import, by precedence:
+
+1. `pwb_toolbox.engine.select("tradewind")` in code;
+2. `PWB_BACKTEST_ENGINE=tradewind` (or `backtrader`) in the environment, which switches a whole campaign without touching a strategy;
+3. the default, `backtrader`.
+
+The engine that was not chosen is never imported (`pip install pwb-toolbox[tradewind]` pulls Tradewind in). A strategy that needs the engine module takes it from the package, `from pwb_toolbox.backtesting import bt`, and runs on whichever was chosen; `pwb_toolbox.backtesting.engine_name()` says which. Selecting after the import raises, rather than leaving half the classes on each engine.
+
 ## Example of trading strategy
 
 `BaseStrategy`: Convenience strategy parent class that keeps a progress bar, records NAV history, exposes `is_tradable`, and returns the latest portfolio sizing.
