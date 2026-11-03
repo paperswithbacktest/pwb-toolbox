@@ -133,6 +133,46 @@ def pit_symbols(top_n: int = 500, min_months: int = 0) -> list:
     return sorted(load_pit_universe(top_n, min_months)["symbol"].unique().tolist())
 
 
+def membership_mask(index, symbols, top_n: int = 500, min_months: int = 0) -> pd.DataFrame:
+    """``(date x symbol)`` booleans: was the name a member on the last session up to that date.
+
+    This is what ``run_strategy`` needs after the panel has been reindexed on
+    business days and forward-filled, when the rows :func:`apply_pit_membership`
+    dropped have become a flat line: it tells the bar of a name that has left the
+    universe from a holiday or a hole in a member's prices. A date that is not a
+    session of the table (a market holiday) carries the last session's
+    membership; a date before the first session is outside.
+
+    No as-of tolerance here: the rows the tolerance of
+    :func:`apply_pit_membership` keeps for a few sessions after an exit are real
+    price rows, and the caller treats a bar with a row as tradable whatever this
+    mask says.
+    """
+    import numpy as np
+
+    index = pd.DatetimeIndex(index)
+    symbols = [str(s) for s in symbols]
+    out = np.zeros((len(index), len(symbols)), dtype=bool)
+    if not len(index) or not symbols:
+        return pd.DataFrame(out, index=index, columns=symbols)
+
+    universe = load_pit_universe(top_n, min_months)
+    dates = pd.to_datetime(universe["date"])
+    sessions = pd.DatetimeIndex(dates.unique()).sort_values()
+    column = {symbol: j for j, symbol in enumerate(symbols)}
+    names = universe["symbol"].astype(str)
+    wanted = names.isin(column).to_numpy()
+    rows = sessions.searchsorted(dates[wanted].to_numpy())
+    cols = names[wanted].map(column).to_numpy()
+    member = np.zeros((len(sessions), len(symbols)), dtype=bool)
+    member[rows, cols] = True
+
+    last = sessions.searchsorted(index, side="right") - 1
+    known = last >= 0
+    out[known] = member[last[known]]
+    return pd.DataFrame(out, index=index, columns=symbols)
+
+
 def apply_pit_membership(
     df: pd.DataFrame,
     top_n: int = 500,

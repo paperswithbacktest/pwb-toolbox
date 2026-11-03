@@ -191,6 +191,35 @@ if __name__ == "__main__":
 
 ![Backtest result](../static/images/backtest-result.png)
 
+### Funding, and names that leave a point-in-time universe
+
+`run_strategy` first runs the strategy as written. If that run outgrew the account
+(more than 2 % of its orders refused for margin, a debit beyond 1 % of the NAV, or
+the NAV through zero), it runs it once more with the targets of
+`order_target_percent` / `order_target_value` scaled down **on the bars that asked
+for more long exposure than `max_leverage`** (default `0.99`: backtrader refuses a
+100 % book plus its commission, a 99 % one trades). Short legs do not count, since
+their sale funds them; orders by size, `buy`/`sell` and `close` are never scaled.
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `max_leverage` | `0.99` | Long exposure, as a share of NAV, above which a bar's targets are scaled. At most 1: backtrader refuses at execution any buy its cash does not cover. |
+| `scaling` | `"bar"` | `"bar"` scales only the over-exposed bars. `"uniform"` divides the whole run by its peak, which keeps the shape of a book whose leverage is the strategy (managed volatility, betting-against-beta): returns shrink, the Sharpe ratio does not. |
+| `debit_tolerance` | `0.01` | Debit, as a share of NAV, a run may show before it counts as underfunded. |
+| `deleverage` | `True` | `False` keeps the run as published, refusals and all. |
+
+What was applied is on the returned strategy: `strategy.exposure_cap` (smallest
+scale sent with any target, `1.0` when untouched), `strategy.requested_long` and
+`strategy.requested_gross` (peaks of what the book asked for), `strategy.funding_audit`
+and `strategy.run_report`; the same summary is printed on one `Exposure: {...}` line.
+Read `exposure_cap` before comparing returns across runs.
+
+With `"sp500"` or `"liquid1000"` in `symbols`, a name that leaves the universe is
+closed on its first bar outside, at its last member close, and any other order on it
+is refused (`order.Rejected`) until it is a member again; `strategy.membership_audit`
+lists both. Its bars outside are flat in the feed (`BaseStrategy.is_tradable` returns
+`False` on them), so screen on tradable names to keep the book invested.
+
 ## List of strategies
 
 Samples of Papers With Backtest strategies:
