@@ -13,54 +13,53 @@ data, 100 and 500 feeds over 5 000 bars, with a monthly rebalancing strategy:
 Everything else -- column mapping, the ``datetime`` parameter, ``fromdate`` /
 ``todate`` filtering done by the base class in ``_load``'s callers -- is
 inherited unchanged.
+
+The speed-up exists for backtrader only. Tradewind's ``PandasData`` already
+reads its bars from arrays, and none of the internals patched below exist
+there, so on that engine ``ArrayPandasData`` *is* ``bt.feeds.PandasData``.
 """
 
 from __future__ import annotations
 
 import numpy as np
-import backtrader as bt
 
-if not hasattr(bt.feeds.PandasData, "_colmapping"):
-    # An engine whose PandasData already reads its bars from arrays (Tradewind):
-    # nothing to speed up, and none of the internals below exist.
+from ..engine import load as _load_engine
+
+bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
+
+if bt.__name__ != "backtrader" or not hasattr(bt.feeds.PandasData, "_colmapping"):
     ArrayPandasData = bt.feeds.PandasData
 else:
     from backtrader.utils.date import date2num
-    ArrayPandasData = None  # replaced by the class below
 
+    class ArrayPandasData(bt.feeds.PandasData):
+        """``PandasData`` with the frame flattened into arrays at ``start()``."""
 
-class _ArrayPandasData(bt.feeds.PandasData if ArrayPandasData is None else object):
-    """``PandasData`` with the frame flattened into arrays at ``start()``."""
+        def start(self):
+            super().start()
+            frame = self.p.dataname
+            self._pwb_arrays = {}
+            for datafield in self.getlinealiases():
+                if datafield == "datetime":
+                    continue
+                colindex = self._colmapping[datafield]
+                if colindex is None:
+                    continue
+                self._pwb_arrays[datafield] = frame.iloc[:, colindex].to_numpy(dtype=float)
+            coldtime = self._colmapping["datetime"]
+            stamps = frame.index if coldtime is None else frame.iloc[:, coldtime]
+            self._pwb_dtnum = np.fromiter(
+                (date2num(stamp.to_pydatetime()) for stamp in stamps), dtype=float, count=len(frame)
+            )
+            self._pwb_len = len(frame)
 
-    def start(self):
-        super().start()
-        frame = self.p.dataname
-        self._pwb_arrays = {}
-        for datafield in self.getlinealiases():
-            if datafield == "datetime":
-                continue
-            colindex = self._colmapping[datafield]
-            if colindex is None:
-                continue
-            self._pwb_arrays[datafield] = frame.iloc[:, colindex].to_numpy(dtype=float)
-        coldtime = self._colmapping["datetime"]
-        stamps = frame.index if coldtime is None else frame.iloc[:, coldtime]
-        self._pwb_dtnum = np.fromiter(
-            (date2num(stamp.to_pydatetime()) for stamp in stamps), dtype=float, count=len(frame)
-        )
-        self._pwb_len = len(frame)
-
-    def _load(self):
-        self._idx += 1
-        idx = self._idx
-        if idx >= self._pwb_len:
-            return False
-        lines = self.lines
-        for datafield, values in self._pwb_arrays.items():
-            getattr(lines, datafield)[0] = values[idx]
-        lines.datetime[0] = self._pwb_dtnum[idx]
-        return True
-
-
-if ArrayPandasData is None:
-    ArrayPandasData = _ArrayPandasData
+        def _load(self):
+            self._idx += 1
+            idx = self._idx
+            if idx >= self._pwb_len:
+                return False
+            lines = self.lines
+            for datafield, values in self._pwb_arrays.items():
+                getattr(lines, datafield)[0] = values[idx]
+            lines.datetime[0] = self._pwb_dtnum[idx]
+            return True

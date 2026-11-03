@@ -1,5 +1,8 @@
-import backtrader as bt
 import numpy as np
+
+from ..engine import load as _load_engine
+
+bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
 from .base_strategy import BaseStrategy
 
 

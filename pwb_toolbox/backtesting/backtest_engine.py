@@ -1,12 +1,14 @@
 import copy
 import os
-import backtrader as bt
 import itertools
 import pandas as pd
 import numpy as np
 import pwb_toolbox.backtesting as pwb_bt
 import pwb_toolbox.datasets as pwb_ds
 
+from ..engine import load as _load_engine
+
+bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
 from .feeds import ArrayPandasData
 
 

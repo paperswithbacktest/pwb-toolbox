@@ -1,5 +1,8 @@
-import backtrader as bt
 from tqdm import tqdm
+
+from ..engine import load as _load_engine
+
+bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
 
 
 class BaseStrategy(bt.Strategy):

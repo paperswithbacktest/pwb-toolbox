@@ -4,9 +4,11 @@ import unittest
 
 import numpy as np
 import pandas as pd
-import backtrader as bt
 
+from pwb_toolbox import engine
 from pwb_toolbox.backtesting.feeds import ArrayPandasData
+
+bt = engine.load()
 
 
 def _frames(n_sym=12, n_bars=600, seed=1):
@@ -46,6 +48,7 @@ def _run(feed_cls, frames, **cerebro_kwargs):
     return cerebro.run()[0]
 
 
+@unittest.skipUnless(engine.is_backtrader(), "the array feed only exists on backtrader")
 class ArrayFeedTest(unittest.TestCase):
     def test_same_nav_path_as_pandas_data(self):
         frames = _frames()

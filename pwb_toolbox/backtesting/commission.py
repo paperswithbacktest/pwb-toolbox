@@ -56,11 +56,13 @@ from collections import namedtuple
 import os
 import re
 
-import backtrader as bt
 import numpy as np
 import pandas as pd
 
 from ..datasets import get_pricing
+from ..engine import load as _load_engine
+
+bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
 
 _MIN_OBS = 5  # need at least this many returns to attempt Roll
 _EPS = 1e-12
