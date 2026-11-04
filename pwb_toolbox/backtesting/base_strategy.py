@@ -21,6 +21,16 @@ class BaseStrategy(bt.Strategy):
             return False
         return data.close[0] != data.close[-2]
 
+    def is_member(self, data):
+        """Whether the instrument belongs to the strategy's universe on this bar.
+
+        Always ``True`` here. ``run_strategy`` answers ``False`` for a name a
+        point-in-time universe (``"sp500"``, ``"liquid1000"``) brought in, on
+        the bars it is not a member: a screen that skips those names forms its
+        book among the members of the day, as the papers do.
+        """
+        return True
+
     def next(self):
         """Update progress bar and log current value."""
         self.pbar.update(1)

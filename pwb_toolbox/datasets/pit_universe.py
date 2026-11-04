@@ -133,7 +133,9 @@ def pit_symbols(top_n: int = 500, min_months: int = 0) -> list:
     return sorted(load_pit_universe(top_n, min_months)["symbol"].unique().tolist())
 
 
-def membership_mask(index, symbols, top_n: int = 500, min_months: int = 0) -> pd.DataFrame:
+def membership_mask(
+    index, symbols, top_n: int = 500, min_months: int = 0, tolerance=None
+) -> pd.DataFrame:
     """``(date x symbol)`` booleans: was the name a member on the last session up to that date.
 
     This is what ``run_strategy`` needs after the panel has been reindexed on
@@ -143,10 +145,13 @@ def membership_mask(index, symbols, top_n: int = 500, min_months: int = 0) -> pd
     session of the table (a market holiday) carries the last session's
     membership; a date before the first session is outside.
 
-    No as-of tolerance here: the rows the tolerance of
+    No as-of tolerance by default: the rows the tolerance of
     :func:`apply_pit_membership` keeps for a few sessions after an exit are real
     price rows, and the caller treats a bar with a row as tradable whatever this
-    mask says.
+    mask says. ``tolerance`` (a ``Timedelta``) reproduces that tolerance on a
+    panel that was not cut: a date also counts as a member when the name was
+    one on a session at most ``tolerance`` before it, which is exactly the set
+    of rows :func:`apply_pit_membership` would have kept.
     """
     import numpy as np
 
@@ -169,7 +174,16 @@ def membership_mask(index, symbols, top_n: int = 500, min_months: int = 0) -> pd
 
     last = sessions.searchsorted(index, side="right") - 1
     known = last >= 0
-    out[known] = member[last[known]]
+    if tolerance is None:
+        out[known] = member[last[known]]
+        return pd.DataFrame(out, index=index, columns=symbols)
+    # The last session, up to each session, on which each name was a member.
+    seen = np.where(member, np.arange(len(sessions))[:, None], -1)
+    seen = np.maximum.accumulate(seen, axis=0)
+    at = seen[last[known]]  # (dates known) x symbols, -1 when never yet a member
+    stamps = sessions.to_numpy()
+    age = index[known].to_numpy()[:, None] - stamps[np.maximum(at, 0)]
+    out[known] = (at >= 0) & (age <= np.timedelta64(pd.Timedelta(tolerance)))
     return pd.DataFrame(out, index=index, columns=symbols)
 
 
