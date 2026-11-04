@@ -357,7 +357,16 @@ class FundingAudit(bt.Analyzer):
             self.margin += 1
 
     def next(self):
-        cash = self.strategy.broker.get_cash()
+        broker = self.strategy.broker
+        cash = broker.get_cash()
+        marked = float(getattr(self.strategy, "_pwb_ms_marked", 0.0) or 0.0)
+        if marked or getattr(self.strategy, "_pwb_ms_settled_any", False):
+            # pit_exit="hold": the cash the harness books to mark a non-member
+            # to its real close is value, not money -- a held name that fell
+            # after its exit would read as a debit -- and a settlement booked
+            # this bar is money the broker has not applied yet. All of it is
+            # counted once everything asked for has landed.
+            cash = cash + _pending_cash(broker) - marked
         if self.min_cash is None or cash < self.min_cash:
             self.min_cash = cash
         value = self.strategy.broker.getvalue()
@@ -459,6 +468,7 @@ class _Membership:
 
     def __init__(self, days: pd.DatetimeIndex, out: pd.DataFrame):
         self.day_index = {day.date(): i for i, day in enumerate(days)}
+        self.names = set(out.columns)  # every name the universe brought in
         self.out = {}
         exits = []
         for symbol in out.columns:
@@ -541,8 +551,12 @@ def _real_outside_prices(pivot_df: pd.DataFrame, membership: "_Membership") -> d
     every name that has bars outside its universe, read before they are blanked."""
     out = {}
     for symbol in membership.out:
-        frame = pivot_df[symbol][["open", "close"]].ffill()
-        out[symbol] = (frame["open"].to_numpy(dtype=float), frame["close"].to_numpy(dtype=float))
+        raw = pivot_df[symbol]
+        close = raw["close"].ffill()
+        # On a bar without a print -- after a delisting, in a hole -- the
+        # price a sale gets is the last close, not the last open.
+        opens = raw["open"].where(raw["close"].notna(), close).ffill()
+        out[symbol] = (opens.to_numpy(dtype=float), close.to_numpy(dtype=float))
     return out
 
 
@@ -613,6 +627,35 @@ def _signed(order) -> float:
     return size if order.isbuy() else -size
 
 
+def _cheat_on_close(broker) -> bool:
+    """Whether market orders fill at the close of the bar they were placed on.
+
+    backtrader keeps the flag in ``broker.p.coc``; Tradewind's ``set_coc``
+    sets ``broker._coc`` and leaves the parameter as it was.
+    """
+    flag = getattr(broker, "_coc", None)
+    if flag is None:
+        flag = getattr(getattr(broker, "p", None), "coc", False)
+    return bool(flag)
+
+
+def _pending_cash(broker) -> float:
+    """What ``add_cash`` has been asked for and not yet applied to the broker's cash.
+
+    It lands at the end of the next broker cycle, or earlier when a position
+    value is asked for one feed (the oracle's ``add_cash_timing``) -- a timing
+    a strategy's ``order_target_value`` moves. backtrader queues the amounts in
+    a deque, Tradewind sums them in a float, under the same name.
+    """
+    pending = getattr(broker, "_cash_addition", None)
+    if not pending:
+        return 0.0
+    try:
+        return float(sum(pending))
+    except TypeError:
+        return float(pending)
+
+
 def _reduces(position: float, size: float) -> bool:
     """Whether an order of ``size`` brings ``position`` closer to flat without flipping it."""
     after = position + size
@@ -654,12 +697,18 @@ def _with_exposure_cap(
     order past ``_refuse_outside_universe``. With ``pit_exit="hold"`` the
     position is kept until the strategy's next rebalancing bar, and closed
     then if the strategy did not close it itself (a rebalancing bar is one on
-    which the strategy placed an order or called an ``order_target_*``, even
-    one that left its book unchanged). The feed stays flat outside, so the
+    which the strategy placed an order or called an ``order_target_*`` on a
+    name the universe brought in, even one that left its book unchanged; an
+    order on a hedge or benchmark the caller listed itself does not count).
+    The harness's close goes first in the broker's queue, so the purchases it
+    funds pass the margin check. The feed stays flat outside, so the
     position is marked to its real close through the cash, one bar late
     (``_pwb_accrue``), and every sale filled there is settled at the real
     price: the broker fills it at the flat price and the difference with
-    ``real_prices`` is added to the cash (``membership_settled``).
+    ``real_prices`` is added to the cash (``membership_settled``). The mark
+    is not money: ``FundingAudit`` reads the cash without it
+    (``_pwb_ms_marked``), and the exposure records value such a holding at
+    its real close.
     ``is_tradable`` and ``is_member`` answer ``False`` for the name while it is
     outside, so a screen written with them never selects it.
 
@@ -700,6 +749,8 @@ def _with_exposure_cap(
             self.membership_liquidations = {}
             self.membership_settled = {}  # name -> {"fills": n, "cash": added}
             self._pwb_ms_accrued = {}  # name -> cash booked to mark it to its real close
+            self._pwb_ms_marked = 0.0  # their sum: in the broker's cash, not money (FundingAudit)
+            self._pwb_ms_settled_any = False
             super().__init__(*args, **kwargs)
 
         # -- targets ----------------------------------------------------------
@@ -730,19 +781,32 @@ def _with_exposure_cap(
                 self._pwb_cap_applied[day] = min(scale, self._pwb_cap_applied.get(day, 1.0))
             return scale
 
-        def _pwb_act(self):
-            if self.datas and not guard.get("liquidating"):
-                try:
-                    self._pwb_acted = self.datas[0].datetime.date(0)
-                except (IndexError, ValueError):
-                    pass
+        def _pwb_act(self, data=None):
+            """Mark this bar as a rebalance when the order is on a name the universe brought in.
+
+            An order on a name the caller listed itself -- a hedge, a
+            benchmark, a cash proxy traded every day -- does not rebalance
+            the book of members.
+            """
+            if not hold or not self.datas or guard.get("liquidating"):
+                return
+            try:
+                data = self._pwb_feed(data)
+            except (KeyError, IndexError):
+                data = None
+            if data is not None and getattr(data, "_name", None) not in membership.names:
+                return
+            try:
+                self._pwb_acted = self.datas[0].datetime.date(0)
+            except (IndexError, ValueError):
+                pass
 
         def order_target_size(self, data=None, target=0, **kwargs):
-            self._pwb_act()
+            self._pwb_act(data)
             return super().order_target_size(data=data, target=target, **kwargs)
 
         def order_target_percent(self, data=None, target=0.0, **kwargs):
-            self._pwb_act()
+            self._pwb_act(data)
             # backtrader's own order_target_percent multiplies by the NAV and
             # calls order_target_value, which lands back here. Without the
             # guard the cap is applied twice -- 0.495 became 0.245 -- and the
@@ -757,7 +821,7 @@ def _with_exposure_cap(
                 self._pwb_cap_scaling = False
 
         def order_target_value(self, data=None, target=0.0, **kwargs):
-            self._pwb_act()
+            self._pwb_act(data)
             if self._pwb_cap_scaling:
                 return super().order_target_value(data=data, target=target, **kwargs)
             value = self.broker.getvalue()
@@ -772,11 +836,11 @@ def _with_exposure_cap(
 
         # -- every order, whatever sent it ----------------------------------------
         def buy(self, *args, **kwargs):
-            self._pwb_act()
+            self._pwb_act(kwargs.get("data", args[0] if args else None))
             return self._pwb_track(super().buy(*args, **kwargs))
 
         def sell(self, *args, **kwargs):
-            self._pwb_act()
+            self._pwb_act(kwargs.get("data", args[0] if args else None))
             return self._pwb_track(super().sell(*args, **kwargs))
 
         def _pwb_track(self, order):
@@ -817,7 +881,7 @@ def _with_exposure_cap(
                     continue
                 if name in req or value <= 0:
                     continue
-                weight = held * float(data.close[0]) / value
+                weight = held * self._pwb_mark_price(name, data) / value
                 if weight > 0:
                     funded += weight
                 # In what the strategy asked for, not in what the cap let
@@ -831,6 +895,17 @@ def _with_exposure_cap(
             self._pwb_cap_funded.append((self._pwb_cap_day, funded))
             self.requested_long = max(self.requested_long, long)
             self.requested_gross = max(self.requested_gross, long + short)
+
+        def _pwb_mark_price(self, name, data) -> float:
+            """The close a holding is worth: the real one for a non-member held under "hold"."""
+            price = float(data.close[0])
+            if real_prices is not None and name in real_prices:
+                i = membership.day_index.get(data.datetime.date(0))
+                if i is not None and membership.out[name][i]:
+                    real = real_prices[name][1][i]
+                    if np.isfinite(real):
+                        price = float(real)
+            return price
 
         # -- names leaving the universe -----------------------------------------
         def _pwb_ms_step(self):
@@ -878,6 +953,15 @@ def _with_exposure_cap(
                         order = self.buy(data, size=-remaining)
                 finally:
                     guard["liquidating"] = False
+                if hold and order is not None:
+                    # Placed after the strategy's own orders of the bar; put
+                    # first, so that the margin check of the purchases it
+                    # funds counts its proceeds (both engines check the
+                    # submitted orders in turn, and the cash with them).
+                    queue = getattr(self.broker, "submitted", None)
+                    if queue is not None and queue and queue[-1] is order:
+                        queue.pop()
+                        queue.appendleft(order)
                 self._pwb_ms_orders[name] = order
                 entry = self.membership_liquidations.setdefault(
                     name, {"orders": 0, "first": day, "prices": []}
@@ -888,16 +972,26 @@ def _with_exposure_cap(
             """Pay a fill outside the universe at the real price instead of the flat one."""
             day = order.data.datetime.date(0)
             i = membership.day_index.get(day)
-            if i is None or not membership.out[name][i]:
+            if i is None:
                 return
             opens, closes = real_prices[name]
-            real = closes[i] if order.exectype == order.Close else opens[i]
+            if order.exectype == order.Market and i > 0 and _cheat_on_close(self.broker):
+                # cheat-on-close: filled at the close of the bar it was placed on
+                i -= 1
+                real = closes[i]
+            elif order.exectype == order.Close:
+                real = closes[i]
+            else:
+                real = opens[i]
+            if not membership.out[name][i]:
+                return  # the price it filled at was a real one
             size = float(order.executed.size)
             if not size or not np.isfinite(real):
                 return
             cash = -size * (float(real) - float(order.executed.price))
             if cash:
                 self.broker.add_cash(cash)
+            self._pwb_ms_settled_any = True
             entry = self.membership_settled.setdefault(name, {"fills": 0, "cash": 0.0})
             entry["fills"] += 1
             entry["cash"] += cash
@@ -948,10 +1042,13 @@ def _with_exposure_cap(
 
             The feed is flat there, so the broker values the position at its
             last member close. The difference with the real close is booked as
-            cash -- ``add_cash`` lands on the next bar, in both engines, so the
-            mark lags one bar -- and reversed on the bar before the name comes
-            back, when the feed itself jumps to the real price. A sale is
-            settled on its own in ``_pwb_settle``.
+            cash -- ``add_cash`` lands at the end of the next broker cycle, in
+            both engines, so the mark lags one bar and the margin checks of
+            the next bar see the cash the orders were sized on -- and reversed
+            on the bar before the name comes back, when the feed itself jumps
+            to the real price. A sale is
+            settled on its own in ``_pwb_settle``. ``_pwb_ms_marked`` is the
+            sum of these marks, landed or not (``FundingAudit``).
             """
             day = self.datas[0].datetime.date(0)
             i = membership.day_index.get(day)
@@ -977,6 +1074,7 @@ def _with_exposure_cap(
                     self._pwb_ms_accrued[name] = target
                 else:
                     self._pwb_ms_accrued.pop(name, None)
+            self._pwb_ms_marked = float(sum(self._pwb_ms_accrued.values()))
 
         def _pwb_after_bar(self):
             self._pwb_cap_close_bar()
@@ -1080,12 +1178,14 @@ def run_strategy(
       returns, whether they stay in the universe or not. An order that opens,
       adds to or flips a position in a non-member is refused, a sale passes;
       whatever the strategy still holds in a non-member on its next
-      rebalancing bar (any bar on which it calls an order method) is closed
-      by the harness. The feed is the same flat line as with ``"liquidate"``
+      rebalancing bar (any bar on which it calls an order method on a name
+      the universe brought in -- not on a hedge it listed itself) is closed
+      by the harness, its order checked before the strategy's own. The feed is the same flat line as with ``"liquidate"``
       -- screens that skip flat lines keep working --; a non-member still held
-      is marked to its real close through the cash (one bar late, the timing
-      of ``add_cash`` in both engines), and a sale filled outside is settled
-      at the real price. ``is_tradable`` and ``is_member`` answer ``False``
+      is marked to its real close through the cash (one bar late: the
+      broker has marked the bar before the strategy runs), and a sale filled
+      outside is settled at the real price. The funding audit reads the cash
+      without those marks. ``is_tradable`` and ``is_member`` answer ``False``
       for a non-member. The panel is loaded uncut
       (``get_pricing(pit_cut=False)``) and blanked here, so the era cut reads
       the real holes: a name out of the universe for three years keeps its
