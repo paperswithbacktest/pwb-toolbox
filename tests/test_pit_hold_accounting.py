@@ -144,6 +144,15 @@ class TargetsOnlyTheMembers(_Recorder):
                 self.order_target_percent(d, 0.96 / len(names))
 
 
+class BuyAndHold(_Recorder):
+    """96 % in A, B and X on bar 100, never traded again."""
+
+    def step(self, i):
+        if i == 100:
+            for d in self.datas:
+                self.order_target_percent(d, 0.32)
+
+
 class _Base(unittest.TestCase):
     prices_kwargs = {}
     back = True
@@ -276,6 +285,20 @@ class CollapseTest(_Base):
         funding = strategy.analyzers.funding.get_analysis()
         self.assertGreater(funding["min_cash"], 0.0)  # 96 % invested: no debit
         self.assertBooksBalance(strategy, NEXT + 5)
+
+
+class CollapseHeldThroughTheReturnTest(_Base):
+    """X loses 85 % while it is out and comes back held: its mark is reversed, nothing is settled."""
+
+    prices_kwargs = {"move": 0.15}
+
+    def test_the_reversal_is_not_read_as_a_debit(self):
+        strategy = self._run(BuyAndHold)
+        self.assertGreater(strategy.held[OUT[1] + 2]["X"], 0)  # held through the return
+        self.assertEqual(strategy.membership_audit["settled"], {})
+        self.assertEqual(strategy._pwb_ms_marked, 0.0)
+        self.assertEqual(strategy.run_report["attempts"], 1)
+        self.assertGreater(strategy.analyzers.funding.get_analysis()["min_cash"], 0.0)
 
 
 class CheatOnCloseTest(_Base):

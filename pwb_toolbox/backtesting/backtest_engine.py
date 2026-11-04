@@ -360,12 +360,13 @@ class FundingAudit(bt.Analyzer):
         broker = self.strategy.broker
         cash = broker.get_cash()
         marked = float(getattr(self.strategy, "_pwb_ms_marked", 0.0) or 0.0)
-        if marked or getattr(self.strategy, "_pwb_ms_settled_any", False):
+        if getattr(self.strategy, "_pwb_ms_added", False):
             # pit_exit="hold": the cash the harness books to mark a non-member
             # to its real close is value, not money -- a held name that fell
             # after its exit would read as a debit -- and a settlement booked
             # this bar is money the broker has not applied yet. All of it is
-            # counted once everything asked for has landed.
+            # counted once everything asked for has landed -- also on a bar
+            # where no mark is left but the reversal of the last one has not.
             cash = cash + _pending_cash(broker) - marked
         if self.min_cash is None or cash < self.min_cash:
             self.min_cash = cash
@@ -750,7 +751,7 @@ def _with_exposure_cap(
             self.membership_settled = {}  # name -> {"fills": n, "cash": added}
             self._pwb_ms_accrued = {}  # name -> cash booked to mark it to its real close
             self._pwb_ms_marked = 0.0  # their sum: in the broker's cash, not money (FundingAudit)
-            self._pwb_ms_settled_any = False
+            self._pwb_ms_added = False  # the harness has called add_cash (FundingAudit)
             super().__init__(*args, **kwargs)
 
         # -- targets ----------------------------------------------------------
@@ -991,7 +992,7 @@ def _with_exposure_cap(
             cash = -size * (float(real) - float(order.executed.price))
             if cash:
                 self.broker.add_cash(cash)
-            self._pwb_ms_settled_any = True
+                self._pwb_ms_added = True
             entry = self.membership_settled.setdefault(name, {"fills": 0, "cash": 0.0})
             entry["fills"] += 1
             entry["cash"] += cash
@@ -1070,6 +1071,7 @@ def _with_exposure_cap(
                 booked = self._pwb_ms_accrued.get(name, 0.0)
                 if target != booked:
                     self.broker.add_cash(target - booked)
+                    self._pwb_ms_added = True
                 if target:
                     self._pwb_ms_accrued[name] = target
                 else:
