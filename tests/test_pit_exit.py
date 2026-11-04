@@ -101,6 +101,7 @@ class PitExitTest(unittest.TestCase):
                 start_date="2020-01-01",
                 cash=100_000.0,
                 broker_kwargs={"commission": 0.0},
+                pit_exit="liquidate",  # the 0.1.43 rule; "hold" is tests/test_pit_hold.py
             )
 
     def test_the_quiet_name_is_held_before_it_leaves(self):

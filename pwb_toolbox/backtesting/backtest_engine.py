@@ -259,6 +259,12 @@ ERA_GAP_YEARS = 3
 # back-fill below sell a flat line. ``PWB_REFUSE_BEFORE_LISTING=0`` switches it off.
 REFUSE_BEFORE_LISTING = True
 
+# What happens to a name that leaves a point-in-time universe ("sp500",
+# "liquid1000"); see ``run_strategy``. ``PWB_PIT_EXIT`` in the environment
+# overrides the default for a whole campaign.
+PIT_EXITS = ("hold", "liquidate", "freeze")
+PIT_EXIT = "hold"
+
 
 def _era_cuts(closes: pd.DataFrame, gap_years: int) -> dict:
     """``{symbol: (first bar kept, first bar on disk, earlier eras)}``.
@@ -472,7 +478,7 @@ class _Membership:
         return i is not None and bool(flags[i])
 
 
-def _pit_membership(symbols, present: pd.DataFrame, trading_days) -> "_Membership | None":
+def _pit_membership(symbols, present: pd.DataFrame, trading_days, cut: bool = True) -> "_Membership | None":
     """Where each name a point-in-time universe brought in sits outside it.
 
     ``present`` is the panel's row mask before any fill. A bar is outside when
@@ -481,6 +487,11 @@ def _pit_membership(symbols, present: pd.DataFrame, trading_days) -> "_Membershi
     stay tradable, and so does a hole in a member's prices -- that one is a
     data gap, not an exit. Names the caller listed itself (``["sp500", "SPY"]``)
     are never cut, as in ``get_pricing``.
+
+    ``cut=False`` is for a panel loaded with ``get_pricing(..., pit_cut=False)``,
+    which kept every row: the rows the cut would have kept are then rebuilt from
+    the membership with the same as-of tolerance, so the bars outside are the
+    same as on a cut panel.
     """
     if isinstance(symbols, str):
         symbols = [symbols]
@@ -490,11 +501,14 @@ def _pit_membership(symbols, present: pd.DataFrame, trading_days) -> "_Membershi
     names = [s for s in present.columns if s in added and s not in explicit]
     if not names:
         return None
-    from pwb_toolbox.datasets.pit_universe import membership_mask
+    from pwb_toolbox.datasets.pit_universe import _ASOF_TOLERANCE, membership_mask
 
     member = membership_mask(trading_days, names, *spec).to_numpy()
     rows = present[names].reindex(trading_days, fill_value=False).to_numpy(dtype=bool)
     listed = np.maximum.accumulate(rows, axis=0)  # from the first real bar on
+    if not cut:
+        kept = membership_mask(trading_days, names, *spec, tolerance=_ASOF_TOLERANCE)
+        rows = rows & kept.to_numpy()
     out = ~member & ~rows & listed
     return _Membership(trading_days, pd.DataFrame(out, index=trading_days, columns=names))
 
@@ -507,7 +521,8 @@ def _flatten_out_bars(pivot_df: pd.DataFrame, membership: "_Membership") -> None
     A flat bar at the last close is the price the liquidation gets, and it
     earns nothing while the name is away.
     """
-    names = list(membership.out)
+    have = set(pivot_df.columns.get_level_values(0))
+    names = [s for s in membership.out if s in have]
     if not names:
         return
     mask = np.column_stack([membership.out[s] for s in names])
@@ -521,7 +536,34 @@ def _flatten_out_bars(pivot_df: pd.DataFrame, membership: "_Membership") -> None
         pivot_df[columns] = block
 
 
-def _refuse_outside_universe(broker, membership: "_Membership", state: dict) -> dict:
+def _real_outside_prices(pivot_df: pd.DataFrame, membership: "_Membership") -> dict:
+    """``{symbol: (open, close)}`` -- the real prices, holes forward-filled, of
+    every name that has bars outside its universe, read before they are blanked."""
+    out = {}
+    for symbol in membership.out:
+        frame = pivot_df[symbol][["open", "close"]].ffill()
+        out[symbol] = (frame["open"].to_numpy(dtype=float), frame["close"].to_numpy(dtype=float))
+    return out
+
+
+def _blank_out_bars(pivot_df: pd.DataFrame, membership: "_Membership") -> None:
+    """Empty the bars outside the universe, so the fill makes them the cut panel's flat line."""
+    names = list(membership.out)
+    if not names:
+        return
+    mask = np.column_stack([membership.out[s] for s in names])
+    for field in ("open", "high", "low", "close"):
+        columns = [(s, field) for s in names]
+        if any(c not in pivot_df.columns for c in columns):
+            continue
+        block = pivot_df[columns].to_numpy(copy=True)
+        block[mask] = np.nan
+        pivot_df[columns] = block
+
+
+def _refuse_outside_universe(
+    broker, membership: "_Membership", state: dict, policy: str = "liquidate"
+) -> dict:
     """Make ``broker`` reject any order on a name outside its point-in-time universe.
 
     The bars outside are a flat line (``_flatten_out_bars``), with a volatility,
@@ -533,18 +575,27 @@ def _refuse_outside_universe(broker, membership: "_Membership", state: dict) -> 
     trade, and the strategy is notified the same way. The liquidation the
     harness itself places at the exit passes (``state["liquidating"]``).
 
+    With ``policy="hold"`` a position may still be open on the bars outside
+    (it is held to the strategy's next rebalance): an order that only
+    *reduces* it -- a sale of part or all of a long, a cover of a short --
+    passes, and is settled at the real price by the strategy wrapper; only an
+    order that opens, adds to or flips a position is refused.
+
     Returns the audit, filled as the run goes: ``{symbol: {"orders": n,
     "first": date, "last": date}}``.
     """
     audit = {}
     original = broker.submit
+    hold = policy == "hold"
 
     def submit(order, check=True):
         if not state.get("liquidating"):
             data = order.data
             symbol = getattr(data, "_name", None)
             today = data.datetime.date(0)
-            if membership.is_out(symbol, today):
+            if membership.is_out(symbol, today) and not (
+                hold and _reduces(broker.getposition(data).size, _signed(order))
+            ):
                 entry = audit.setdefault(symbol, {"orders": 0, "first": today, "last": today})
                 entry["orders"] += 1
                 entry["last"] = today
@@ -562,7 +613,16 @@ def _signed(order) -> float:
     return size if order.isbuy() else -size
 
 
-def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership=None, guard=None):
+def _reduces(position: float, size: float) -> bool:
+    """Whether an order of ``size`` brings ``position`` closer to flat without flipping it."""
+    after = position + size
+    return bool(position) and abs(after) < abs(position) and after * position >= 0
+
+
+def _with_exposure_cap(
+    strategy_cls, cap: float = 1.0, schedule=None, membership=None, guard=None,
+    pit_exit="liquidate", real_prices=None,
+):
     """Subclass ``strategy_cls`` to scale, and record, every target it asks for.
 
     Acts on the order, not on a ``leverage`` parameter, because declaring one
@@ -591,7 +651,17 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
     With ``membership``, a position in a name that leaves its point-in-time
     universe is closed on the first bar outside (filled at the last member
     close, see ``_flatten_out_bars``); ``guard`` is the flag that lets that one
-    order past ``_refuse_outside_universe``.
+    order past ``_refuse_outside_universe``. With ``pit_exit="hold"`` the
+    position is kept until the strategy's next rebalancing bar, and closed
+    then if the strategy did not close it itself (a rebalancing bar is one on
+    which the strategy placed an order or called an ``order_target_*``, even
+    one that left its book unchanged). The feed stays flat outside, so the
+    position is marked to its real close through the cash, one bar late
+    (``_pwb_accrue``), and every sale filled there is settled at the real
+    price: the broker fills it at the flat price and the difference with
+    ``real_prices`` is added to the cash (``membership_settled``).
+    ``is_tradable`` and ``is_member`` answer ``False`` for the name while it is
+    outside, so a screen written with them never selects it.
 
     The wrapper's own state lives under ``_pwb_*`` names. It used to be
     ``self._targets``, ``self._record`` and ``self._scaling``, set *after* the
@@ -603,6 +673,7 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
     """
     days, scales = schedule if schedule else ((), ())
     guard = guard if guard is not None else {}
+    hold = membership is not None and pit_exit == "hold"
 
     class _Capped(strategy_cls):
         exposure_cap = cap
@@ -622,9 +693,13 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
             self._pwb_ms_filled = set()
             self._pwb_ms_orders = {}
             self._pwb_ms_feeds = None
+            self._pwb_acted = None  # last bar on which the strategy placed or targeted anything
+            self._pwb_ms_bar = None  # (len, date) of the bar is_member last looked at
             self.requested_gross = 0.0
             self.requested_long = 0.0
             self.membership_liquidations = {}
+            self.membership_settled = {}  # name -> {"fills": n, "cash": added}
+            self._pwb_ms_accrued = {}  # name -> cash booked to mark it to its real close
             super().__init__(*args, **kwargs)
 
         # -- targets ----------------------------------------------------------
@@ -655,7 +730,19 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
                 self._pwb_cap_applied[day] = min(scale, self._pwb_cap_applied.get(day, 1.0))
             return scale
 
+        def _pwb_act(self):
+            if self.datas and not guard.get("liquidating"):
+                try:
+                    self._pwb_acted = self.datas[0].datetime.date(0)
+                except (IndexError, ValueError):
+                    pass
+
+        def order_target_size(self, data=None, target=0, **kwargs):
+            self._pwb_act()
+            return super().order_target_size(data=data, target=target, **kwargs)
+
         def order_target_percent(self, data=None, target=0.0, **kwargs):
+            self._pwb_act()
             # backtrader's own order_target_percent multiplies by the NAV and
             # calls order_target_value, which lands back here. Without the
             # guard the cap is applied twice -- 0.495 became 0.245 -- and the
@@ -670,6 +757,7 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
                 self._pwb_cap_scaling = False
 
         def order_target_value(self, data=None, target=0.0, **kwargs):
+            self._pwb_act()
             if self._pwb_cap_scaling:
                 return super().order_target_value(data=data, target=target, **kwargs)
             value = self.broker.getvalue()
@@ -684,9 +772,11 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
 
         # -- every order, whatever sent it ----------------------------------------
         def buy(self, *args, **kwargs):
+            self._pwb_act()
             return self._pwb_track(super().buy(*args, **kwargs))
 
         def sell(self, *args, **kwargs):
+            self._pwb_act()
             return self._pwb_track(super().sell(*args, **kwargs))
 
         def _pwb_track(self, order):
@@ -767,9 +857,25 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
                 if not self.getposition(data).size:
                     self._pwb_ms_watch.discard(name)
                     continue
+                remaining = None
+                if hold:
+                    # Held at its real prices until the strategy rebalances.
+                    if self._pwb_acted != day:
+                        continue
+                    # Net of what the strategy itself sent this bar (a sale
+                    # outside passes the guard): close only what is left.
+                    alive = [o for o in self._pwb_cap_orders.get(name, ()) if o.alive()]
+                    remaining = self.getposition(data).size + sum(_signed(o) for o in alive)
+                    if not remaining:
+                        continue  # the strategy is closing it itself
                 guard["liquidating"] = True
                 try:
-                    order = self.close(data)
+                    if remaining is None:
+                        order = self.close(data)
+                    elif remaining > 0:
+                        order = self.sell(data, size=remaining)
+                    else:
+                        order = self.buy(data, size=-remaining)
                 finally:
                     guard["liquidating"] = False
                 self._pwb_ms_orders[name] = order
@@ -778,9 +884,29 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
                 )
                 entry["orders"] += 1
 
+        def _pwb_settle(self, order, name):
+            """Pay a fill outside the universe at the real price instead of the flat one."""
+            day = order.data.datetime.date(0)
+            i = membership.day_index.get(day)
+            if i is None or not membership.out[name][i]:
+                return
+            opens, closes = real_prices[name]
+            real = closes[i] if order.exectype == order.Close else opens[i]
+            size = float(order.executed.size)
+            if not size or not np.isfinite(real):
+                return
+            cash = -size * (float(real) - float(order.executed.price))
+            if cash:
+                self.broker.add_cash(cash)
+            entry = self.membership_settled.setdefault(name, {"fills": 0, "cash": 0.0})
+            entry["fills"] += 1
+            entry["cash"] += cash
+
         def notify_order(self, order):
             if membership is not None and order.status == order.Completed:
                 name = getattr(order.data, "_name", None)
+                if real_prices is not None and name in real_prices:
+                    self._pwb_settle(order, name)
                 if name in membership.out:
                     self._pwb_ms_filled.add(name)
                     mine = self._pwb_ms_orders.get(name)
@@ -790,11 +916,74 @@ def _with_exposure_cap(strategy_cls, cap: float = 1.0, schedule=None, membership
                         )
             return super().notify_order(order)
 
+        # -- what the strategy may select ---------------------------------------------
+        def _pwb_is_out(self, data) -> bool:
+            if membership is None or not self.datas:
+                return False
+            name = data if isinstance(data, str) else getattr(data, "_name", None)
+            if name not in membership.out:
+                return False
+            bar = len(self)
+            if self._pwb_ms_bar is None or self._pwb_ms_bar[0] != bar:
+                # one date conversion per bar, not one per name a screen asks about
+                self._pwb_ms_bar = (bar, self.datas[0].datetime.date(0))
+            return membership.is_out(name, self._pwb_ms_bar[1])
+
+        def is_member(self, data) -> bool:
+            if self._pwb_is_out(data):
+                return False
+            parent = getattr(super(), "is_member", None)
+            return parent(data) if parent is not None else True
+
+        if hold:
+
+            def is_tradable(self, data, *args, **kwargs):
+                if self._pwb_is_out(data):
+                    return False
+                return super().is_tradable(data, *args, **kwargs)
+
         # -- end of each bar --------------------------------------------------------
+        def _pwb_accrue(self):
+            """Mark what is held outside the universe to its real close, through the cash.
+
+            The feed is flat there, so the broker values the position at its
+            last member close. The difference with the real close is booked as
+            cash -- ``add_cash`` lands on the next bar, in both engines, so the
+            mark lags one bar -- and reversed on the bar before the name comes
+            back, when the feed itself jumps to the real price. A sale is
+            settled on its own in ``_pwb_settle``.
+            """
+            day = self.datas[0].datetime.date(0)
+            i = membership.day_index.get(day)
+            if i is None:
+                return
+            if self._pwb_ms_feeds is None:
+                self._pwb_ms_feeds = {getattr(d, "_name", None): d for d in self.datas}
+            for name in set(self._pwb_ms_accrued) | self._pwb_ms_watch:
+                data = self._pwb_ms_feeds.get(name)
+                if data is None or name not in real_prices:
+                    continue
+                flags = membership.out[name]
+                target = 0.0
+                if flags[i] and i + 1 < len(flags) and flags[i + 1]:
+                    size = self.getposition(data).size
+                    real = real_prices[name][1][i]
+                    if size and np.isfinite(real):
+                        target = size * (float(real) - float(data.close[0]))
+                booked = self._pwb_ms_accrued.get(name, 0.0)
+                if target != booked:
+                    self.broker.add_cash(target - booked)
+                if target:
+                    self._pwb_ms_accrued[name] = target
+                else:
+                    self._pwb_ms_accrued.pop(name, None)
+
         def _pwb_after_bar(self):
             self._pwb_cap_close_bar()
             if membership is not None and self.datas:
                 self._pwb_ms_step()
+                if real_prices is not None:
+                    self._pwb_accrue()
 
         def prenext(self):
             super().prenext()
@@ -851,6 +1040,7 @@ def run_strategy(
     max_leverage=MAX_LEVERAGE,
     scaling="bar",
     debit_tolerance=DEBIT_TOLERANCE,
+    pit_exit=None,
 ):
     """Run a tactical asset allocation strategy with Backtrader.
 
@@ -881,17 +1071,37 @@ def run_strategy(
     did not exist. See ``_refuse_before_listing``; the refusals are on the
     returned strategy as ``listing_audit``.
 
-    **Point-in-time universes** (``"sp500"``, ``"liquid1000"``). A name that
-    leaves the universe has no row until it comes back; the forward fill used
-    to make that a flat line the strategy could buy and hold, and the move the
-    name made while away then landed in one bar at its return. Now a position
-    is closed on the first bar outside, at the last member close; any other
-    order on the name is refused (``Rejected``) until it is a member again. A
-    hole in the prices of a *member* is still forward-filled. The refusals and
-    liquidations are on the returned strategy as ``membership_audit``. The
-    flat bars are still in the feed -- a strategy can skip them with
-    ``BaseStrategy.is_tradable`` -- so a screen that keeps choosing them ends
-    up partly in cash rather than in a phantom.
+    **Point-in-time universes** (``"sp500"``, ``"liquid1000"``). ``pit_exit``
+    (default ``PIT_EXIT``, ``PWB_PIT_EXIT`` in the environment) says what
+    happens to a name that leaves the universe:
+
+    * ``"hold"`` (the default) -- what the papers do: a book formed among the
+      members is held to the next rebalance and earns the names' **real**
+      returns, whether they stay in the universe or not. An order that opens,
+      adds to or flips a position in a non-member is refused, a sale passes;
+      whatever the strategy still holds in a non-member on its next
+      rebalancing bar (any bar on which it calls an order method) is closed
+      by the harness. The feed is the same flat line as with ``"liquidate"``
+      -- screens that skip flat lines keep working --; a non-member still held
+      is marked to its real close through the cash (one bar late, the timing
+      of ``add_cash`` in both engines), and a sale filled outside is settled
+      at the real price. ``is_tradable`` and ``is_member`` answer ``False``
+      for a non-member. The panel is loaded uncut
+      (``get_pricing(pit_cut=False)``) and blanked here, so the era cut reads
+      the real holes: a name out of the universe for three years keeps its
+      earlier membership (on the cut panel that hole looked like a reused
+      ticker, and everything before it was dropped).
+    * ``"liquidate"`` (0.1.43) -- the panel is cut to the membership, the bars
+      outside are flat at the last member close, a position is closed on the
+      first of them at that price, and any other order on the name is refused
+      (``Rejected``) until it is a member again.
+    * ``"freeze"`` (0.1.42 and before) -- cut panel, forward fill, nothing
+      sold or refused: a non-member is a flat line that can be bought and held,
+      and the move it made while away lands in one bar at its return. Kept to
+      reproduce a past measure.
+
+    A hole in the prices of a *member* is forward-filled in every mode. The
+    refusals and closes are on the returned strategy as ``membership_audit``.
 
     **Funding.** The run is first made as published. If it outgrew the account
     -- more than ``margin_tolerance`` of its orders refused for margin, a debit
@@ -937,6 +1147,10 @@ def run_strategy(
         )
     if scaling not in SCALINGS:
         raise ValueError(f"scaling={scaling!r}: one of {SCALINGS}")
+    if pit_exit is None:
+        pit_exit = os.getenv("PWB_PIT_EXIT", PIT_EXIT) or PIT_EXIT
+    if pit_exit not in PIT_EXITS:
+        raise ValueError(f"pit_exit={pit_exit!r}: one of {PIT_EXITS}")
     # The default observers (Broker, BuySell, Trades) exist for plotting and
     # cost about a tenth of the engine loop; nothing in the harness or in the
     # published strategies reads them, and the dozen strategies that build
@@ -951,6 +1165,9 @@ def run_strategy(
         fields=["open", "high", "low", "close"],
         start_date=start_date,
         extend=True,  # Extend the dataset with proxy data
+        # "hold" values a position carried through an exit at its real
+        # prices, so it needs the rows the membership cut would drop.
+        pit_cut=pit_exit != "hold",
     )
     # Which years each symbol actually has a bar in, read before the fill
     # below erases the holes. The cost schedule charges the floor in a year
@@ -991,7 +1208,25 @@ def run_strategy(
         ) != "0"
     # Create trading-day index (optional but keeps Cerebro happy)
     trading_days = pd.bdate_range(pivot_df.index.min(), pivot_df.index.max())
+    membership = _pit_membership(symbols, present, trading_days, cut=pit_exit != "hold")
     pivot_df = pivot_df.reindex(trading_days)
+    real_prices = None
+    if pit_exit == "hold" and membership is not None:
+        # The feed the strategy reads is the one "liquidate" builds -- flat
+        # outside the universe, so a screen that skips flat lines (439 of the
+        # published "sp500" strategies) still never sees a non-member move.
+        # The real prices of those bars are kept aside to settle the sales.
+        real_prices = _real_outside_prices(pivot_df, membership)
+        _blank_out_bars(pivot_df, membership)
+        # A name whose rows all lie outside its membership has no column on
+        # the cut panel; blanked, it would be a feed of NaN.
+        empty = [
+            s for s in membership.out
+            if s in pivot_df.columns.get_level_values(0) and pivot_df[(s, "close")].isna().all()
+        ]
+        if empty:
+            pivot_df = pivot_df.drop(columns=empty, level=0)
+            pivot_df.columns = pivot_df.columns.remove_unused_levels()
     pivot_df.ffill(inplace=True)  # forward-fill holidays
     pivot_df.bfill(inplace=True)  # back-fill leading IPO gaps
     all_years = set(trading_days.year)
@@ -999,9 +1234,11 @@ def run_strategy(
         symbol: all_years - years for symbol, years in active_years.items()
         if all_years - years
     }
-    membership = _pit_membership(symbols, present, trading_days)
-    if membership is not None:
+    if pit_exit in ("liquidate", "hold") and membership is not None:
         _flatten_out_bars(pivot_df, membership)
+    # "freeze" is 0.1.42: the bars outside are the forward fill, nothing is
+    # sold or refused. Kept to reproduce a past measure, not to publish one.
+    acting = membership if pit_exit != "freeze" else None
 
     def attempt(cap, schedule):
         # Engine configuration
@@ -1017,7 +1254,8 @@ def run_strategy(
         # Strategy
         cerebro.addstrategy(
             _with_exposure_cap(
-                strategy_cls, cap, schedule=schedule, membership=membership, guard=guard
+                strategy_cls, cap, schedule=schedule, membership=acting, guard=guard,
+                pit_exit=pit_exit, real_prices=real_prices,
             ),
             total_days=len(trading_days),
             indicator_cls=indicator_cls,
@@ -1054,8 +1292,8 @@ def run_strategy(
         # Inner guard first: an order dated before the listing is refused by
         # the listing guard and counted there, as before the membership one.
         refused_outside = (
-            _refuse_outside_universe(cerebro.broker, membership, guard)
-            if membership is not None
+            _refuse_outside_universe(cerebro.broker, acting, guard, pit_exit)
+            if acting is not None
             else {}
         )
         listing_audit = (
@@ -1075,16 +1313,22 @@ def run_strategy(
                 f"symbols, e.g. {worst[0]} {worst[1]['first']} to {worst[1]['last']} "
                 f"(first bar {first_bar[worst[0]].date()})"
             )
+        strategy.pit_exit = pit_exit
+        strategy.pit_membership = membership
         strategy.membership_audit = {
             "refused": refused_outside,
             "liquidated": strategy.membership_liquidations,
+            "settled": strategy.membership_settled,
         }
         if refused_outside or strategy.membership_liquidations:
             refused = sum(entry["orders"] for entry in refused_outside.values())
             print(
                 f"Out of universe: {refused} orders refused on {len(refused_outside)} "
                 f"symbols, {len(strategy.membership_liquidations)} positions closed "
-                f"at their last member price"
+                + (
+                    "at the next rebalance" if pit_exit == "hold"
+                    else "at their last member price"
+                )
             )
         audit = strategy.analyzers.funding.get_analysis()
         audit["requested_gross"] = strategy.requested_gross
@@ -1122,11 +1366,18 @@ def run_strategy(
             ),
             "commission_policy": getattr(strategy, "commission_policy", None),
             "membership": {
+                "pit_exit": pit_exit,
                 "refused_orders": sum(
                     e["orders"] for e in strategy.membership_audit["refused"].values()
                 ),
                 "refused_symbols": len(strategy.membership_audit["refused"]),
                 "liquidated_symbols": len(strategy.membership_audit["liquidated"]),
+                "settled_fills": sum(
+                    e["fills"] for e in strategy.membership_audit["settled"].values()
+                ),
+                "settled_cash": float(sum(
+                    e["cash"] for e in strategy.membership_audit["settled"].values()
+                )),
             },
         }
         strategy.exposure_cap = report["exposure_cap"]

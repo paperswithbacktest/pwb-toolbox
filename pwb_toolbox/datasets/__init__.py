@@ -1475,6 +1475,7 @@ def get_pricing(
     end_date=date.today().isoformat(),
     extend=False,
     keep_single_level=False,  # backward-compat flag
+    pit_cut=True,
 ):
     """
     Fetch OHLC pricing for the requested symbols.
@@ -1495,6 +1496,12 @@ def get_pricing(
         If `True` and only one field is requested, flatten the columns so the
         output matches the old behaviour (columns = symbols).  If `False`
         you always get a two-level MultiIndex `(symbol, field)`.
+    pit_cut : bool
+        With a point-in-time universe (``"sp500"``, ``"liquid1000"``), drop the
+        rows of each name outside its membership (the default). ``False`` keeps
+        every price row of every name that was ever a member: what
+        ``run_strategy`` needs to value a position held through an exit at its
+        real prices, membership being enforced on the orders instead.
 
     Returns
     -------
@@ -1575,7 +1582,7 @@ def get_pricing(
     # never saw the pseudo-symbol and could not filter per date. Do it here,
     # while the frame is still long: after the pivot, membership would have to
     # be expressed as a mask over a (date, symbol) grid.
-    if pit_top_n is not None and not df.empty:
+    if pit_top_n is not None and pit_cut and not df.empty:
         from .pit_universe import apply_pit_membership
 
         # Only the names the universe brought in: a hedge or benchmark named
@@ -1583,6 +1590,15 @@ def get_pricing(
         df = apply_pit_membership(df, *pit_top_n, only=pit_added - explicit)
 
     df["date"] = pd.to_datetime(df["date"])
+    if pit_top_n is not None and not pit_cut and not df.empty:
+        # Uncut, the panel still starts with the table: before its first
+        # session no name is a member, and the cut would have left no row.
+        # Without this a "sp500" backtest silently gained 1990-2003.
+        from .pit_universe import load_pit_universe
+
+        first = load_pit_universe(*pit_top_n)["date"].min()
+        early = df["symbol"].astype(str).isin(pit_added - explicit) & (df["date"] < first)
+        df = df[~early]
     df.set_index("date", inplace=True)
     df.sort_index(inplace=True)
     df = df.loc[start_date:end_date]
