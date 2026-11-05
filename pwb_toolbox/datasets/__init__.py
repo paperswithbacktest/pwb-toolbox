@@ -1468,6 +1468,120 @@ def _bare_symbol_routes(universe: pd.DataFrame) -> dict:
     return dict(zip(frame["symbol"], frame["repo_id"]))
 
 
+# A ticker that both the ETF feed and the stock feed carry is not settled by
+# the priority above: the index regenerated on 2026-11-02 lists 1 459 of them,
+# and since that day the ETF reading has won every one. For 878 the two feeds
+# hold the same series (an ETF the stock feed still carries), so the choice is
+# moot. The rest are a ticker reused by two instruments, and "ETF first" then
+# hands a strategy a fund it never asked for: bare ``META`` -- named in 518
+# published strategies, rank 4 of the liquid universe since 2022 -- became a
+# thematic ETF quoted 148 sessions in 2021-22 at 12-15 dollars, in place of
+# the stock quoted since 2012; ``BNY``, ``CALY``, ``FB``, ``TOT`` likewise.
+# Swapping the order would only move the error to ``HYG``, ``GDX``, ``VEA``,
+# live ETFs whose ticker a stock carried for a few weeks in 2003-04.
+#
+# So between these two feeds the series that covers the requested window wins:
+# the most sessions between ``start_date`` and ``end_date``, a tie going to the
+# priority above. A name the point-in-time universe brought in never reaches
+# this point: the universe is built from US common stocks.
+_ARBITRATED_REPOS = ("ETFs-Daily-Price", "Stocks-Daily-Price")
+
+# Two feeds of one ticker quote one instrument when they trade on the same
+# sessions -- nine in ten of the sessions either carries -- or, failing that,
+# when their closes agree where they meet (a median gap under 2 % in log
+# terms). The session test is the one that matters: 862 of the 1 459 pairs are
+# a fund the stock feed still carries, and 18 of them differ by a split or
+# total-return adjustment that the price test alone would read as two
+# instruments. A reused ticker does not share sessions: ``BNY`` the fund and
+# ``BNY`` the bank overlap on 6 170 of 13 480 sessions, ``META`` on 148 of 3 627.
+_SAME_SERIES_SESSIONS = 0.9
+_SAME_SERIES_LOG_GAP = 0.02
+
+
+def _arbitrated_symbols(universe: pd.DataFrame) -> frozenset:
+    """Bare tickers the index lists under every repository of ``_ARBITRATED_REPOS``."""
+    frame = universe[["symbol", "repo_id"]].dropna()
+    repos = frame["repo_id"].astype(str).str.split("/").str[-1]
+    frame = frame[repos.isin(_ARBITRATED_REPOS)]
+    counts = frame.drop_duplicates().groupby("symbol")["repo_id"].nunique()
+    return frozenset(counts[counts >= len(_ARBITRATED_REPOS)].index.astype(str))
+
+
+def _same_series(a: pd.DataFrame, b: pd.DataFrame) -> bool:
+    """True when two feeds of one ticker quote the same instrument."""
+    left = a.drop_duplicates("date").set_index("date")["close"]
+    right = b.drop_duplicates("date").set_index("date")["close"]
+    union = left.index.union(right.index)
+    common = left.index.intersection(right.index)
+    if len(union) and len(common) / len(union) >= _SAME_SERIES_SESSIONS:
+        return True
+    both = pd.concat([left, right], axis=1, join="inner").dropna()
+    both = both[(both.iloc[:, 0] > 0) & (both.iloc[:, 1] > 0)]
+    if both.empty:
+        return False
+    gap = np.abs(np.log(both.iloc[:, 0].astype(float) / both.iloc[:, 1].astype(float)))
+    return bool(np.median(gap) < _SAME_SERIES_LOG_GAP)
+
+
+def _arbitrate_collisions(frames: dict, contested, start_date, end_date) -> dict:
+    """Keep, for each contested ticker, the one feed that covers the window.
+
+    ``frames`` maps a repository name to its loaded long frame. Every contested
+    ticker was loaded from each repository of ``_ARBITRATED_REPOS``; the rows
+    of the losing feed are dropped here, before the frames are concatenated
+    (two feeds under one name would otherwise be averaged by the pivot).
+    Returns the frames, filtered.
+    """
+    if not contested:
+        return frames
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
+    rank = {name: i for i, name in enumerate(_BARE_SYMBOL_PRIORITY)}
+    drop = {repo: set() for repo in frames}
+    for sym in sorted(contested):
+        parts = {}
+        for repo in _ARBITRATED_REPOS:
+            frame = frames.get(repo)
+            if frame is None or frame.empty:
+                continue
+            rows = frame[frame["symbol"].astype(str) == sym]
+            if not rows.empty:
+                rows = rows.assign(date=pd.to_datetime(rows["date"]))
+                parts[repo] = rows
+        if len(parts) < 2:
+            continue  # only one feed has rows: nothing to choose
+        etf, stock = (parts[repo] for repo in _ARBITRATED_REPOS)
+        same = _same_series(etf, stock)
+        sessions = {
+            repo: int(rows["date"].between(start, end).sum()) for repo, rows in parts.items()
+        }
+        if same:
+            # One fund in both feeds: the ETF feed's copy is the adjusted one,
+            # and the one ``__extend_etfs`` extends.
+            winner = min(parts, key=lambda repo: rank.get(repo, len(rank)))
+        else:
+            winner = min(parts, key=lambda repo: (-sessions[repo], rank.get(repo, len(rank))))
+        for repo in parts:
+            if repo != winner:
+                drop[repo].add(sym)
+        loser = next(repo for repo in parts if repo != winner)
+        if sessions[loser] and not same:
+            kind = {"ETFs-Daily-Price": "ETF", "Stocks-Daily-Price": "STK"}
+            print(
+                f"Warning: '{sym}' names two instruments in the window: "
+                f"{winner} ({sessions[winner]} sessions, used) and "
+                f"{loser} ({sessions[loser]} sessions, ignored). "
+                f"Pass '{sym}.{kind[loser]}' for the other one, "
+                f"or '{sym}.{kind[winner]}' to make this choice explicit."
+            )
+    out = {}
+    for repo, frame in frames.items():
+        if drop.get(repo):
+            frame = frame[~frame["symbol"].astype(str).isin(drop[repo])]
+        out[repo] = frame
+    return out
+
+
 def get_pricing(
     symbol_list,
     fields=None,  # ← default set below
@@ -1515,6 +1629,7 @@ def get_pricing(
         symbol_list = [symbol_list]
     pit_top_n = None
     pit_added = frozenset()
+    explicit = frozenset()
     if isinstance(symbol_list, list):
         # _resolve_universe copies, where the previous code mutated the
         # caller's list in place: a strategy that kept ``SYMS = ["sp500"]`` and
@@ -1538,10 +1653,13 @@ def get_pricing(
         "BND": "paperswithbacktest/Bonds-Daily-Price",
     }
 
-    mapping = _bare_symbol_routes(load_dataset("Universe-Daily-Price"))
+    universe = load_dataset("Universe-Daily-Price")
+    mapping = _bare_symbol_routes(universe)
+    arbitrated = _arbitrated_symbols(universe)
 
     grouped = defaultdict(list)
     unmapped = []
+    contested = set()
 
     for sym in symbol_list:
         # Case 1: suffixed like "BTC.CRYPTO" → route directly, use base symbol for the dataset
@@ -1554,7 +1672,24 @@ def get_pricing(
                 continue
             # unknown suffix → fall back to Universe mapping on the full symbol
 
-        # Case 2: normal symbol → use Universe mapping
+        # Case 2: a name the point-in-time universe brought in. The universe
+        # is built from US common stocks, so it is one, whatever else the
+        # index lists under the same ticker: routed by the index, ``META``
+        # became an ETF of 2021-22 on 2026-11-02 and left every "sp500"
+        # backtest from its first session in the universe.
+        if sym in pit_added and sym not in explicit:
+            grouped["Stocks-Daily-Price"].append(sym)
+            continue
+
+        # Case 3: a ticker both the ETF and the stock feeds carry -- load
+        # both, keep the one covering the window (_arbitrate_collisions).
+        if sym in arbitrated:
+            for repo_id in _ARBITRATED_REPOS:
+                grouped[repo_id].append(sym)
+            contested.add(sym)
+            continue
+
+        # Case 4: normal symbol → use Universe mapping
         repo_full = mapping.get(sym)
         repo_id = repo_full.split("/")[1] if isinstance(repo_full, str) else None
         if repo_id:
@@ -1569,12 +1704,14 @@ def get_pricing(
             print(f"Warning: No dataset found for symbol '{sym}'")
             unmapped.append(sym)
 
-    frames = []
+    loaded = {}
     for repo_id, syms in grouped.items():
         ext_flag = extend if repo_id != "Indices-Daily-Price" else False
-        df_part = load_dataset(repo_id, syms, extend=ext_flag)
+        df_part = load_dataset(repo_id, list(dict.fromkeys(syms)), extend=ext_flag)
         if not df_part.empty:
-            frames.append(df_part)
+            loaded[repo_id] = df_part
+    loaded = _arbitrate_collisions(loaded, contested, start_date, end_date)
+    frames = [frame for frame in loaded.values() if not frame.empty]
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
