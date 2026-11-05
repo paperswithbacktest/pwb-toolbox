@@ -1534,8 +1534,11 @@ def _arbitrate_collisions(frames: dict, contested, start_date, end_date) -> dict
     """
     if not contested:
         return frames
-    start = pd.Timestamp(start_date)
-    end = pd.Timestamp(end_date)
+    # ``None`` leaves that side of the window open, as ``df.loc[None:None]``
+    # does below; ``pd.Timestamp(None)`` is NaT, which no session is between,
+    # and would hand every collision to the ETF feed on a 0-0 tie.
+    start = pd.Timestamp.min if start_date is None else pd.Timestamp(start_date)
+    end = pd.Timestamp.max if end_date is None else pd.Timestamp(end_date)
     rank = {name: i for i, name in enumerate(_BARE_SYMBOL_PRIORITY)}
     drop = {repo: set() for repo in frames}
     for sym in sorted(contested):

@@ -169,6 +169,11 @@ class CollisionRoutingTest(unittest.TestCase):
         prices, _, _ = self._pricing(["HYG"], start="2019-01-01", end="2019-01-07")
         self.assertLess(self._close(prices, "HYG").max(), 50.0)
 
+    def test_an_open_window_counts_every_session(self):
+        # start_date=None / end_date=None mean no bound, not an empty window.
+        prices, _, _ = self._pricing(["META"], start=None, end=None)
+        self.assertGreater(self._close(prices, "META").min(), 250.0)
+
     def test_one_fund_in_both_feeds_keeps_the_etf_quietly(self):
         prices, hub, log = self._pricing(["SAME"])
         self.assertEqual(len(self._close(prices, "SAME")), len(SAME))
