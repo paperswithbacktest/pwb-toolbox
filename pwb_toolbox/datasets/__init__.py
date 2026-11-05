@@ -1496,6 +1496,10 @@ _ARBITRATED_REPOS = ("ETFs-Daily-Price", "Stocks-Daily-Price")
 # ``BNY`` the bank overlap on 6 170 of 13 480 sessions, ``META`` on 148 of 3 627.
 _SAME_SERIES_SESSIONS = 0.9
 _SAME_SERIES_LOG_GAP = 0.02
+# One instrument in both feeds: the ETF copy is kept while it has at least this
+# share of the stock copy's sessions in the window. The stock feed routinely
+# runs a few sessions past the ETF feed; that alone must not move a fund.
+_SAME_SERIES_COVERAGE = 0.95
 
 
 def _arbitrated_symbols(universe: pd.DataFrame) -> frozenset:
@@ -1560,8 +1564,16 @@ def _arbitrate_collisions(frames: dict, contested, start_date, end_date) -> dict
         }
         if same:
             # One fund in both feeds: the ETF feed's copy is the adjusted one,
-            # and the one ``__extend_etfs`` extends.
-            winner = min(parts, key=lambda repo: rank.get(repo, len(rank)))
+            # and the one ``__extend_etfs`` extends -- as long as it covers the
+            # window. 64 of the pairs are a closed-end fund or a REIT that the
+            # ETF feed only carries from 2020-22 while the stock feed has it
+            # since 1980-2006 (DHC, named in 23 strategies, NXDT, STEW, BRW):
+            # the ETF copy would cut decades off the history.
+            etf_repo, stock_repo = _ARBITRATED_REPOS
+            if sessions[etf_repo] >= _SAME_SERIES_COVERAGE * sessions[stock_repo]:
+                winner = etf_repo
+            else:
+                winner = stock_repo
         else:
             winner = min(parts, key=lambda repo: (-sessions[repo], rank.get(repo, len(rank))))
         for repo in parts:

@@ -15,6 +15,9 @@ three shapes that matter:
 * ``LEV`` -- one fund again, but the stock feed's copy is not adjusted for a
   1:10 reverse split and runs two sessions longer. Still one instrument: the
   ETF feed's adjusted copy stays, though the other has more sessions.
+* ``CEF`` -- one closed-end fund again, but the ETF feed only carries its
+  last sixty sessions. The stock feed's full history wins: the ETF copy would
+  cut the window short.
 """
 
 import contextlib
@@ -55,19 +58,24 @@ HYG_ETF = _bars("HYG", "2019-06-03", 200, 85.0)
 SAME = _bars("SAME", "2020-01-01", 60, 50.0)
 LEV_ETF = _bars("LEV", "2020-01-01", 100, 20.0)
 LEV_STOCK = _bars("LEV", "2020-01-01", 102, 2.0)
+CEF_STOCK = _bars("CEF", "2019-06-03", 200, 10.0)
+CEF_ETF = CEF_STOCK.iloc[-60:].reset_index(drop=True)
+CEF_ETF[["open", "high", "low", "close"]] *= 1.001  # adjusted copy: 0.1 % apart
 AAPL = _bars("AAPL", "2020-01-01", 120, 75.0)
 ABT_STOCK = _bars("ABT", "2020-01-01", 120, 90.0)
 ABT_COIN = _bars("ABT", "2020-01-01", 160, 0.2)
 
 TABLES = {
-    "ETFs-Daily-Price": pd.concat([META_ETF, HYG_ETF, SAME, LEV_ETF], ignore_index=True),
+    "ETFs-Daily-Price": pd.concat([META_ETF, HYG_ETF, SAME, LEV_ETF, CEF_ETF], ignore_index=True),
     "Stocks-Daily-Price": pd.concat(
-        [META_STOCK, HYG_STOCK, SAME, LEV_STOCK, AAPL, ABT_STOCK], ignore_index=True
+        [META_STOCK, HYG_STOCK, SAME, LEV_STOCK, CEF_STOCK, AAPL, ABT_STOCK],
+        ignore_index=True
     ),
     "Cryptocurrencies-Daily-Price": ABT_COIN,
     "Universe-Daily-Price": pd.DataFrame({
-        "symbol": ["META", "META", "HYG", "HYG", "SAME", "SAME", "LEV", "LEV", "AAPL", "ABT", "ABT"],
-        "repo_id": [ETF, STK, ETF, STK, ETF, STK, ETF, STK, STK, STK, CRP],
+        "symbol": ["META", "META", "HYG", "HYG", "SAME", "SAME", "LEV", "LEV", "CEF", "CEF",
+                   "AAPL", "ABT", "ABT"],
+        "repo_id": [ETF, STK, ETF, STK, ETF, STK, ETF, STK, ETF, STK, STK, STK, CRP],
         "liquidity": 1.0,
         "max_pct_change": 0.1,
     }),
@@ -174,6 +182,18 @@ class CollisionRoutingTest(unittest.TestCase):
         prices, _, _ = self._pricing(["META"], start=None, end=None)
         self.assertGreater(self._close(prices, "META").min(), 250.0)
 
+    def test_one_fund_the_etf_feed_carries_briefly_keeps_the_longer_copy(self):
+        prices, _, log = self._pricing(["CEF"])
+        cef = self._close(prices, "CEF")
+        self.assertEqual(len(cef), len(CEF_STOCK))
+        self.assertAlmostEqual(cef.iloc[-1], CEF_STOCK["close"].iloc[-1])
+        self.assertNotIn("CEF", log)
+        # Inside the ETF copy's sixty sessions, the ETF copy again.
+        prices, _, _ = self._pricing(["CEF"], start=CEF_ETF["date"].iloc[0])
+        cef = self._close(prices, "CEF")
+        self.assertEqual(len(cef), len(CEF_ETF))
+        self.assertAlmostEqual(cef.iloc[-1], CEF_ETF["close"].iloc[-1])
+
     def test_one_fund_in_both_feeds_keeps_the_etf_quietly(self):
         prices, hub, log = self._pricing(["SAME"])
         self.assertEqual(len(self._close(prices, "SAME")), len(SAME))
@@ -215,7 +235,7 @@ class CollisionRoutingTest(unittest.TestCase):
     def test_arbitrated_symbols_are_the_etf_stock_pairs(self):
         self.assertEqual(
             ds._arbitrated_symbols(TABLES["Universe-Daily-Price"]),
-            frozenset({"META", "HYG", "SAME", "LEV"}),
+            frozenset({"META", "HYG", "SAME", "LEV", "CEF"}),
         )
 
 
