@@ -98,3 +98,22 @@ pwb_ds.load_dataset("Forex-Daily-Price", ["JPYUSD"])  # the same series
 pwb_ds.load_dataset("Forex-Daily-Price", ["USDJPY", "JPYUSD"], to_usd=False)
 # USDJPY ~158 (raw) and JPYUSD ~0.0063 (its inverse)
 ```
+
+## Option chains: `load_option_chain`
+
+`Options-Daily-Price` holds every US-listed option contract that traded since June 2014, one row per contract and session (about 560 million rows, ~20 GB). It is not loaded with `load_dataset`, which downloads every shard before filtering and refuses this dataset. Use `load_option_chain`, which downloads only what it is asked for:
+
+```python
+from pwb_toolbox.datasets import load_option_chain
+
+chain = load_option_chain(
+    ["SPY"], "2024-01-01", "2024-03-31",
+    columns=["expiration", "strike", "option_type", "close", "volume", "implied_volatility", "delta"],
+)
+```
+
+- `underlyings` (required): the tickers as the table spells them, the name at the time (`"FB"` before June 2022, `"SPX"` for SPX and SPXW).
+- `start`, `end` (required): the session window, inclusive. Only the monthly shards that meet it are opened.
+- `columns` (optional): what to download besides `symbol`, `date` and `underlying`. Fewer columns, fewer bytes.
+
+Inside each month only the row groups of the requested chains are fetched, by HTTP range requests: one chain-month costs a few MB (SPY, October 2026: 7.7 MB of a 274 MB shard). `implied_volatility` and the greeks are computed from the last trade of the day; see the dataset card for how far to trust them.
