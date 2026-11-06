@@ -1597,6 +1597,82 @@ def _arbitrate_collisions(frames: dict, contested, start_date, end_date) -> dict
     return out
 
 
+# A reused ticker is published one instrument per name since the price sort of
+# 2026-11 (data-api #55): the instrument that traded under the ticker last
+# keeps it bare, each earlier one is ``<TICKER>_<YYYYMMDD>`` -- the last day it
+# traded under the ticker (``ASO`` is Academy Sports since 2020,
+# ``ASO_20061103`` AmSouth Bancorporation). A strategy written before that
+# names the bare ticker for the instrument of its own window: ``FB`` for
+# Facebook in 2015 would otherwise load the buffer ETF that took the ticker in
+# 2025 -- no row in the window, and no error. So a bare ticker is resolved by
+# window: of the instruments that traded under it, the one with the most
+# sessions in [start_date, end_date] is loaded, under the bare name the
+# strategy asked for, with a warning naming it. Two instruments are never
+# stitched together; naming a dated symbol explicitly bypasses all of this.
+_DATED_NAME = re.compile(r"^(?P<ticker>.+)_(?P<day>\d{8})$")
+
+
+def _dated_names(universe: pd.DataFrame) -> dict:
+    """``{bare ticker: [dated names]}`` from the index."""
+    out = defaultdict(set)
+    for sym in universe["symbol"].dropna().astype(str):
+        match = _DATED_NAME.match(sym)
+        if match:
+            out[match.group("ticker")].add(sym)
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def _resolve_reused_tickers(frames: dict, reused: dict, start_date, end_date) -> dict:
+    """Keep, for each reused bare ticker, the one instrument that covers the window.
+
+    ``reused`` maps the bare ticker to the names loaded for it (itself, when the
+    index has it, and its dated names). The winner's rows are renamed to the
+    bare ticker; the other candidates' rows are dropped.
+    """
+    if not reused:
+        return frames
+    start = pd.Timestamp.min if start_date is None else pd.Timestamp(start_date)
+    end = pd.Timestamp.max if end_date is None else pd.Timestamp(end_date)
+    for bare, names in reused.items():
+        spans = {}
+        for frame in frames.values():
+            if frame is None or frame.empty:
+                continue
+            sym = frame["symbol"].astype(str)
+            for name in names:
+                rows = frame.loc[sym == name, "date"]
+                if rows.empty:
+                    continue
+                days = pd.to_datetime(rows)
+                spans[name] = (int(((days >= start) & (days <= end)).sum()),
+                               days.min(), days.max())
+        if not spans:
+            continue
+        best = max(spans, key=lambda n: (spans[n][0], n == bare, n))
+        losers = [n for n in spans if n != best]
+        for repo, frame in list(frames.items()):
+            if frame is None or frame.empty:
+                continue
+            sym = frame["symbol"].astype(str)
+            frame = frame[~sym.isin(losers)].copy()
+            if best != bare:
+                sym = frame["symbol"].astype(str)
+                frame["symbol"] = sym.where(sym != best, bare)
+            frames[repo] = frame
+        if best != bare or any(spans[n][0] for n in losers):
+            def describe(n):
+                count, first, last = spans[n]
+                return f"'{n}' ({first:%Y-%m-%d}..{last:%Y-%m-%d}, {count} sessions in the window)"
+            others = "; ".join(describe(n) for n in losers) or "none"
+            loaded_as = f", loaded as '{bare}'" if best != bare else ""
+            print(
+                f"Warning: '{bare}' named several instruments over time; for this window it "
+                f"resolves to {describe(best)}{loaded_as}. Other instruments under '{bare}': "
+                f"{others}. Instruments are never stitched; name one explicitly to choose it."
+            )
+    return frames
+
+
 def get_pricing(
     symbol_list,
     fields=None,  # ← default set below
@@ -1675,12 +1751,36 @@ def get_pricing(
     grouped = defaultdict(list)
     unmapped = []
     contested = set()
+    dated = _dated_names(universe)
+    requested = set(symbol_list)
+    reused = {}
+
+    def _reuse_candidates(bare, repo_filter=None):
+        """Bare ticker plus its dated names, grouped by repository; False if none."""
+        names = [n for n in dated.get(bare, []) if n not in requested]
+        if not names:
+            return False
+        picked = []
+        for name in [bare] + names:
+            repo_full = mapping.get(name) if name != bare or repo_filter is None else repo_filter
+            if not isinstance(repo_full, str):
+                continue
+            if repo_filter is not None and repo_full != repo_filter:
+                continue
+            grouped[repo_full.split("/")[1]].append(name)
+            picked.append(name)
+        if not picked:
+            return False
+        reused[bare] = picked
+        return True
 
     for sym in symbol_list:
         # Case 1: suffixed like "BTC.CRYPTO" → route directly, use base symbol for the dataset
         if "." in sym:
             base, cat = sym.rsplit(".", 1)
             repo_full = SUFFIX_TO_REPO.get(cat.upper())
+            if repo_full and _reuse_candidates(base, repo_full):
+                continue  # resolved by window within that repository
             if repo_full:
                 repo_id = repo_full.split("/")[1]  # dataset name only
                 grouped[repo_id].append(base)  # dataset expects base ticker
@@ -1704,7 +1804,10 @@ def get_pricing(
             contested.add(sym)
             continue
 
-        # Case 4: normal symbol → use Universe mapping
+        # Case 4: normal symbol → use Universe mapping; a reused ticker is
+        # resolved by window among the instruments that traded under it.
+        if _reuse_candidates(sym):
+            continue
         repo_full = mapping.get(sym)
         repo_id = repo_full.split("/")[1] if isinstance(repo_full, str) else None
         if repo_id:
@@ -1726,6 +1829,7 @@ def get_pricing(
         if not df_part.empty:
             loaded[repo_id] = df_part
     loaded = _arbitrate_collisions(loaded, contested, start_date, end_date)
+    loaded = _resolve_reused_tickers(loaded, reused, start_date, end_date)
     frames = [frame for frame in loaded.values() if not frame.empty]
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
