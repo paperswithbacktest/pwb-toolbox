@@ -152,8 +152,10 @@ class OptionChainTest(unittest.TestCase):
 
     def test_load_dataset_refuses_the_whole_table(self):
         with mock.patch.object(ds, "_load_dataset_from_hf") as hf, mock.patch.object(ds, "_load_dataset_from_pwb") as pwb:
-            with self.assertRaises(ValueError):
-                ds.load_dataset("Options-Daily-Price")
+            for spelling in ("Options-Daily-Price", "options-daily-price", "OPTIONS-DAILY-PRICE",
+                             " Options-Daily-Price ", "paperswithbacktest/Options-Daily-Price"):
+                with self.assertRaises(ValueError, msg=spelling):
+                    ds.load_dataset(spelling)
         hf.assert_not_called()
         pwb.assert_not_called()
 
@@ -164,7 +166,7 @@ class RangeFileTest(unittest.TestCase):
     def _session(self, payload: bytes):
         session = mock.Mock()
 
-        def get(url, headers=None, timeout=None):
+        def get(url, headers=None, timeout=None, stream=False):
             lo, hi = headers["Range"].split("=")[1].split("-")
             lo, hi = int(lo), min(int(hi), len(payload) - 1)
             resp = mock.Mock(status_code=206, content=payload[lo:hi + 1],
@@ -194,6 +196,8 @@ class RangeFileTest(unittest.TestCase):
         handle = opt.RangeFile("https://example/x.parquet", session=session)
         with self.assertRaises(OSError):
             handle.read(5)
+        self.assertTrue(session.get.call_args.kwargs["stream"])
+        session.get.return_value.close.assert_called_once()
 
 
 if __name__ == "__main__":

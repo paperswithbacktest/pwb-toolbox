@@ -1035,9 +1035,11 @@ def load_dataset(
     rate_to_price=True,
     use_hf=False
 ):
-    if path == "Options-Daily-Price":
+    if str(path).strip().rsplit("/", 1)[-1].lower() == "options-daily-price":
         # ~560 M rows, ~20 GB: this function downloads every shard before it
         # filters, which is how Stocks-1Min-Price filled a disk on 2026-11-05.
+        # Compared without case: the Hub resolves "options-daily-price" to the
+        # same repository, and an exact match let that spelling through.
         raise ValueError(
             "Options-Daily-Price is not loaded whole: use "
             "pwb_toolbox.datasets.load_option_chain(underlyings, start, end, columns=...), "

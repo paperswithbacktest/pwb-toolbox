@@ -176,9 +176,12 @@ class RangeFile(io.RawIOBase):
         for attempt in range(_RANGE_ATTEMPTS):
             try:
                 self.requests += 1
+                # Streamed, so a server that ignores Range is refused before
+                # its body (a whole shard, ~250 MB) is read into memory.
                 resp = self.session.get(self.url, headers={**self.headers, "Range": byte_range},
-                                        timeout=_RANGE_TIMEOUT_SECONDS)
+                                        timeout=_RANGE_TIMEOUT_SECONDS, stream=True)
                 if resp.status_code == 200:
+                    resp.close()
                     raise OSError(f"{self.url}: range request answered with the whole file")
                 resp.raise_for_status()
                 return resp
