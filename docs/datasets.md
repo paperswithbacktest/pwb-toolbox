@@ -117,3 +117,9 @@ chain = load_option_chain(
 - `columns` (optional): what to download besides `symbol`, `date` and `underlying`. Fewer columns, fewer bytes.
 
 Inside each month only the row groups of the requested chains are fetched, by HTTP range requests: one chain-month costs a few MB (SPY, October 2026: 7.7 MB of a 274 MB shard). `implied_volatility` and the greeks are computed from the last trade of the day; see the dataset card for how far to trust them.
+
+The loader does not answer an empty frame for a reason it could name:
+
+- a source that answers range requests with whole files raises `RangeNotSupportedError` (nothing is downloaded whole); through the API, with `HF_ACCESS_TOKEN` also set, it reads from the Hub instead and says so in a warning;
+- a file list whose names carry no month is sorted by the `date` statistics in each file's footer (one range request per file), with a warning;
+- a window the table does not cover, or chains with no row in it, return an empty frame with a warning that says which.

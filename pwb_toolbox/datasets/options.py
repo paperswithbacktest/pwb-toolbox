@@ -31,6 +31,13 @@ Example::
 Access is the same as ``load_dataset``: ``PWB_API_KEY`` (the subscriber API
 hands out one URL per shard) or ``HF_ACCESS_TOKEN`` (the Hub, after the gated
 request is approved).
+
+The loader never answers an empty frame for a reason it could have named. A
+source that serves whole files to range requests is an error
+(``RangeNotSupportedError``), with a switch to the Hub, announced by a warning,
+when ``HF_ACCESS_TOKEN`` is set. A file list whose names carry no month is
+sorted by the ``date`` statistics in each file's footer (one range request per
+file). A window outside the table, or chains with no row in it, warn.
 """
 from __future__ import annotations
 
@@ -38,8 +45,10 @@ import io
 import os
 import re
 import time
+import warnings
 from datetime import date, datetime
 from typing import Iterable, Optional
+from urllib.parse import urlparse
 
 import pandas as pd
 import pyarrow as pa
@@ -56,6 +65,23 @@ _SHARD_RE = re.compile(r"(^|/)train-(\d{4}-\d{2})\.parquet$")
 _RANGE_ATTEMPTS = 4
 _RANGE_BACKOFF_SECONDS = 2.0
 _RANGE_TIMEOUT_SECONDS = 120
+# The first request of a file asks for its last 64 KiB by a suffix range: the
+# answer's ``Content-Range`` gives the size, and the bytes are the Parquet
+# footer pyarrow reads next (its own first read is 64 KiB from the end). One
+# request where there were two.
+_TAIL_BYTES = 64 * 1024
+API_BASE_URL = "https://data.paperswithbacktest.com/v1/datasets"
+
+
+class RangeNotSupportedError(OSError):
+    """The server answered a byte-range request with the whole file."""
+
+
+def _redact(url: str) -> str:
+    """Host and path of ``url``: the API's file URLs carry the caller's key in
+    their query string, and an error message is not the place for it."""
+    parsed = urlparse(url)
+    return f"{parsed.netloc}{parsed.path}"
 
 
 # --------------------------------------------------------------------------- #
@@ -122,6 +148,8 @@ class RangeFile(io.RawIOBase):
         self.bytes_read = 0
         self.requests = 0
         self._size = None
+        self._tail_start = None
+        self._tail = b""
 
     # -- protocol ----------------------------------------------------------
     def readable(self):
@@ -136,12 +164,23 @@ class RangeFile(io.RawIOBase):
     @property
     def size(self) -> int:
         if self._size is None:
-            resp = self._get("bytes=0-0")
-            total = resp.headers.get("Content-Range", "").rsplit("/", 1)[-1]
-            if not total.isdigit():
-                raise OSError(f"{self.url}: the server does not answer range requests")
-            self._size = int(total)
+            self._fetch_tail()
         return self._size
+
+    def _fetch_tail(self) -> None:
+        resp = self._get(f"bytes=-{_TAIL_BYTES}")
+        match = re.match(r"bytes (\d+)-(\d+)/(\d+)$", resp.headers.get("Content-Range", "").strip())
+        if not match:
+            resp.close()
+            raise RangeNotSupportedError(
+                f"{_redact(self.url)}: a range request came back without a usable Content-Range "
+                f"({resp.headers.get('Content-Range')!r}); the server does not serve byte ranges"
+            )
+        data = resp.content
+        self._size = int(match.group(3))
+        self._tail_start = int(match.group(1))
+        self._tail = data
+        self.bytes_read += len(data)
 
     def seek(self, offset, whence=io.SEEK_SET):
         if whence == io.SEEK_SET:
@@ -159,10 +198,13 @@ class RangeFile(io.RawIOBase):
             n = self.size - self.pos
         if n == 0 or self.pos >= self.size:
             return b""
-        end = min(self.pos + n, self.size) - 1
-        data = self._get(f"bytes={self.pos}-{end}").content
+        end = min(self.pos + n, self.size)
+        if self._tail_start is not None and self._tail_start <= self.pos and end <= self._tail_start + len(self._tail):
+            data = self._tail[self.pos - self._tail_start:end - self._tail_start]
+        else:
+            data = self._get(f"bytes={self.pos}-{end - 1}").content
+            self.bytes_read += len(data)
         self.pos += len(data)
-        self.bytes_read += len(data)
         return data
 
     def readinto(self, buffer):
@@ -182,14 +224,22 @@ class RangeFile(io.RawIOBase):
                                         timeout=_RANGE_TIMEOUT_SECONDS, stream=True)
                 if resp.status_code == 200:
                     resp.close()
-                    raise OSError(f"{self.url}: range request answered with the whole file")
+                    raise RangeNotSupportedError(
+                        f"{_redact(self.url)}: a range request ({byte_range}) was answered with the whole "
+                        "file (HTTP 200); this loader reads option shards by range only and does not "
+                        "download whole months (~250 MB each)"
+                    )
                 resp.raise_for_status()
                 return resp
             except requests.exceptions.HTTPError as exc:
                 status = exc.response.status_code if exc.response is not None else None
                 if status is not None and status != 429 and status < 500:
-                    raise
+                    raise requests.exceptions.HTTPError(
+                        f"{status} on {_redact(self.url)} ({byte_range})", response=exc.response
+                    ) from None
                 last_exc = exc
+            except RangeNotSupportedError:
+                raise
             except requests.exceptions.RequestException as exc:
                 last_exc = exc
             if attempt < _RANGE_ATTEMPTS - 1:
@@ -198,7 +248,7 @@ class RangeFile(io.RawIOBase):
 
 
 def _hf_sources(hf_token: str) -> list[tuple[str, str, dict]]:
-    """``(shard name, url, headers)`` of every shard on the Hub, at the current revision."""
+    """``(file name, url, headers)`` of every Parquet file on the Hub, at the current revision."""
     from huggingface_hub import hf_hub_url
     from huggingface_hub.utils import build_hf_headers
 
@@ -207,16 +257,29 @@ def _hf_sources(hf_token: str) -> list[tuple[str, str, dict]]:
     sha, files = _hub_snapshot(REPO_ID, hf_token)
     headers = build_hf_headers(token=hf_token)
     return [(f, hf_hub_url(REPO_ID, f, repo_type="dataset", revision=sha), headers)
-            for f in files if _SHARD_RE.search(f)]
+            for f in files if f.endswith(".parquet")]
 
 
 def _pwb_sources(pwb_api_key: str) -> list[tuple[str, str, dict]]:
-    """``(shard name, url, headers)`` from the subscriber API's file list."""
-    resp = requests.get(f"https://data.paperswithbacktest.com/v1/datasets/{OPTIONS_DAILY_DATASET}",
-                        params={"pwb_api_key": pwb_api_key, "split": "train"}, timeout=30)
-    resp.raise_for_status()
+    """``(file name, url, headers)`` from the subscriber API's file list.
+
+    Every listed file is returned, whatever its name: ``_select_shards``
+    decides which ones the window needs. Until data-api #59 is deployed the
+    API names the files by position (``0.parquet`` … ``148.parquet``) and
+    the month is not in the name; filtering on it here returned nothing, and
+    the loader an empty frame (2026-11-08).
+    """
+    # The key goes in a header: a query string ends up in the message of any
+    # HTTP error raised below.
+    resp = requests.get(f"{API_BASE_URL}/{OPTIONS_DAILY_DATASET}", params={"split": "train"},
+                        headers={"pwb-api-key": pwb_api_key}, timeout=30)
+    if not resp.ok:
+        raise requests.exceptions.HTTPError(
+            f"{resp.status_code} listing {OPTIONS_DAILY_DATASET} on the PWB data API: {resp.text[:200]}",
+            response=resp,
+        )
     urls = resp.json().get("files", [])
-    return [(u.split("?", 1)[0].rsplit("/", 1)[-1], u, {}) for u in urls if _SHARD_RE.search(u.split("?", 1)[0])]
+    return [(urlparse(u).path.rsplit("/", 1)[-1], u, {}) for u in urls]
 
 
 def _open(url: str, headers: dict):
@@ -279,6 +342,92 @@ def _read_shard(source, underlyings: list[str], start: date, end: date, columns:
     return table.filter(keep)
 
 
+def _date_span(meta, schema: pa.Schema) -> Optional[tuple[str, str]]:
+    """``(first, last)`` session of a file, from its row groups' ``date``
+    statistics, as ISO strings; ``None`` when a row group has none."""
+    d_col = schema.get_field_index("date")
+    if d_col < 0:
+        return None
+    lo = hi = None
+    for g in range(meta.num_row_groups):
+        span = _stats(meta, g, d_col)
+        if span is None:
+            return None
+        a, b = str(span[0])[:10], str(span[1])[:10]
+        lo = a if lo is None or a < lo else lo
+        hi = b if hi is None or b > hi else hi
+    return (lo, hi) if lo is not None else None
+
+
+def _select_shards(sources, start: date, end: date, verbose: bool) -> tuple[list, str]:
+    """The files of ``sources`` that can hold a session in ``[start, end]``,
+    as ``(label, url, headers, handle)``, oldest first, and the span the
+    table covers (for the messages).
+
+    By the month in the file name when the names carry one. When none does —
+    the subscriber API lists the files by position until data-api #59 is
+    deployed — by the ``date`` statistics in each file's footer: one range
+    request per file (149 today), so slower, but never an empty answer that
+    only means "the names did not match".
+    """
+    if not sources:
+        raise RuntimeError(f"The source lists no file for {OPTIONS_DAILY_DATASET}.")
+    by_name = {name: (url, headers) for name, url, headers in sources}
+    if any(_SHARD_RE.search(name) for name in by_name):
+        months = sorted(_SHARD_RE.search(n).group(2) for n in by_name if _SHARD_RE.search(n))
+        covered = f"{months[0]}..{months[-1]}"
+        picked = [(name, *by_name[name], None) for name in shards_for_window(by_name, start, end)]
+        return picked, covered
+
+    warnings.warn(
+        f"The {len(sources)} files listed for {OPTIONS_DAILY_DATASET} carry no month in their names "
+        f"(e.g. {sources[0][0]!r}); reading each file's footer to find the months of the window "
+        "(one range request per file). With HF_ACCESS_TOKEN set, use_hf=True skips this step.",
+        stacklevel=3,
+    )
+    picked, spans = [], []
+    for name, url, headers in sources:
+        handle = _open(url, headers)
+        f = pq.ParquetFile(handle)
+        span = _date_span(f.metadata, f.schema_arrow)
+        if span is not None:
+            spans.append(span)
+            if span[1] < start.isoformat() or span[0] > end.isoformat():
+                continue
+        picked.append((f"{name} [{span[0]}..{span[1]}]" if span else name, url, headers, handle))
+    picked.sort(key=lambda item: item[0].split("[", 1)[-1])
+    covered = f"{min(s[0] for s in spans)}..{max(s[1] for s in spans)}" if spans else "unknown"
+    if verbose:
+        print(f"[options] footers of {len(sources)} files read: {len(picked)} cover the window")
+    return picked, covered
+
+
+def _sources(use_hf: bool) -> tuple[list, str]:
+    """The files to read and where they come from: ``"api"`` or ``"hub"``."""
+    pwb_api_key = os.getenv("PWB_API_KEY")
+    if pwb_api_key and not use_hf:
+        return _pwb_sources(pwb_api_key), "api"
+    hf_token = os.getenv("HF_ACCESS_TOKEN")
+    if not hf_token:
+        raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
+    return _hf_sources(hf_token), "hub"
+
+
+def _read_window(sources, names, start_d, end_d, columns, verbose):
+    shards, covered = _select_shards(sources, start_d, end_d, verbose)
+    tables, fetched = [], 0
+    for label, url, headers, handle in shards:
+        handle = handle if handle is not None else _open(url, headers)
+        table = _read_shard(handle, names, start_d, end_d, columns)
+        fetched += getattr(handle, "bytes_read", 0)
+        if table is not None and table.num_rows:
+            tables.append(table)
+    if verbose:
+        print(f"[options] {', '.join(names)} {start_d}..{end_d}: {len(shards)} monthly shards, "
+              f"{fetched / 1e6:.1f} MB fetched")
+    return tables, shards, covered
+
+
 def load_option_chain(underlyings, start, end, columns=None, use_hf: bool = False,
                       verbose: bool = True) -> pd.DataFrame:
     """Daily bars of the option contracts of ``underlyings`` between ``start`` and ``end``.
@@ -306,29 +455,37 @@ def load_option_chain(underlyings, start, end, columns=None, use_hf: bool = Fals
     if start_d > end_d:
         raise ValueError(f"start {start_d} is after end {end_d}")
 
-    pwb_api_key = os.getenv("PWB_API_KEY")
-    if pwb_api_key and not use_hf:
-        sources = _pwb_sources(pwb_api_key)
-    else:
+    sources, origin = _sources(use_hf)
+    try:
+        tables, shards, covered = _read_window(sources, names, start_d, end_d, columns, verbose)
+    except RangeNotSupportedError as exc:
+        if origin != "api":
+            raise
         hf_token = os.getenv("HF_ACCESS_TOKEN")
         if not hf_token:
-            raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
-        sources = _hf_sources(hf_token)
+            raise RangeNotSupportedError(
+                f"The PWB data API served a whole file to a byte-range request ({exc}). "
+                f"{OPTIONS_DAILY_DATASET} is read by range only, so nothing was loaded. Until the "
+                "API serves byte ranges, set HF_ACCESS_TOKEN (once your gated access to "
+                f"paperswithbacktest/{OPTIONS_DAILY_DATASET} is approved on the Hub) and the "
+                "loader will read from the Hub instead."
+            ) from None
+        warnings.warn(
+            f"The PWB data API does not serve byte ranges yet ({exc}); reading "
+            f"{OPTIONS_DAILY_DATASET} from the Hub with HF_ACCESS_TOKEN instead.",
+            stacklevel=2,
+        )
+        tables, shards, covered = _read_window(_hf_sources(hf_token), names, start_d, end_d, columns, verbose)
 
-    by_name = {name: (url, headers) for name, url, headers in sources}
-    shards = shards_for_window(by_name, start_d, end_d)
-    tables, fetched = [], 0
-    for shard in shards:
-        url, headers = by_name[shard]
-        handle = _open(url, headers)
-        table = _read_shard(handle, names, start_d, end_d, columns)
-        fetched += getattr(handle, "bytes_read", 0)
-        if table is not None and table.num_rows:
-            tables.append(table)
-    if verbose:
-        print(f"[options] {', '.join(names)} {start_d}..{end_d}: {len(shards)} monthly shards, "
-              f"{fetched / 1e6:.1f} MB fetched")
     if not tables:
+        if not shards:
+            warnings.warn(f"No file of {OPTIONS_DAILY_DATASET} covers {start_d}..{end_d}; "
+                          f"the table covers {covered}.", stacklevel=2)
+        else:
+            warnings.warn(f"No row for {', '.join(names)} between {start_d} and {end_d} in "
+                          f"{len(shards)} files of {OPTIONS_DAILY_DATASET}: check the spelling "
+                          "(the underlying as named at the time, e.g. FB before June 2022).",
+                          stacklevel=2)
         cols = list(KEY_COLUMNS) + [c for c in (columns or []) if c not in KEY_COLUMNS]
         return pd.DataFrame(columns=cols)
     df = pa.concat_tables(tables, promote_options="default").to_pandas()
