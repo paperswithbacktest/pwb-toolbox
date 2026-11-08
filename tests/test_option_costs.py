@@ -46,7 +46,7 @@ def _table(years=(2026,), tiers=TIERS, own=OWN, fallback=None):
     rows = []
     for year in years:
         for t, r in tiers.items():
-            rows += _rows(year, None, t, r)
+            rows += _rows(year, f"tier_{t}", t, r)
         for u, r in own.items():
             rows += _rows(year, u, 4, r, fallback if u == "META" else None)
     return pd.DataFrame(rows)
@@ -127,6 +127,13 @@ class OptionCostsTest(unittest.TestCase):
             self.assertEqual((cost.year, cost.source), (used, SOURCE_EXTRAPOLATED), year)
         self.assertEqual(model.resolve_year(2021), (2026, SOURCE_EXTRAPOLATED))  # tie: later
 
+    def test_a_tier_row_may_also_come_with_a_null_symbol(self):
+        table = _table()
+        table.loc[table["symbol"].str.startswith("tier_"), "symbol"] = None
+        model = oc.OptionsCostModel(table)
+        self.assertEqual(model.half_spread(0.3, 1.0, tier=2), TIERS[2][0][1])
+        self.assertEqual(model.underlyings(), ["META", "SPY"])
+
     def test_the_method_of_the_cell_is_reported(self):
         model = oc.OptionsCostModel(_table(fallback={("far", 7): "tier_fallback"}))
         self.assertEqual(model.breakdown(40.0, 1.3, underlying="META").method, "tier_fallback")
@@ -137,7 +144,7 @@ class OptionCostsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             oc.OptionsCostModel(table.iloc[1:])
         with self.assertRaises(ValueError):
-            oc.OptionsCostModel(table[table["tier"] != 3])
+            oc.OptionsCostModel(table[table["symbol"] != "tier_3"])
         with self.assertRaises(ValueError):
             oc.OptionsCostModel(table.drop(columns=["method"]))
 

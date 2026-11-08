@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from collections import namedtuple
 from bisect import bisect_right
+import re
 
 import numpy as np
 import pandas as pd
@@ -69,6 +70,10 @@ SEGMENT_TIER = "tier"
 
 OptionCost = namedtuple("OptionCost", "half_spread source year segment method")
 
+# A liquidity-tier row is named ``tier_0`` to ``tier_4`` in the ``symbol``
+# column: the catalogue loader drops a row without a symbol.
+TIER_SYMBOL = re.compile(r"^tier_(\d+)$")
+
 _COLUMNS = ("symbol", "tier", "year", "moneyness", "price_min", "half_spread",
             "method", "volume_min")
 
@@ -88,16 +93,18 @@ class OptionsCostModel:
             raise ValueError(f"options cost table is missing {missing}")
         if table.empty:
             raise ValueError("options cost table is empty")
+        symbol = table["symbol"].astype(object)
+        is_tier = symbol.isna() | symbol.astype(str).str.match(TIER_SYMBOL.pattern)
+        table = table.assign(symbol=symbol.where(~is_tier, ""))
         self.price_edges = _edges(table["price_min"])
-        tiers = table[table["symbol"].isna()]
+        tiers = table[is_tier]
         self.volume_edges = _edges(tiers["volume_min"])
         n_bands = len(self.price_edges) + 1
 
         # {(year, kind, key): (near row, far row)}, each row one value per band.
         self._rows: dict = {}
         self._methods: dict = {}
-        for (year, symbol, tier), seg in table.groupby(
-                [table["year"], table["symbol"].fillna(""), table["tier"]], sort=False):
+        for (year, symbol, tier), seg in table.groupby(["year", "symbol", "tier"], sort=False):
             kind, key = (SEGMENT_TIER, int(tier)) if symbol == "" else (SEGMENT_UNDERLYING, symbol)
             rows, methods = [], []
             for band in ("near", "far"):
