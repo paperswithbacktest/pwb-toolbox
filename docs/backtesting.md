@@ -239,6 +239,30 @@ What was applied is in `strategy.run_report["commission_policy"]` and on one
 `Commission policy: {...}` line. `run_strategy(broker_kwargs={"commission": x})` still
 replaces the measured schemes altogether.
 
+### Option contracts
+
+Option contracts are not price feeds of the harness: an option strategy keeps its own
+book, reads it from `Options-Daily-Price` with `load_option_chain`, and fills at the
+close. The cost of a fill is half the quoted spread, in dollars, from
+`Options-Yearly-TransactionCostParams`:
+
+```python
+from pwb_toolbox.backtesting import options_half_spread, options_cost_breakdown, option_volume_tier
+
+tier = option_volume_tier(mean_daily_option_volume)          # 0 (<1k contracts) to 4 (>1M)
+otm = strike / spot if call else spot / strike
+cost = 100 * options_half_spread(price, otm, tier=tier, underlying="SPY", year=2018)
+options_cost_breakdown(price, otm, tier=tier, underlying="SPY", year=2018)
+# OptionCost(half_spread=..., source='extrapolated', year=2026, segment='underlying', method='measured')
+```
+
+The half spread depends on the option's price (eight bands), its distance to the money
+(within 10 % or beyond) and the underlying: its own row for the 50 underlyings with the
+largest option volume (`FB` reads `META`'s), its liquidity tier otherwise. It never
+exceeds the price. A year the table has not measured takes the nearest measured year
+and says so (`source="extrapolated"`). The table is read once per process; there is no
+estimate to fall back to, so an unreachable table raises rather than trading for free.
+
 ## List of strategies
 
 Samples of Papers With Backtest strategies:
@@ -384,6 +408,8 @@ The backtesting package is composed of a few focused modules:
 - `base_strategy` – common bookkeeping and helpers used by all provided
   strategies.
 - `commission` – cost models for simulating broker commissions and spreads.
+- `option_costs` – half bid-ask spread of a listed option, read from
+  `Options-Yearly-TransactionCostParams`.
 - `indicators` – reusable signal and technical indicator implementations.
 - `optimization_engine` – genetic‑algorithm tooling for parameter searches.
 - `portfolio` – utilities for combining the results of several strategies and
