@@ -146,7 +146,8 @@ class OptionChainTest(unittest.TestCase):
         self.assertLess(narrow.bytes_read, everything.bytes_read)
 
     def test_an_absent_underlying_is_an_empty_frame(self):
-        df = ds.load_option_chain("NOPE", "2024-01-01", "2024-01-31", columns=["close"], verbose=False)
+        with self.assertWarnsRegex(UserWarning, "No row for NOPE"):
+            df = ds.load_option_chain("NOPE", "2024-01-01", "2024-01-31", columns=["close"], verbose=False)
         self.assertTrue(df.empty)
         self.assertEqual(list(df.columns), ["symbol", "date", "underlying", "close"])
 
@@ -168,7 +169,10 @@ class RangeFileTest(unittest.TestCase):
 
         def get(url, headers=None, timeout=None, stream=False):
             lo, hi = headers["Range"].split("=")[1].split("-")
-            lo, hi = int(lo), min(int(hi), len(payload) - 1)
+            if lo == "":
+                lo, hi = max(len(payload) - int(hi), 0), len(payload) - 1
+            else:
+                lo, hi = int(lo), min(int(hi), len(payload) - 1)
             resp = mock.Mock(status_code=206, content=payload[lo:hi + 1],
                              headers={"Content-Range": f"bytes {lo}-{hi}/{len(payload)}"})
             resp.raise_for_status = lambda: None

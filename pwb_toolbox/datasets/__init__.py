@@ -152,9 +152,18 @@ def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str, symb
 
 
 def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]:
+    # Shards named after the period they hold (``train-2024-01``, ``train-2010``)
+    # win over every other layout. A repository holding both is one whose
+    # layout changed and whose old files stayed: ``All-Daily-News`` on
+    # 2026-11-08 had six ``train-0000k-of-00006`` files (2022-03 to 2026-07-01)
+    # next to 57 monthly ones (2022-03 to 2026-11), the same rows twice.
+    dated = re.compile(rf"(^|/){re.escape(split)}-\d{{4}}(-\d{{2}}){{0,2}}\.parquet$")
+    matched = [f for f in repo_files if dated.search(f)]
+    if matched:
+        return sorted(matched)
+
     patterns = [
         re.compile(rf"(^|/){re.escape(split)}-\d{{5}}-of-\d{{5}}\.parquet$"),
-        re.compile(rf"(^|/){re.escape(split)}-\d{{4}}-\d{{2}}\.parquet$"),
         re.compile(rf"(^|/){re.escape(split)}\.parquet$"),
     ]
     matched = [f for f in repo_files if any(p.search(f) for p in patterns)]
