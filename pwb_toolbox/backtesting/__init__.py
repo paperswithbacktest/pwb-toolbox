@@ -31,6 +31,15 @@ from .commission import (
     CRYPTO_PARAMS_REPO,
     futures_root,
 )
+from .option_costs import (
+    OPTIONS_PARAMS_REPO,
+    OptionCost,
+    OptionsCostModel,
+    load_options_cost_model,
+    options_half_spread,
+    options_cost_breakdown,
+    option_volume_tier,
+)
 from .backtest_engine import (
     run_strategy,
     generate_sensitivity_results,
