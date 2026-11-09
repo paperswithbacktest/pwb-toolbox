@@ -47,6 +47,20 @@ df = pwb_ds.load_dataset("Warrants-Daily-Price")
 df = pwb_ds.load_dataset("StructuredProducts-Daily-Price")
 ```
 
+The 1-minute datasets (`Stocks-1Min-Price`, `Cryptocurrencies-1Min-Price`, `Forex-1Min-Price`) are one parquet shard per month. Bound the read with `start`, `end` and `columns` so only the months and columns you need are downloaded and read:
+
+```python
+bars = pwb_ds.load_dataset(
+    "Stocks-1Min-Price",
+    symbols=["SPY", "QQQ"],
+    start="2024-01-01",
+    end="2024-03-31",
+    columns=["adj_open", "adj_close", "volume"],
+)
+```
+
+Without `start`/`end`, a minute dataset still loads but warns (`UnboundedMinuteLoadWarning`): every month is downloaded, about 75 GB for the stocks.
+
 For more, see [docs/datasets.md](/docs/datasets.md).
 
 

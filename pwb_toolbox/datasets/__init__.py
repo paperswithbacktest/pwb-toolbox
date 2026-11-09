@@ -4,11 +4,13 @@ from io import BytesIO
 import os
 import re
 import time
+import warnings
 
 from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.constants import HF_HUB_CACHE
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import requests
 from tqdm import tqdm
@@ -32,7 +34,7 @@ def _symbols_overlap(cell, symbol_set) -> bool:
     return any(symbol in symbol_set for symbol in cell)
 
 
-def _read_one_parquet(source, symbols=None) -> pd.DataFrame:
+def _read_one_parquet(source, symbols=None, columns=None, window=None) -> pd.DataFrame:
     """Read a single parquet source, pushing the symbol filter down when possible.
 
     ``source`` is a local path (``str``) or a file-like object. When ``symbols``
@@ -42,22 +44,156 @@ def _read_one_parquet(source, symbols=None) -> pd.DataFrame:
     the read. Either way memory stays bounded to a single shard's matching rows
     instead of the full dataset, which is what makes large sharded datasets
     (e.g. the 75 GB 1-minute prices) loadable when a symbol subset is requested.
+
+    ``columns`` (a list) projects the read onto those columns plus the keys
+    (``symbol``, ``symbols``, ``date``, ``datetime``) the shard has, and
+    ``window`` (a ``_Window``) filters the ``datetime`` column, or the ``date``
+    column when there is none, in the same pushed-down read. Arrow filters the
+    rows before pandas sees them, so only matching rows of the selected
+    columns are ever converted.
     """
-    filters = None
-    if symbols:
+    filters = []
+    read_columns = None
+    if symbols or columns is not None or window is not None:
         schema = pq.read_schema(source)
-        if "symbol" in schema.names:
-            filters = [("symbol", "in", list(symbols))]
         if hasattr(source, "seek"):
             source.seek(0)
+        if symbols and "symbol" in schema.names:
+            filters.append(("symbol", "in", list(symbols)))
+        if window is not None:
+            filters.extend(window.filters(schema))
+        if columns is not None:
+            read_columns = _projection(schema, columns)
 
-    df = pd.read_parquet(source, filters=filters)
+    df = pd.read_parquet(source, filters=filters or None, columns=read_columns)
 
     if symbols and "symbol" not in df.columns and "symbols" in df.columns:
         symbol_set = set(symbols)
         df = df[df["symbols"].apply(lambda cell: _symbols_overlap(cell, symbol_set))]
 
     return _normalise_symbol(df)
+
+
+#: Columns every bounded read keeps, whatever ``columns=`` asks for: without
+#: them the rows cannot be told apart or placed in time.
+_KEY_COLUMNS = ("symbol", "symbols", "date", "datetime")
+
+
+def _projection(schema, columns) -> list[str]:
+    """The keys the shard has, then ``columns``, in order and without repeats."""
+    unknown = [c for c in columns if c not in schema.names]
+    if unknown:
+        raise ValueError(f"unknown columns {unknown}; the dataset has {list(schema.names)}")
+    keys = [c for c in _KEY_COLUMNS if c in schema.names]
+    return list(dict.fromkeys(keys + list(columns)))
+
+
+class _Window:
+    """An inclusive window on a dataset's time column, from ``start``/``end``.
+
+    A bound given as a bare date covers the whole day: ``end="2024-03-31"``
+    keeps every bar of 31 March. A bound with a time of day is taken as is and
+    compared with the stored timestamps, which are naive (no time zone) in
+    every PWB table.
+    """
+
+    def __init__(self, start=None, end=None):
+        self.lo = self._timestamp(start, "start")
+        hi = self._timestamp(end, "end")
+        # A bare-date end becomes an exclusive bound at the next midnight.
+        self.hi_exclusive = hi is not None and hi == hi.normalize()
+        self.hi = hi + pd.Timedelta(days=1) if self.hi_exclusive else hi
+        if self.lo is not None and self.hi is not None:
+            if self.lo >= self.hi if self.hi_exclusive else self.lo > self.hi:
+                raise ValueError(f"start {start} is after end {end}")
+
+    @staticmethod
+    def _timestamp(value, name):
+        if value is None:
+            return None
+        try:
+            ts = pd.Timestamp(value)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"{name}={value!r} is not a date") from exc
+        if ts.tzinfo is not None:
+            raise ValueError(
+                f"{name}={value!r} carries a time zone; PWB timestamps are stored naive, "
+                "pass the bound as it is written in the table"
+            )
+        return ts
+
+    def __repr__(self):
+        lo = "..." if self.lo is None else str(self.lo)
+        hi = "..." if self.hi is None else str(self.hi)
+        return f"[{lo}, {hi}{')' if self.hi_exclusive else ']'}"
+
+    def describe(self) -> str:
+        lo = "start" if self.lo is None else self.lo.strftime("%Y-%m-%d")
+        if self.hi is None:
+            hi = "end"
+        else:
+            last = self.hi - pd.Timedelta(days=1) if self.hi_exclusive else self.hi
+            hi = last.strftime("%Y-%m-%d")
+        return f"{lo}..{hi}"
+
+    # -- shard selection ---------------------------------------------------
+    def overlaps(self, period_start: pd.Timestamp, period_end: pd.Timestamp) -> bool:
+        """True if a shard holding ``[period_start, period_end)`` can hold a
+        row of the window.
+
+        One day of slack on each side: a shard is named after the period of
+        its source, and its timestamps can be shifted by a time-zone
+        conversion (``Cryptocurrencies-1Min-Price``'s June shard opens on
+        ``2023-05-31 20:00:00``). Rows outside the window are filtered on read.
+        """
+        slack = pd.Timedelta(days=1)
+        if self.lo is not None and period_end + slack <= self.lo:
+            return False
+        if self.hi is not None and period_start - slack > self.hi:
+            return False
+        return True
+
+    # -- row filter --------------------------------------------------------
+    def filters(self, schema) -> list[tuple]:
+        """Parquet filters for this window on ``schema``'s time column."""
+        if "datetime" in schema.names:
+            field = schema.field("datetime")
+        elif "date" in schema.names:
+            field = schema.field("date")
+        else:
+            raise ValueError(
+                f"start/end need a 'datetime' or 'date' column; the dataset has {list(schema.names)}"
+            )
+        lo, hi, hi_exclusive = self.lo, self.hi, self.hi_exclusive
+        kind = field.type
+        daily = field.name == "date" or pa.types.is_date(kind)
+        if daily:
+            # Day granularity: a bound with a time of day keeps its whole day.
+            lo = None if lo is None else lo.normalize()
+            if hi is not None and not hi_exclusive:
+                hi, hi_exclusive = hi.normalize() + pd.Timedelta(days=1), True
+
+        if pa.types.is_string(kind) or pa.types.is_large_string(kind):
+            # ISO strings sort as the instants they spell. A midnight bound is
+            # written as a bare date, so it compares right whether the table
+            # separates date and time with a space or with "T".
+            def fmt(ts):
+                return ts.strftime("%Y-%m-%d") if ts == ts.normalize() else ts.strftime("%Y-%m-%d %H:%M:%S")
+        elif pa.types.is_date(kind):
+            def fmt(ts):
+                return ts.date()
+        elif pa.types.is_timestamp(kind):
+            def fmt(ts):
+                return ts.tz_localize(kind.tz) if kind.tz else ts
+        else:
+            raise ValueError(f"start/end cannot filter column {field.name!r} of type {kind}")
+
+        out = []
+        if lo is not None:
+            out.append((field.name, ">=", fmt(lo)))
+        if hi is not None:
+            out.append((field.name, "<" if hi_exclusive else "<=", fmt(hi)))
+        return out
 
 
 def _normalise_symbol(df: pd.DataFrame) -> pd.DataFrame:
@@ -125,7 +261,7 @@ def _http_get(url: str) -> bytes:
     raise last_exc
 
 
-def _read_parquet_files(paths: list[str], desc: str, symbols=None) -> pd.DataFrame:
+def _read_parquet_files(paths: list[str], desc: str, symbols=None, columns=None, window=None) -> pd.DataFrame:
     if not paths:
         raise ValueError("No parquet files provided.")
 
@@ -133,13 +269,72 @@ def _read_parquet_files(paths: list[str], desc: str, symbols=None) -> pd.DataFra
     frames = []
     for path in iterator:
         if isinstance(path, str) and path.startswith(("http://", "https://")):
-            frames.append(_read_one_parquet(BytesIO(_http_get(path)), symbols))
+            frames.append(_read_one_parquet(BytesIO(_http_get(path)), symbols, columns, window))
         else:
-            frames.append(_read_one_parquet(path, symbols))
+            frames.append(_read_one_parquet(path, symbols, columns, window))
     return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
 
 
-def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str, symbols=None) -> pd.DataFrame:
+# A shard named after the period it holds: ``train-2024``, ``train-2024-01``,
+# ``train-2024-01-15``. The minute datasets are monthly (``data/train-YYYY-MM.parquet``).
+_PERIOD_SHARD = re.compile(r"(?:^|/)(?P<split>[^/]+?)-(?P<period>\d{4}(?:-\d{2}){0,2})\.parquet$")
+
+
+def _shard_period(name: str):
+    """``(first instant, first instant after)`` of the period a shard is named
+    after, or ``None`` when its name carries none. ``name`` may be a URL."""
+    path = name.split("?", 1)[0]
+    match = _PERIOD_SHARD.search(path)
+    if not match:
+        return None
+    period = match.group("period")
+    start = pd.Timestamp(period if len(period) > 4 else f"{period}-01-01")
+    if len(period) == 4:
+        return start, start + pd.DateOffset(years=1)
+    if len(period) == 7:
+        return start, start + pd.DateOffset(months=1)
+    return start, start + pd.Timedelta(days=1)
+
+
+def _shards_in_window(names: list, window, dataset_name: str) -> list:
+    """The shards of ``names`` that can hold a row of ``window``, in order.
+
+    Selected by the period in their names, before anything is downloaded.
+    When a name carries no period the shards cannot be told apart without
+    reading them: every one is kept, the rows outside the window are still
+    dropped on read, and a warning says the download is not bounded.
+    """
+    if window is None:
+        return list(names)
+    periods = [_shard_period(n) for n in names]
+    if any(p is None for p in periods):
+        warnings.warn(
+            f"The {len(names)} files of {dataset_name} carry no period in their names; all of "
+            "them are downloaded and start/end only filter the rows read from each.",
+            stacklevel=4,
+        )
+        return list(names)
+    picked = [n for n, p in zip(names, periods) if window.overlaps(*p)]
+    if not picked and periods:
+        first = min(p[0] for p in periods).strftime("%Y-%m-%d")
+        last = (max(p[1] for p in periods) - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        warnings.warn(
+            f"No shard of {dataset_name} covers {window.describe()}; the dataset covers "
+            f"{first}..{last}. Nothing was downloaded.",
+            stacklevel=4,
+        )
+    else:
+        print(f"[datasets] {dataset_name} {window.describe()}: {len(picked)} of {len(names)} shards")
+    return picked
+
+
+def _empty_frame(columns=None) -> pd.DataFrame:
+    keys = ["symbol"]
+    return pd.DataFrame(columns=keys + [c for c in (columns or []) if c not in keys])
+
+
+def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str, symbols=None,
+                           columns=None, window=None) -> pd.DataFrame:
     base_url = "https://data.paperswithbacktest.com/v1/datasets"
     resp = requests.get(f"{base_url}/{dataset_name}", params={"pwb_api_key": pwb_api_key, "split": split}, timeout=30)
     resp.raise_for_status()
@@ -147,8 +342,12 @@ def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str, symb
     if not files:
         raise ValueError(f"No files available for dataset '{dataset_name}' and split '{split}'")
 
+    files = _shards_in_window(files, window, dataset_name)
+    if not files:
+        return _empty_frame(columns)
     print(f"Downloading {len(files)} parquet files from PWB...")
-    return _read_parquet_files(files, desc=f"PWB {dataset_name}", symbols=symbols)
+    return _read_parquet_files(files, desc=f"PWB {dataset_name}", symbols=symbols,
+                               columns=columns, window=window)
 
 
 def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]:
@@ -228,12 +427,18 @@ def _hub_snapshot(repo_id: str, hf_token: str):
     return snapshot
 
 
-def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=None) -> pd.DataFrame:
+def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=None,
+                          columns=None, window=None) -> pd.DataFrame:
     repo_id = f"paperswithbacktest/{dataset_name}"
     sha, repo_files = _hub_snapshot(repo_id, hf_token)
     parquet_files = _list_hf_split_parquet_files(repo_files, split)
     if not parquet_files:
         raise ValueError(f"No parquet files found for split '{split}' in dataset '{repo_id}'.")
+    # Only the shards of the window are downloaded: a month of 1-minute stock
+    # bars is ~350 MB, the whole table ~75 GB.
+    parquet_files = _shards_in_window(parquet_files, window, dataset_name)
+    if not parquet_files:
+        return _empty_frame(columns)
 
     iterator = tqdm(parquet_files, desc=f"HF {dataset_name}", unit="file") if len(parquet_files) > 1 else parquet_files
     local_files = [
@@ -246,7 +451,8 @@ def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=
         )
         for file_name in iterator
     ]
-    return _read_parquet_files(local_files, desc=f"Load {dataset_name}", symbols=symbols)
+    return _read_parquet_files(local_files, desc=f"Load {dataset_name}", symbols=symbols,
+                               columns=columns, window=window)
 
 DAILY_PRICE_DATASETS = [
     "Bonds-Daily-Price",
@@ -1035,6 +1241,33 @@ def _with_forex_inverse_names(universe: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([universe, alias], ignore_index=True)
 
 
+class UnboundedMinuteLoadWarning(UserWarning):
+    """A minute dataset was loaded without ``start``/``end``: every monthly
+    shard is downloaded."""
+
+
+# ``Stocks-1Min-Price``, ``Cryptocurrencies-1Min-Price``, ``Forex-1Min-Price``...
+_MINUTE_DATASET = re.compile(r"-1min-", re.IGNORECASE)
+
+
+def is_minute_dataset(path) -> bool:
+    """True for the 1-minute bar datasets, stored as one parquet shard per month."""
+    return bool(_MINUTE_DATASET.search(str(path).strip().rsplit("/", 1)[-1]))
+
+
+def _warn_unbounded_minute(name: str, symbols) -> None:
+    price = "adj_close" if name.lower().startswith("stocks-") else "close"
+    scope = "every month" if symbols is not None else "every month of every symbol"
+    warnings.warn(
+        f"{name} is stored as one shard per month (Stocks-1Min-Price is ~75 GB): without "
+        f"start/end, load_dataset downloads {scope} before returning. Bound the read so only "
+        f"the months you need are downloaded, e.g. load_dataset({name!r}, symbols=['SPY'], "
+        f"start='2024-01-01', end='2024-03-31', columns=[{price!r}, 'volume']).",
+        UnboundedMinuteLoadWarning,
+        stacklevel=3,
+    )
+
+
 def load_dataset(
     path,
     symbols=None,
@@ -1042,8 +1275,47 @@ def load_dataset(
     extend=False,
     to_usd=True,
     rate_to_price=True,
-    use_hf=False
+    use_hf=False,
+    start=None,
+    end=None,
+    columns=None,
 ):
+    """Load a PWB dataset as a pandas DataFrame.
+
+    Parameters
+    ----------
+    path : str
+        Dataset name, e.g. ``"Stocks-Daily-Price"`` or ``"Stocks-1Min-Price"``.
+    symbols : str or list of str, optional
+        Keep only these symbols. The filter is pushed down to each shard's
+        read, so memory stays bounded to the matching rows. Universe names
+        (``"sp500"``...) are resolved as before.
+    adjust, extend, to_usd, rate_to_price : bool
+        Post-processing of the daily price datasets, unchanged.
+    use_hf : bool
+        Read from the Hugging Face Hub even when ``PWB_API_KEY`` is set.
+    start, end : date-like, optional
+        Inclusive window on the ``datetime`` column (the ``date`` column when
+        there is none). Only the shards whose period intersects the window
+        are downloaded -- a minute dataset is one shard per month -- and rows
+        outside it are dropped inside the parquet read. A bare date covers the
+        whole day: ``end="2024-03-31"`` keeps every bar of 31 March. A bound
+        with a time (``"2024-03-15 09:30"``) is compared with the stored naive
+        timestamps as written.
+    columns : list of str, optional
+        Read only these columns, plus the keys the table has (``symbol``,
+        ``date``/``datetime``). For the minute datasets the read never
+        materialises the other columns. An unknown column is an error.
+
+    Without ``start``, ``end`` and ``columns`` the behaviour is unchanged. A
+    minute dataset loaded without ``start``/``end`` still loads, but warns
+    (``UnboundedMinuteLoadWarning``): it downloads every month, ~75 GB for
+    ``Stocks-1Min-Price``. An intraday strategy should bound its read::
+
+        bars = load_dataset("Stocks-1Min-Price", symbols=["SPY", "QQQ"],
+                            start="2024-01-01", end="2024-03-31",
+                            columns=["adj_open", "adj_close", "volume"])
+    """
     if str(path).strip().rsplit("/", 1)[-1].lower() == "options-daily-price":
         # ~560 M rows, ~20 GB: this function downloads every shard before it
         # filters, which is how Stocks-1Min-Price filled a disk on 2026-11-05.
@@ -1057,6 +1329,25 @@ def load_dataset(
 
     split = "train"
     pwb_api_key = _get_pwb_api_key()
+
+    if isinstance(columns, str):
+        columns = [columns]
+    if columns is not None:
+        columns = list(columns)
+    window = _Window(start, end) if start is not None or end is not None else None
+    if window is None and is_minute_dataset(path):
+        _warn_unbounded_minute(str(path).strip().rsplit("/", 1)[-1], symbols)
+    # The daily price tables are post-processed below (adjustment, currency,
+    # direction of forex pairs) from their full set of price columns, so
+    # ``columns`` selects among the result instead of the read.
+    read_columns = None if path in DAILY_PRICE_DATASETS else columns
+    # Passed on only when asked for, so a loader replaced in a test or a
+    # wrapper keeps the signature it has always had.
+    bounds = {}
+    if read_columns is not None:
+        bounds["columns"] = read_columns
+    if window is not None:
+        bounds["window"] = window
 
     # Resolve the symbol filter up front (on a copy, so the caller's list is
     # never mutated) so it can be pushed down to the per-shard parquet reads
@@ -1078,12 +1369,12 @@ def load_dataset(
         read_filter = _forex_widen_filter(symbol_filter)
 
     if pwb_api_key and not use_hf:
-        df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=read_filter)
+        df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=read_filter, **bounds)
     else:
         hf_token = os.getenv("HF_ACCESS_TOKEN")
         if not hf_token:
             raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
-        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token, symbols=read_filter)
+        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token, symbols=read_filter, **bounds)
 
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -1148,6 +1439,13 @@ def load_dataset(
 
     if path in DAILY_PRICE_DATASETS and rate_to_price and path == "Bonds-Daily-Price":
         df = __convert_bond_rates_to_prices(df)
+
+    if columns is not None and read_columns is None:
+        unknown = [c for c in columns if c not in df.columns]
+        if unknown:
+            raise ValueError(f"unknown columns {unknown}; the dataset has {list(df.columns)}")
+        keys = [c for c in _KEY_COLUMNS if c in df.columns]
+        df = df[list(dict.fromkeys(keys + columns))]
 
     return df
 

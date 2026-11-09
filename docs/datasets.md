@@ -99,6 +99,48 @@ pwb_ds.load_dataset("Forex-Daily-Price", ["USDJPY", "JPYUSD"], to_usd=False)
 # USDJPY ~158 (raw) and JPYUSD ~0.0063 (its inverse)
 ```
 
+## Minute bars: bound the read with `start`, `end` and `columns`
+
+`Stocks-1Min-Price`, `Cryptocurrencies-1Min-Price` and `Forex-1Min-Price` are
+stored as one parquet shard per month (`data/train-YYYY-MM.parquet`, about
+350 MB a month for the stocks, ~75 GB in all). `symbols=` alone keeps memory
+bounded to the matching rows, but every month is still downloaded. Pass a
+window and the columns you use:
+
+```python
+import pwb_toolbox.datasets as pwb_ds
+
+bars = pwb_ds.load_dataset(
+    "Stocks-1Min-Price",
+    symbols=["SPY", "QQQ"],
+    start="2024-01-01",
+    end="2024-03-31",
+    columns=["adj_open", "adj_close", "volume"],
+)
+```
+
+- **`start`, `end`** (date-like, inclusive) select the shards to download by
+  the month in their names, before anything is fetched, and filter the
+  `datetime` column (or `date`) inside the parquet read. A bare date covers the
+  whole day (`end="2024-03-31"` keeps the bars of 31 March); a bound with a time
+  of day (`"2024-03-15 09:30"`) is compared with the stored timestamps, which
+  are naive. One shard on each side of the window may be opened as slack for
+  bars shifted across a month boundary; their rows outside the window are
+  dropped on read. Either bound may be left open.
+- **`columns`** reads only those columns plus the keys (`symbol`,
+  `datetime`/`date`). Stock bars have `adj_open`, `adj_high`, `adj_low`,
+  `adj_close` and `volume`; crypto and forex bars have `open`, `high`, `low`,
+  `close` and `volume`. An unknown column is an error.
+- Rows and columns are filtered by Arrow before pandas sees them, so a shard is
+  never materialised whole.
+
+The same parameters work on every dataset whose shards are named by period
+(the daily price tables are monthly too). On the daily price tables `columns`
+selects among the adjusted result, since the adjustment needs every price
+column. Without `start`, `end` and `columns`, `load_dataset` behaves as before;
+on a minute dataset it then emits an `UnboundedMinuteLoadWarning`, because it is
+about to download every month.
+
 ## Option chains: `load_option_chain`
 
 `Options-Daily-Price` holds every US-listed option contract that traded since June 2014, one row per contract and session (about 560 million rows, ~20 GB). It is not loaded with `load_dataset`, which downloads every shard before filtering and refuses this dataset. Use `load_option_chain`, which downloads only what it is asked for:
