@@ -54,9 +54,7 @@ def _run(strategy_cls, symbols=("A",)):
     summary = {s: Cost(s, MEASURED, "measured", 2020) for s in symbols}
     with offline(prices), mock.patch.object(
         pwb_bt, "get_cost_schedules", lambda *a, **k: (schedules, summary)
-    ), mock.patch.object(pwb_bt, "equity_symbols", lambda s: set(s)), mock.patch.object(
-        pwb_bt, "currency_symbols", lambda s: {}
-    ):
+    ), mock.patch.object(pwb_bt, "cost_classes", lambda s: (set(s), {})):
         return be.run_strategy(
             indicator_cls=None,
             indicator_kwargs={},

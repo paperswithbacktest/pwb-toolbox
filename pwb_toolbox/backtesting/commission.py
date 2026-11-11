@@ -528,6 +528,39 @@ def currency_symbols(symbols) -> dict:
     return out
 
 
+def cost_classes(symbols) -> tuple[set, dict]:
+    """``(equities, currencies)`` for the series a backtest actually loads.
+
+    ``equity_symbols`` and ``currency_symbols`` judge the names they are given,
+    and the harness used to give them the strategy's own list. That list holds
+    a universe pseudo-symbol, not the names it stands for: ``["sp500"]``
+    returned ``{"sp500"}``, none of the ~1 900 members ``get_pricing`` loaded
+    under it was recognised as an equity, and every one was charged the 1 bp
+    floor instead of its measured spread -- the run logs said so in plain
+    sight, ``Commissions: 1936 symbols ... (1936 default)``.
+
+    So the list is expanded first, with the same ``_resolve_universe`` that
+    ``get_pricing`` uses, and each name is then judged by how it was routed:
+
+    * a member a point-in-time universe (``"sp500"``, ``"liquid1000"``) brought
+      in is an equity by construction -- the universe is built from US common
+      stocks, and ``get_pricing`` routes it to ``Stocks-Daily-Price`` without
+      consulting the index. It is never a currency leg.
+    * every other name -- what the caller named itself, and the members of
+      ``"sp500-frozen"``, which ``get_pricing`` routes like any bare ticker --
+      goes through the suffix-then-index rule of ``equity_symbols``, unchanged.
+      ``["sp500", "BTC.CRP"]`` still keeps the coin off the equity table.
+    """
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    from ..datasets import _resolve_universe
+
+    expanded, _spec, added, explicit = _resolve_universe(list(symbols))
+    members = set(added) - set(explicit)
+    named = [s for s in expanded if s not in members]
+    return equity_symbols(named) | members, currency_symbols(named)
+
+
 def _currency_keys(name: str, repo: str) -> list:
     """How a PWB symbol is spelled in its currency table, most likely first.
 
