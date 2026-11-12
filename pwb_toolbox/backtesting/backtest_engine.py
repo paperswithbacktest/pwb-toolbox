@@ -82,14 +82,17 @@ def _apply_per_symbol_commissions(
     # Resolved from ``symbols``, not ``priced``: the suffix that says which
     # asset a name refers to only exists on the caller's list, and it is the
     # only thing separating the crypto BTC from the US-listed ETF of the same
-    # ticker that sits in the cost table at 119.6 bp.
+    # ticker that sits in the cost table at 119.6 bp. But resolved from the
+    # list *expanded* the way ``get_pricing`` expanded it: judged as written,
+    # ``["sp500"]`` gave ``{"sp500"}`` and every member was charged the floor.
+    measurable, currencies = pwb_bt.cost_classes(symbols)
     schedules, summary = pwb_bt.get_cost_schedules(
         priced,
         start_date=start_date,
         end_date=end_date,
-        measurable=pwb_bt.equity_symbols(symbols),
+        measurable=measurable,
         active_years=active_years,
-        currencies=pwb_bt.currency_symbols(symbols),
+        currencies=currencies,
     )
     lambdas = pwb_bt.load_lambda_params() if enable_impact else {}
     year = int(str(start_date)[:4])
