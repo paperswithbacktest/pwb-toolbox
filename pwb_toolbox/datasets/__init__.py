@@ -1991,6 +1991,40 @@ def _resolve_reused_tickers(frames: dict, reused: dict, start_date, end_date) ->
     return frames
 
 
+class _Routes(dict):
+    """A read-only record carried in ``DataFrame.attrs``: copied by reference.
+
+    pandas deep-copies ``attrs`` into the result of most operations; a strategy
+    that runs a thousand of them on the panel should not copy two thousand
+    routes each time.
+    """
+
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
+
+def _loaded_routes(grouped: dict, loaded: dict, resolved: set) -> dict:
+    """``{symbol: repository}`` -- where each column of ``get_pricing`` was read from.
+
+    ``grouped`` is the routing before the load; for the names whose feed is
+    settled by the data itself (a ticker both the ETF and the stock feeds carry,
+    a reused ticker) the repository that kept the rows answers instead.
+    """
+    routes = _Routes()
+    for repo_id, names in grouped.items():
+        for name in names:
+            routes.setdefault(name, repo_id)
+    for name in resolved:
+        for repo_id, frame in loaded.items():
+            if frame is not None and not frame.empty and (frame["symbol"] == name).any():
+                routes[name] = repo_id
+                break
+    return routes
+
+
 def get_pricing(
     symbol_list,
     fields=None,  # ← default set below
@@ -2148,6 +2182,7 @@ def get_pricing(
             loaded[repo_id] = df_part
     loaded = _arbitrate_collisions(loaded, contested, start_date, end_date)
     loaded = _resolve_reused_tickers(loaded, reused, start_date, end_date)
+    routes = _loaded_routes(grouped, loaded, contested | set(reused))
     frames = [frame for frame in loaded.values() if not frame.empty]
 
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -2187,6 +2222,9 @@ def get_pricing(
                 col if not isinstance(col, tuple) else col[-1] for col in prices.columns
             ]
 
+    # Which feed each column came from, for the harness's checks: a bare
+    # ticker's class (stock, ETF, index...) is decided here and nowhere else.
+    prices.attrs["pwb_routes"] = routes
     return prices
 
 

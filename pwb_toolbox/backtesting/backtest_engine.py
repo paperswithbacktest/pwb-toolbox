@@ -3,6 +3,8 @@ import copy
 import json
 import os
 import itertools
+import sys
+import time
 import pandas as pd
 import numpy as np
 import pwb_toolbox.backtesting as pwb_bt
@@ -11,6 +13,8 @@ import pwb_toolbox.datasets as pwb_ds
 from ..engine import load as _load_engine
 
 bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
+from . import checks as _checks
+from . import lookahead as _lookahead
 from .feeds import ArrayPandasData
 
 
@@ -122,6 +126,9 @@ def _apply_per_symbol_commissions(
             schedule=paired,
             data=(feeds or {}).get(symbol),
         )
+        # Where the rate came from (measured, extrapolated, roll, default):
+        # what the ``costs`` check reads.
+        scheme.pwb_cost = cost
         broker.addcommissioninfo(scheme, name=symbol)
         schemes[symbol] = scheme
 
@@ -1256,6 +1263,21 @@ def run_strategy(
         pit_exit = os.getenv("PWB_PIT_EXIT", PIT_EXIT) or PIT_EXIT
     if pit_exit not in PIT_EXITS:
         raise ValueError(f"pit_exit={pit_exit!r}: one of {PIT_EXITS}")
+    # The automatic checks (``checks.py``): the strategy's code is read now,
+    # while the frames that hold it -- a file, a notebook cell, the caller of
+    # ``exec`` -- are still on the stack. Nothing here may stop the run.
+    checking = _checks.enabled()
+    check_context = {}
+    check_seconds = 0.0
+    if checking:
+        started = time.perf_counter()
+        try:
+            check_context["sources"] = _lookahead.strategy_source(
+                strategy_cls, indicator_cls, sys._getframe(1)
+            )
+        except Exception as exc:  # noqa: BLE001
+            check_context["sources_error"] = f"{type(exc).__name__}: {exc}"
+        check_seconds += time.perf_counter() - started
     # The default observers (Broker, BuySell, Trades) exist for plotting and
     # cost about a tenth of the engine loop; nothing in the harness or in the
     # published strategies reads them, and the dozen strategies that build
@@ -1274,6 +1296,9 @@ def run_strategy(
         # prices, so it needs the rows the membership cut would drop.
         pit_cut=pit_exit != "hold",
     )
+    # Which feed each column came from (``get_pricing``), popped so pandas
+    # does not carry it through every operation below.
+    routes = dict(pivot_df.attrs.pop("pwb_routes", None) or {})
     # Which years each symbol actually has a bar in, read before the fill
     # below erases the holes. The cost schedule charges the floor in a year
     # without a bar instead of bridging a vintage across it, and ``FillAudit``
@@ -1297,6 +1322,18 @@ def run_strategy(
                 f"{'s' if eras > 1 else ''} under the ticker)"
             )
     present = closes.notna()
+    if checking:
+        started = time.perf_counter()
+        try:
+            check_context["facts"] = _checks.universe_facts(symbols, present, routes)
+            _, _, added, explicit = pwb_ds._resolve_universe(
+                [symbols] if isinstance(symbols, str) else list(symbols)
+            )
+            check_context["members"] = frozenset(added) - frozenset(explicit)
+        except Exception as exc:  # noqa: BLE001
+            check_context["facts_error"] = f"{type(exc).__name__}: {exc}"
+        check_context["routes"] = routes
+        check_seconds += time.perf_counter() - started
     active_years = {
         symbol: set(present.index[present[symbol]].year) for symbol in present.columns
     }
@@ -1369,6 +1406,9 @@ def run_strategy(
         )
         cerebro.addanalyzer(FundingAudit, _name="funding")
         cerebro.addanalyzer(FillAudit, _name="fill", inactive=inactive)
+        created = {}
+        if checking:
+            cerebro.addanalyzer(_checks.OrderJournal, _name="pwb_journal", created=created)
         # Broker. ``_apply_broker_kwargs`` pops what it consumes, so each
         # attempt gets its own copy -- otherwise the second run of a
         # de-leveraging sequence would silently lose the caller's commission
@@ -1394,6 +1434,9 @@ def run_strategy(
             if schemes
             else {"mode": "caller", "commission": broker_kwargs.get("commission")}
         )
+        if checking:
+            # Innermost: it sees the orders the guards below let through.
+            _checks.record_submissions(cerebro.broker, created)
         # Inner guard first: an order dated before the listing is refused by
         # the listing guard and counted there, as before the membership one.
         refused_outside = (
@@ -1409,6 +1452,14 @@ def run_strategy(
         # Run the strategy
         strategy = cerebro.run()[0]
         strategy.commission_policy = commission_policy
+        strategy.cost_schemes = schemes
+        if checking:
+            try:
+                strategy.order_journal = strategy.analyzers.pwb_journal.get_analysis()
+                strategy.broker_flags = _checks.broker_flags(cerebro.broker)
+            except Exception as exc:  # noqa: BLE001
+                strategy.order_journal = None
+                strategy.order_journal_error = f"{type(exc).__name__}: {exc}"
         strategy.listing_audit = listing_audit
         if listing_audit:
             worst = max(listing_audit.items(), key=lambda kv: kv[1]["orders"])
@@ -1488,6 +1539,27 @@ def run_strategy(
         strategy.exposure_cap = report["exposure_cap"]
         strategy.requested_long = as_published.requested_long
         strategy.requested_gross = as_published.requested_gross
+        if checking:
+            started = time.perf_counter()
+            context = dict(check_context)
+            context.update(
+                membership=membership,
+                journal=getattr(strategy, "order_journal", None),
+                flags=getattr(strategy, "broker_flags", None),
+                schemes=getattr(strategy, "cost_schemes", None),
+                policy=report["commission_policy"],
+                caller_commission=broker_kwargs.get("commission"),
+            )
+            if getattr(strategy, "order_journal_error", None):
+                context["journal_error"] = strategy.order_journal_error
+            try:
+                report["checks"] = _checks.compute(context)
+            except Exception as exc:  # noqa: BLE001 -- compute() should not raise
+                report["checks"] = _checks.unavailable(f"{type(exc).__name__}: {exc}")
+            strategy.checks = report["checks"]
+            print(_checks.summary_line(
+                report["checks"], check_seconds + time.perf_counter() - started
+            ))
         strategy.run_report = report
         policy = report["commission_policy"] or {}
         if policy.get("calls"):
