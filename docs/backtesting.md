@@ -239,6 +239,34 @@ What was applied is in `strategy.run_report["commission_policy"]` and on one
 `Commission policy: {...}` line. `run_strategy(broker_kwargs={"commission": x})` still
 replaces the measured schemes altogether.
 
+### Checks
+
+Every `run_strategy` computes four checks, like a CI run, and attaches them to the
+strategy it returns as `strategy.checks` (also `strategy.run_report["checks"]`), with
+one `Checks: lookahead pass, universe pass, execution pass, costs pass (3 ms)` line:
+
+```json
+{"computedBy": "harness", "toolboxVersion": "0.1.49", "computedAt": "2026-11-12T10:00:00Z",
+ "items": [{"id": "lookahead", "status": "pass", "summary": "no future data read", "detail": {}},
+           {"id": "universe", "status": "pass", "summary": "point-in-time sp500, 1375 names, 531 delisted included", "detail": {}},
+           {"id": "execution", "status": "pass", "summary": "signal at close, fill at next open", "detail": {}},
+           {"id": "costs", "status": "pass", "summary": "955 of 955 traded names at measured spread (100% of traded value)", "detail": {}}]}
+```
+
+| check | fail | warn |
+|---|---|---|
+| `lookahead` | the code reads future data: a positive index on a feed (`self.data.close[1]`), quarterly fundamentals merged without a reporting lag, an anchored offset that rolls into the current period (`d - MonthBegin(1)`) | a pattern that needs a reader (`shift(-n)`, a `MonthEnd(1)` correct only on a month end...), or the code could not be found |
+| `universe` | -- | a fixed list of single stocks (or of three coins or more) replayed over 5 years or more: today's survivors |
+| `execution` | an order filled on the bar whose data produced it (cheat-on-close, cheat-on-open) | nothing was filled |
+| `costs` | more than 20 % of the traded value of stocks and ETFs charged the default floor instead of a measured spread | more than 5 % of it; or a flat commission set by the strategy |
+
+The rules and thresholds are in `pwb_toolbox/backtesting/checks.py`; the look-ahead
+analysis is `pwb_toolbox/backtesting/lookahead.py` (also `python -m
+pwb_toolbox.backtesting.lookahead strategy.py`). A check never stops a backtest: one
+that cannot run is reported as `warn` with the reason. `PWB_HARNESS_CHECKS=0` in the
+environment switches them off. Post the block unchanged with the run's results:
+`requests.post(".../api/v1/me/strategies/{slug}/results", json={..., "checks": strategy.checks})`.
+
 ### Option contracts
 
 Option contracts are not price feeds of the harness: an option strategy keeps its own
