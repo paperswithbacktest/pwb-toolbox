@@ -1,9 +1,14 @@
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date
 from io import BytesIO
 import os
 import re
+import tempfile
+import threading
 import time
+from urllib.parse import parse_qsl, urlparse
 import warnings
 
 from huggingface_hub import HfApi, hf_hub_download
@@ -97,7 +102,11 @@ class _Window:
     every PWB table.
     """
 
-    def __init__(self, start=None, end=None):
+    def __init__(self, start=None, end=None, rows=True):
+        # ``rows=False``: the window only picks the shards to read, and every
+        # row of those shards is kept. What ``get_pricing`` uses, since it
+        # slices the dates itself afterwards (see ``_pricing_shard_window``).
+        self.rows = rows
         self.lo = self._timestamp(start, "start")
         hi = self._timestamp(end, "end")
         # A bare-date end becomes an exclusive bound at the next midnight.
@@ -121,6 +130,10 @@ class _Window:
                 "pass the bound as it is written in the table"
             )
         return ts
+
+    def key(self):
+        """Hashable identity of the row filter, for the read memo."""
+        return (self.lo, self.hi, self.hi_exclusive)
 
     def __repr__(self):
         lo = "..." if self.lo is None else str(self.lo)
@@ -261,18 +274,208 @@ def _http_get(url: str) -> bytes:
     raise last_exc
 
 
+# --------------------------------------------------------------------------- #
+# In-process memo of the shard reads                                          #
+# --------------------------------------------------------------------------- #
+# A backtest reads the same shards several times in one process. Measured on
+# 0.1.49 (12 Nov 2026) for a ``sp500`` point-in-time strategy: the 779 monthly
+# shards of ``Stocks-Daily-Price`` were read by ``get_pricing`` (14 s), again by
+# the Roll fallback of the cost schedules (4 s), and again by the strategy's own
+# ``load_dataset("Stocks-Daily-Price", symbols=["sp500"])`` (18-23 s).
+#
+# The memo keeps each shard as it came out of ``_read_one_parquet``, keyed by
+# the file on disk (path, size, modification time, inode -- a new Hub revision
+# is a new snapshot path, a new API download a new blob) and by the filters of
+# the read (symbols as a set, columns, row window). The same key is the same
+# bytes read with the same filters, so the same frame. A caller never receives
+# the stored object: several shards are concatenated into a new frame, a single
+# one is copied.
+#
+# It is bounded (``PWB_READ_MEMO_MB``, default 2048; 0 turns it off). A shard is
+# admitted only if it fits once the entries of earlier reads are evicted, least
+# recently used first, so a read larger than the budget keeps what it could
+# store instead of evicting its own first shards to admit its last ones.
+_READ_MEMO_DEFAULT_MB = 2048
+
+
+def _read_memo_budget() -> int:
+    try:
+        mb = float(os.getenv("PWB_READ_MEMO_MB", _READ_MEMO_DEFAULT_MB))
+    except ValueError:
+        mb = _READ_MEMO_DEFAULT_MB
+    return int(max(mb, 0) * 1024 * 1024)
+
+
+def _frame_bytes(df: pd.DataFrame) -> int:
+    """Rough size of a frame: its arrays, plus a pointer and a share of a
+    string object per object cell (pyarrow deduplicates the strings it
+    converts, so ``deep=True`` would mostly count the same objects again)."""
+    shallow = int(df.memory_usage(index=True, deep=False).sum())
+    objects = sum(len(df) for dtype in df.dtypes if dtype == object)
+    return shallow + 24 * objects
+
+
+class _ReadMemo:
+    def __init__(self):
+        self._entries = OrderedDict()  # key -> [frame, nbytes, generation]
+        self._by_file = defaultdict(set)  # (file, columns, window) -> {key}
+        self._lock = threading.Lock()
+        self.nbytes = 0
+        self.generation = 0
+        self.hits = 0
+        self.misses = 0
+
+    def clear(self):
+        with self._lock:
+            self._entries.clear()
+            self._by_file.clear()
+            self.nbytes = 0
+            self.hits = self.misses = 0
+
+    def next_generation(self) -> int:
+        with self._lock:
+            self.generation += 1
+            return self.generation
+
+    def get(self, key, generation):
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            entry[2] = generation
+            self._entries.move_to_end(key)
+            self.hits += 1
+            return entry[0]
+
+    def get_superset(self, key, generation):
+        """A stored read of the same file whose symbols include ``key``'s.
+
+        Returns ``(frame, wanted symbols)`` or ``None``. Only for a read with
+        a symbol set and a scalar ``symbol`` column; see ``superset_reads``.
+        """
+        ident, wanted, columns, window = key
+        if not wanted:
+            return None
+        with self._lock:
+            for other in self._by_file.get((ident, columns, window), ()):
+                have = other[1]
+                if have is not None and not wanted <= have:
+                    continue
+                entry = self._entries[other]
+                if "symbol" not in entry[0].columns:
+                    continue
+                entry[2] = generation
+                self._entries.move_to_end(other)
+                self.hits += 1
+                return entry[0], wanted
+        return None
+
+    def put(self, key, frame, generation, budget):
+        size = _frame_bytes(frame)
+        with self._lock:
+            if key in self._entries or size > budget:
+                return
+            for old in list(self._entries):
+                if self.nbytes + size <= budget:
+                    break
+                if self._entries[old][2] >= generation:
+                    continue  # read by the current call: never evicted for it
+                self._drop(old)
+            if self.nbytes + size > budget:
+                return
+            self._entries[key] = [frame, size, generation]
+            self._by_file[(key[0], key[2], key[3])].add(key)
+            self.nbytes += size
+
+    def _drop(self, key):
+        frame, size, _ = self._entries.pop(key)
+        group = self._by_file.get((key[0], key[2], key[3]))
+        if group is not None:
+            group.discard(key)
+            if not group:
+                del self._by_file[(key[0], key[2], key[3])]
+        self.nbytes -= size
+
+
+_READ_MEMO = _ReadMemo()
+
+#: Set by ``superset_reads()``: a shard may then be served from a stored read
+#: of the same file under a larger symbol set, filtered to the symbols asked.
+_SUPERSET_READS: ContextVar = ContextVar("pwb_superset_reads", default=False)
+
+
+@contextmanager
+def superset_reads():
+    """Let the shard reads inside the block reuse a stored read of a larger
+    symbol set.
+
+    The rows are exactly those a direct read returns, in the same order. What
+    can differ is the dtype of an integer column: pyarrow hands back ``int64``
+    when the rows it converts hold no null and ``float64`` when one does, and a
+    larger symbol set can hold a null the smaller one does not. So this is for
+    callers that read float columns only -- the cost model's Roll fallback,
+    which reads closes -- and never the default.
+    """
+    token = _SUPERSET_READS.set(True)
+    try:
+        yield
+    finally:
+        _SUPERSET_READS.reset(token)
+
+
+def _file_ident(path: str):
+    st = os.stat(path)
+    return (path, st.st_size, st.st_mtime_ns, st.st_ino)
+
+
+def _read_piece(path, symbols, columns, window, generation, budget) -> tuple[pd.DataFrame, bool]:
+    """One shard through the memo: ``(frame, stored)``. A stored frame must
+    not be handed to a caller as is."""
+    if not budget or not isinstance(path, str):
+        return _read_one_parquet(path, symbols, columns, window), False
+    try:
+        ident = _file_ident(path)
+    except OSError:
+        return _read_one_parquet(path, symbols, columns, window), False
+    key = (
+        ident,
+        frozenset(symbols) if symbols else None,
+        tuple(columns) if columns is not None else None,
+        window.key() if window is not None else None,
+    )
+    hit = _READ_MEMO.get(key, generation)
+    if hit is not None:
+        return hit, True
+    if _SUPERSET_READS.get():
+        found = _READ_MEMO.get_superset(key, generation)
+        if found is not None:
+            frame, wanted = found
+            sub = frame[frame["symbol"].isin(wanted)].reset_index(drop=True)
+            return sub, False
+    _READ_MEMO.misses += 1
+    frame = _read_one_parquet(path, symbols, columns, window)
+    _READ_MEMO.put(key, frame, generation, budget)
+    return frame, True
+
+
 def _read_parquet_files(paths: list[str], desc: str, symbols=None, columns=None, window=None) -> pd.DataFrame:
     if not paths:
         raise ValueError("No parquet files provided.")
 
+    budget = _read_memo_budget()
+    generation = _READ_MEMO.next_generation()
     iterator = tqdm(paths, desc=desc, unit="file") if len(paths) > 1 else paths
     frames = []
+    stored = False
     for path in iterator:
         if isinstance(path, str) and path.startswith(("http://", "https://")):
             frames.append(_read_one_parquet(BytesIO(_http_get(path)), symbols, columns, window))
         else:
-            frames.append(_read_one_parquet(path, symbols, columns, window))
-    return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+            frame, stored = _read_piece(path, symbols, columns, window, generation, budget)
+            frames.append(frame)
+    if len(frames) > 1:
+        return pd.concat(frames, ignore_index=True)
+    return frames[0].copy() if stored else frames[0]
 
 
 # A shard named after the period it holds: ``train-2024``, ``train-2024-01``,
@@ -307,6 +510,12 @@ def _shards_in_window(names: list, window, dataset_name: str) -> list:
     if window is None:
         return list(names)
     periods = [_shard_period(n) for n in names]
+    if not window.rows:
+        # Picking shards for ``get_pricing``, which asked for no window of its
+        # own: silent, and every shard when the names carry no period.
+        if any(p is None for p in periods):
+            return list(names)
+        return [n for n, p in zip(names, periods) if window.overlaps(*p)]
     if any(p is None for p in periods):
         warnings.warn(
             f"The {len(names)} files of {dataset_name} carry no period in their names; all of "
@@ -328,26 +537,440 @@ def _shards_in_window(names: list, window, dataset_name: str) -> list:
     return picked
 
 
+#: The shard-picking window of the ``load_dataset`` call in progress, for its
+#: loader only (see ``_SHARD_WINDOW`` below).
+_LOADER_SHARD_WINDOW: ContextVar = ContextVar("pwb_loader_shard_window", default=None)
+
+
+def _loader_window(window):
+    """``window``, or else the shard-picking window ``get_pricing`` set."""
+    if window is not None:
+        return window
+    picked = _LOADER_SHARD_WINDOW.get()
+    if picked is not None:
+        _LOADER_SHARD_WINDOW.set(None)
+    return picked
+
+
+def _row_window(window):
+    """The window the rows are filtered on: none for a shard-picking one."""
+    return window if window is not None and window.rows else None
+
+
 def _empty_frame(columns=None) -> pd.DataFrame:
     keys = ["symbol"]
     return pd.DataFrame(columns=keys + [c for c in (columns or []) if c not in keys])
 
 
+# --------------------------------------------------------------------------- #
+# Subscriber API: a disk cache and parallel downloads                         #
+# --------------------------------------------------------------------------- #
+# Until 0.1.49 every ``load_dataset`` call through the API downloaded every
+# shard again, one after the other: measured on 12 Nov 2026, 7 ETFs = 587 files,
+# 328 MB, ~200 s at every call; 2 symbols of ``Stocks-Daily-Price`` = 779 files,
+# 869 MB, 454 s. The Hub path, cached, reads the same 7 ETFs in 3.5 s.
+#
+# What the API tells about a file's version: its file list carries none, and a
+# file answer carries an ``ETag`` (a content hash) -- one round trip per file,
+# 0.4-0.7 s, as long as downloading a small shard. The datasets themselves are
+# public (gated) on the Hub, whose metadata endpoint gives, in one anonymous
+# request per dataset, the current commit and each file's size and SHA-256; and
+# the API serves a file list pinned to a commit (``revision=<sha>``). So:
+#
+# * the file list is asked for at the Hub's current commit, and a file found in
+#   the Hub's metadata is cached under its SHA-256 -- a content address: a new
+#   commit that leaves a month untouched leaves its cached copy valid, and a
+#   cached file is served without asking anything;
+# * a file the metadata does not describe (a private dataset, the converted
+#   index of a dataset stored as a single file, the Hub unreachable) is cached
+#   under its dataset, path, ETag and size, read with a one-byte range request;
+# * a file whose version cannot be told is downloaded and not cached.
+#
+# A download goes to a temporary file, is checked against the expected size
+# (and SHA-256 when known), and only then renamed into place: a partial or
+# corrupt file is never served. A cached file whose size differs from what is
+# expected is downloaded again. Downloads run ``PWB_API_WORKERS`` at a time (4;
+# eight drew 429s from the Hub behind the API, see ``_http_download``).
+# The cache lives in ``$PWB_CACHE_DIR/api`` (``~/.cache/pwb_toolbox/api`` by
+# default, ``$XDG_CACHE_HOME`` honoured), is capped at ``PWB_API_CACHE_MAX_GB``
+# (10) with the least recently used files evicted first, and ``PWB_API_CACHE=0``
+# turns it off.
+#
+# A symbol filter cannot cut the download: every published shard is a single
+# row group holding every symbol of its period (checked on Stocks-Daily-Price
+# and ETFs-Daily-Price), so there is no byte range to skip. Dates do: shards are
+# named after their month and only the months of the window are fetched.
+_API_BASE_URL = "https://data.paperswithbacktest.com/v1/datasets"
+_API_WORKERS_DEFAULT = 4
+_API_CACHE_MAX_GB_DEFAULT = 10.0
+_API_INDEXES: dict = {}
+
+
+def _api_cache_root():
+    """The cache directory, or ``None`` when ``PWB_API_CACHE=0``."""
+    if os.getenv("PWB_API_CACHE", "1").strip() == "0":
+        return None
+    root = os.getenv("PWB_CACHE_DIR")
+    if not root:
+        base = os.getenv("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+        root = os.path.join(base, "pwb_toolbox")
+    return os.path.join(root, "api")
+
+
+def _env_number(name, default, cast=float):
+    try:
+        return cast(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return cast(default)
+
+
+def _api_file_index(dataset_name: str):
+    """``(commit, {path: (size, sha256)})`` of the dataset on the Hub, or ``None``.
+
+    One anonymous metadata request per dataset and per process (the published
+    datasets are public, gated: their metadata needs no account). ``None`` when
+    the Hub is not consulted (``PWB_HF_OFFLINE``, ``HF_HUB_OFFLINE``,
+    ``PWB_API_HUB_INDEX=0``) or does not answer.
+    """
+    if dataset_name in _API_INDEXES:
+        return _API_INDEXES[dataset_name]
+    out = None
+    offline = (
+        os.getenv("PWB_HF_OFFLINE", "0") != "0"
+        or os.getenv("HF_HUB_OFFLINE", "0") not in ("", "0")
+        or os.getenv("PWB_API_HUB_INDEX", "1").strip() == "0"
+    )
+    if not offline:
+        try:
+            info = HfApi(token=os.getenv("HF_ACCESS_TOKEN") or False).dataset_info(
+                f"paperswithbacktest/{dataset_name}", files_metadata=True, timeout=30
+            )
+            files = {}
+            for sibling in info.siblings or []:
+                lfs = sibling.lfs
+                sha = None
+                if lfs is not None:
+                    sha = lfs.get("sha256") if isinstance(lfs, dict) else getattr(lfs, "sha256", None)
+                if sha and sibling.size:
+                    files[sibling.rfilename] = (int(sibling.size), str(sha))
+            if info.sha and files:
+                out = (info.sha, files)
+        except Exception:  # noqa: BLE001 - the ETag route is the fallback
+            out = None
+    _API_INDEXES[dataset_name] = out
+    return out
+
+
+def _api_listing(dataset_name: str, split: str, pwb_api_key: str, revision=None) -> list:
+    params = {"pwb_api_key": pwb_api_key, "split": split}
+    if revision:
+        params["revision"] = revision
+    resp = requests.get(f"{_API_BASE_URL}/{dataset_name}", params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json().get("files", [])
+
+
+def _api_file_path(url: str, dataset_name: str):
+    """``(repository path, revision)`` of an API file URL; the path is ``None``
+    for a file of the Hub's converted index (``/parquet/...``)."""
+    parsed = urlparse(url)
+    prefix = f"/v1/datasets/{dataset_name}/"
+    path = parsed.path[len(prefix):] if parsed.path.startswith(prefix) else None
+    if path is not None and path.startswith("parquet/"):
+        path = None
+    revision = dict(parse_qsl(parsed.query)).get("revision")
+    return path, revision
+
+
+def _api_probe(url: str):
+    """``(etag, size)`` of a file, from a one-byte range request; ``None`` when
+    the answer does not carry both."""
+    for throttled in range(1, _HTTP_429_ATTEMPTS + 1):
+        _api_gate_wait()
+        try:
+            resp = requests.get(url, headers={"Range": "bytes=0-0"}, timeout=_HTTP_TIMEOUT_SECONDS)
+        except requests.exceptions.RequestException:
+            return None
+        if resp.status_code != 429:
+            break
+        resp.close()
+        _api_gate_close(resp, throttled)
+    else:
+        return None
+    try:
+        etag = resp.headers.get("ETag") or resp.headers.get("etag")
+        if resp.status_code == 206:
+            total = (resp.headers.get("Content-Range") or "").rsplit("/", 1)[-1]
+        elif resp.status_code == 200:
+            total = resp.headers.get("Content-Length")
+        else:
+            return None
+        if not etag or not str(total).isdigit():
+            return None
+        return etag.strip().strip('"'), int(total)
+    finally:
+        resp.close()
+
+
+# Too many requests: the API answers 429 when the Hub behind it throttles its
+# token, which every subscriber shares. Measured on 12 Nov 2026: eight parallel
+# downloads, right after ~3 400 other file requests on the same token, drew 429s
+# within the minute, and four retries 2-8 s apart were not enough to see the
+# window reopen. So a 429 pauses every download of the process (the gate below),
+# for the ``Retry-After`` the answer gives or 30 s doubling up to 5 min, and is
+# retried up to ``_HTTP_429_ATTEMPTS`` times; other failures keep the policy of
+# ``_http_get``.
+_HTTP_429_ATTEMPTS = 8
+_HTTP_429_WAIT_SECONDS = 30.0
+_HTTP_429_MAX_WAIT_SECONDS = 300.0
+_API_GATE = {"until": 0.0}
+_API_GATE_LOCK = threading.Lock()
+
+
+def _api_gate_wait() -> None:
+    while True:
+        with _API_GATE_LOCK:
+            delay = _API_GATE["until"] - time.monotonic()
+        if delay <= 0:
+            return
+        time.sleep(min(delay, 5.0))
+
+
+def _api_gate_close(resp, throttled: int) -> None:
+    wait = None
+    header = (resp.headers.get("Retry-After") if resp is not None else None) or ""
+    if header.strip().isdigit():
+        wait = float(header.strip())
+    if wait is None:
+        wait = _HTTP_429_WAIT_SECONDS * 2 ** (throttled - 1)
+    wait = min(wait, _HTTP_429_MAX_WAIT_SECONDS)
+    with _API_GATE_LOCK:
+        _API_GATE["until"] = max(_API_GATE["until"], time.monotonic() + wait)
+
+
+def _redact_key(text: str) -> str:
+    return re.sub(r"(pwb_api_key=)[^&\s]+", r"\1***", str(text))
+
+
+def _http_download(url: str, fh) -> tuple[int, str]:
+    """Stream ``url`` into the open file ``fh``: ``(bytes, sha256)``.
+
+    The retry policy of ``_http_get``, except for a 429 (see above); a retry
+    starts the file over. An error never carries the API key.
+    """
+    import hashlib
+
+    last_exc = None
+    failures = throttled = 0
+    while True:
+        _api_gate_wait()
+        fh.seek(0)
+        fh.truncate()
+        digest = hashlib.sha256()
+        size = 0
+        resp = None
+        try:
+            with requests.get(url, stream=True, timeout=_HTTP_TIMEOUT_SECONDS) as resp:
+                resp.raise_for_status()
+                for chunk in resp.iter_content(chunk_size=1 << 20):
+                    if chunk:
+                        fh.write(chunk)
+                        digest.update(chunk)
+                        size += len(chunk)
+            return size, digest.hexdigest()
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status == 429:
+                throttled += 1
+                last_exc = exc
+                if throttled >= _HTTP_429_ATTEMPTS:
+                    break
+                _api_gate_close(exc.response, throttled)
+                continue
+            if status is not None and status < 500:
+                raise requests.exceptions.HTTPError(_redact_key(exc), response=exc.response) from None
+            last_exc = exc
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+        failures += 1
+        if failures >= _HTTP_ATTEMPTS:
+            break
+        time.sleep(_HTTP_BACKOFF_SECONDS * 2 ** (failures - 1))
+    raise type(last_exc)(_redact_key(last_exc)) from None
+
+
+class _CorruptDownload(IOError):
+    pass
+
+
+def _api_fetch(url: str, root, cache_name, expect):
+    """One file: a cached path, or a fresh download (``(source, was_cached)``).
+
+    ``cache_name`` is the file's name in the cache (``None``: not cacheable);
+    ``expect`` is ``(size, sha256 or None)``.
+    """
+    if root is None or cache_name is None:
+        return BytesIO(_http_get(url)), False
+    final = os.path.join(root, "blobs", cache_name)
+    size, sha = expect
+    try:
+        if os.path.getsize(final) == size:
+            os.utime(final, None)  # least recently used goes first
+            return final, True
+    except OSError:
+        pass
+    tmpdir = os.path.join(root, "tmp")
+    os.makedirs(tmpdir, exist_ok=True)
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix="dl-", suffix=".part", dir=tmpdir)
+    try:
+        with os.fdopen(fd, "w+b") as fh:
+            got, digest = _http_download(url, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if got != size or (sha is not None and digest != sha):
+            raise _CorruptDownload(
+                f"{cache_name}: got {got} bytes"
+                + (f", sha256 {digest[:12]}" if sha is not None else "")
+                + f"; expected {size}" + (f", sha256 {sha[:12]}" if sha is not None else "")
+            )
+        os.replace(tmp, final)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return final, False
+
+
+def _api_cache_evict(root, keep) -> None:
+    """Delete the least recently used files until the cache fits its cap,
+    never one of ``keep``; and temporary files a dead process left behind."""
+    cap = _env_number("PWB_API_CACHE_MAX_GB", _API_CACHE_MAX_GB_DEFAULT) * 1024**3
+    blobs = os.path.join(root, "blobs")
+    entries = []
+    try:
+        with os.scandir(blobs) as it:
+            for entry in it:
+                try:
+                    st = entry.stat()
+                except OSError:
+                    continue
+                entries.append((st.st_mtime, st.st_size, entry.path))
+    except OSError:
+        return
+    total = sum(e[1] for e in entries)
+    keep = {os.path.abspath(k) for k in keep}
+    for _mtime, size, path in sorted(entries):
+        if total <= cap:
+            break
+        if os.path.abspath(path) in keep:
+            continue
+        try:
+            os.unlink(path)
+            total -= size
+        except OSError:
+            pass
+    tmpdir = os.path.join(root, "tmp")
+    cutoff = time.time() - 24 * 3600
+    try:
+        with os.scandir(tmpdir) as it:
+            for entry in it:
+                try:
+                    if entry.stat().st_mtime < cutoff:
+                        os.unlink(entry.path)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def _api_fetch_all(dataset_name: str, urls: list, index, root) -> list:
+    """Every file of ``urls``, in order: cached paths or in-memory downloads."""
+    import hashlib
+    from concurrent.futures import ThreadPoolExecutor
+
+    plans = []
+    for url in urls:
+        path, revision = _api_file_path(url, dataset_name)
+        meta = None
+        if index is not None and path is not None and revision == index[0]:
+            meta = index[1].get(path)
+        if meta is not None:
+            plans.append((url, f"sha256-{meta[1]}.parquet", meta))
+        else:
+            plans.append((url, None, None))
+
+    def run(plan):
+        # A download that does not match what was expected is tried once more
+        # (re-probed: an unpinned file may have changed in between), then fails.
+        for attempt in (1, 2):
+            url, name, expect = plan
+            if root is not None and name is None:
+                probe = _api_probe(url)
+                if probe is not None:
+                    etag, size = probe
+                    where = path_of(url)
+                    key = hashlib.sha256(f"{dataset_name}\n{where}\n{etag}\n{size}".encode()).hexdigest()
+                    name, expect = f"etag-{key}.parquet", (size, None)
+            try:
+                return _api_fetch(url, root, name, expect)
+            except _CorruptDownload:
+                if attempt == 2:
+                    raise
+
+    def path_of(url):
+        path, _ = _api_file_path(url, dataset_name)
+        return path if path is not None else urlparse(url).path
+
+    workers = max(1, min(int(_env_number("PWB_API_WORKERS", _API_WORKERS_DEFAULT, int)), len(plans)))
+    results = [None] * len(plans)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(run, plan): i for i, plan in enumerate(plans)}
+        done = tqdm(total=len(plans), desc=f"PWB {dataset_name}", unit="file", disable=len(plans) < 2)
+        try:
+            from concurrent.futures import as_completed
+
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
+                done.update(1)
+        except BaseException:
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        finally:
+            done.close()
+    cached = sum(1 for _, was_cached in results if was_cached)
+    stored = [src for src, _ in results if isinstance(src, str)]
+    print(f"PWB {dataset_name}: {len(plans)} files, {cached} from the local cache, "
+          f"{len(plans) - cached} downloaded")
+    if root is not None and stored:
+        _api_cache_evict(root, stored)
+    return [src for src, _ in results]
+
+
 def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str, symbols=None,
                            columns=None, window=None) -> pd.DataFrame:
-    base_url = "https://data.paperswithbacktest.com/v1/datasets"
-    resp = requests.get(f"{base_url}/{dataset_name}", params={"pwb_api_key": pwb_api_key, "split": split}, timeout=30)
-    resp.raise_for_status()
-    files = resp.json().get("files", [])
+    root = _api_cache_root()
+    index = _api_file_index(dataset_name) if root is not None else None
+    files = None
+    if index is not None:
+        try:
+            files = _api_listing(dataset_name, split, pwb_api_key, revision=index[0])
+        except Exception:  # noqa: BLE001 - an API that does not pin: plain list
+            files, index = None, None
+    if files is None:
+        files = _api_listing(dataset_name, split, pwb_api_key)
     if not files:
         raise ValueError(f"No files available for dataset '{dataset_name}' and split '{split}'")
 
+    window = _loader_window(window)
     files = _shards_in_window(files, window, dataset_name)
     if not files:
         return _empty_frame(columns)
-    print(f"Downloading {len(files)} parquet files from PWB...")
-    return _read_parquet_files(files, desc=f"PWB {dataset_name}", symbols=symbols,
-                               columns=columns, window=window)
+    sources = _api_fetch_all(dataset_name, files, index, root)
+    return _read_parquet_files(sources, desc=f"Load {dataset_name}", symbols=symbols,
+                               columns=columns, window=_row_window(window))
 
 
 def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]:
@@ -436,6 +1059,7 @@ def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=
         raise ValueError(f"No parquet files found for split '{split}' in dataset '{repo_id}'.")
     # Only the shards of the window are downloaded: a month of 1-minute stock
     # bars is ~350 MB, the whole table ~75 GB.
+    window = _loader_window(window)
     parquet_files = _shards_in_window(parquet_files, window, dataset_name)
     if not parquet_files:
         return _empty_frame(columns)
@@ -452,7 +1076,7 @@ def _load_dataset_from_hf(dataset_name: str, split: str, hf_token: str, symbols=
         for file_name in iterator
     ]
     return _read_parquet_files(local_files, desc=f"Load {dataset_name}", symbols=symbols,
-                               columns=columns, window=window)
+                               columns=columns, window=_row_window(window))
 
 DAILY_PRICE_DATASETS = [
     "Bonds-Daily-Price",
@@ -1334,6 +1958,13 @@ def load_dataset(
         columns = [columns]
     if columns is not None:
         columns = list(columns)
+    # The shards ``get_pricing`` picked for this read, if it is one of its
+    # own (see ``_pricing_shard_window``). Consumed here, so that a load made
+    # from inside this one -- the forex table behind ``to_usd``, the proxies
+    # behind ``extend`` -- reads every shard as before.
+    shard_window = _SHARD_WINDOW.get()
+    if shard_window is not None:
+        _SHARD_WINDOW.set(None)
     window = _Window(start, end) if start is not None or end is not None else None
     if window is None and is_minute_dataset(path):
         _warn_unbounded_minute(str(path).strip().rsplit("/", 1)[-1], symbols)
@@ -1348,6 +1979,7 @@ def load_dataset(
         bounds["columns"] = read_columns
     if window is not None:
         bounds["window"] = window
+        shard_window = None
 
     # Resolve the symbol filter up front (on a copy, so the caller's list is
     # never mutated) so it can be pushed down to the per-shard parquet reads
@@ -1368,13 +2000,20 @@ def load_dataset(
     if path == FOREX_DAILY_DATASET:
         read_filter = _forex_widen_filter(symbol_filter)
 
-    if pwb_api_key and not use_hf:
-        df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=read_filter, **bounds)
-    else:
-        hf_token = os.getenv("HF_ACCESS_TOKEN")
-        if not hf_token:
-            raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
-        df = _load_dataset_from_hf(path, split=split, hf_token=hf_token, symbols=read_filter, **bounds)
+    # The shard window reaches the loader through a context variable rather
+    # than an argument, for the same reason as ``bounds``; a loader that
+    # ignores it reads every shard, and ``get_pricing`` cuts the dates anyway.
+    loader_token = _LOADER_SHARD_WINDOW.set(shard_window)
+    try:
+        if pwb_api_key and not use_hf:
+            df = _load_dataset_from_pwb(path, split=split, pwb_api_key=pwb_api_key, symbols=read_filter, **bounds)
+        else:
+            hf_token = os.getenv("HF_ACCESS_TOKEN")
+            if not hf_token:
+                raise ValueError("Set PWB_API_KEY or HF_ACCESS_TOKEN to load datasets.")
+            df = _load_dataset_from_hf(path, split=split, hf_token=hf_token, symbols=read_filter, **bounds)
+    finally:
+        _LOADER_SHARD_WINDOW.reset(loader_token)
 
     if "date" in df.columns:
         df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -1620,9 +2259,9 @@ def __convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) 
     return df
 
 
-def __extend_etfs(df_etfs):
-
-    mapping = {
+#: ``{ETF: [dataset, proxy]}``: the history ``extend=True`` splices in front of
+#: an ETF, scaled to its first common close (see ``__extend_etfs``).
+_ETF_PROXIES = {
         "AGG": ["Bonds-Daily-Price", "US10Y"],
         "EPP": ["Indices-Daily-Price", "HSI"],
         "EWA": ["Indices-Daily-Price", "AS30"],  # Australia
@@ -1656,7 +2295,12 @@ def __extend_etfs(df_etfs):
         "SPY": ["Indices-Daily-Price", "SPX"],
         "THD": ["Indices-Daily-Price", "SET50"],  # Thailand
         "USO": ["Commodities-Daily-Price", "CL1"],
-    }
+}
+
+
+def __extend_etfs(df_etfs):
+
+    mapping = _ETF_PROXIES
     symbols = df_etfs.symbol.unique()
     mapping = {k: v for k, v in mapping.items() if k in symbols}
 
@@ -2025,6 +2669,57 @@ def _loaded_routes(grouped: dict, loaded: dict, resolved: set) -> dict:
     return routes
 
 
+# --------------------------------------------------------------------------- #
+# Shards ``get_pricing`` reads                                                #
+# --------------------------------------------------------------------------- #
+# ``get_pricing`` slices its panel to ``[start_date, end_date]`` and, until
+# 0.1.50, read every shard to do it: the 779 monthly shards of
+# ``Stocks-Daily-Price`` back to 1962 for a backtest starting in 1998 (456 of
+# them before 2000), and the 587 of ``ETFs-Daily-Price`` back to 1978. It now
+# reads only the shards whose month can hold a row of the window (one day of
+# slack each side, as ``_Window.overlaps``), and keeps every row of those
+# shards: the dates are still cut by the ``df.loc[start_date:end_date]`` below,
+# so the rows that reach the panel are the ones they always were.
+#
+# Only where nothing before the cut reads the dates outside the window:
+#
+# * the two repositories stored as monthly shards (the others are one file);
+# * not for a ticker both feeds carry (``_arbitrate_collisions`` compares the
+#   two whole series) or a reused ticker (``_resolve_reused_tickers`` prints
+#   each instrument's first and last date);
+# * not for ``ETFs-Daily-Price`` with ``extend=True`` when a requested ETF has
+#   a proxy: ``__extend_etfs`` scales the proxy at the ETF's first close.
+#
+# The forex table is a single file and its direction rule reads whole series;
+# it is read in full, as are the loads made from inside ``load_dataset``.
+_SHARD_WINDOW: ContextVar = ContextVar("pwb_shard_window", default=None)
+_PRUNABLE_REPOS = ("Stocks-Daily-Price", "ETFs-Daily-Price")
+
+
+def _pricing_shard_window(repo_id, names, extend, contested, reused_names, start_date, end_date):
+    """The shard-picking window for one of ``get_pricing``'s loads, or ``None``."""
+    if repo_id not in _PRUNABLE_REPOS or (start_date is None and end_date is None):
+        return None
+    if any(name in contested or name in reused_names for name in names):
+        return None
+    if repo_id == "ETFs-Daily-Price" and extend and any(name in _ETF_PROXIES for name in names):
+        return None
+    try:
+        return _Window(start_date, end_date, rows=False)
+    except ValueError:
+        return None
+
+
+def _load_for_pricing(repo_id, names, extend, shard_window):
+    if shard_window is None:
+        return load_dataset(repo_id, names, extend=extend)
+    token = _SHARD_WINDOW.set(shard_window)
+    try:
+        return load_dataset(repo_id, names, extend=extend)
+    finally:
+        _SHARD_WINDOW.reset(token)
+
+
 def get_pricing(
     symbol_list,
     fields=None,  # ← default set below
@@ -2175,11 +2870,26 @@ def get_pricing(
             unmapped.append(sym)
 
     loaded = {}
+    pruned = []
+    reused_names = {name for names in reused.values() for name in names}
     for repo_id, syms in grouped.items():
         ext_flag = extend if repo_id != "Indices-Daily-Price" else False
-        df_part = load_dataset(repo_id, list(dict.fromkeys(syms)), extend=ext_flag)
+        names = list(dict.fromkeys(syms))
+        shard_window = _pricing_shard_window(
+            repo_id, names, ext_flag, contested, reused_names, start_date, end_date
+        )
+        df_part = _load_for_pricing(repo_id, names, ext_flag, shard_window)
+        if shard_window is not None:
+            pruned.append((repo_id, names, ext_flag))
         if not df_part.empty:
             loaded[repo_id] = df_part
+    if pruned and not loaded:
+        # Nothing in the window anywhere: read everything, as before, so the
+        # panel comes out the way it always did for an empty window.
+        for repo_id, names, ext_flag in pruned:
+            df_part = load_dataset(repo_id, names, extend=ext_flag)
+            if not df_part.empty:
+                loaded[repo_id] = df_part
     loaded = _arbitrate_collisions(loaded, contested, start_date, end_date)
     loaded = _resolve_reused_tickers(loaded, reused, start_date, end_date)
     routes = _loaded_routes(grouped, loaded, contested | set(reused))

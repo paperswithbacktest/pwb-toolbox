@@ -59,7 +59,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from ..datasets import get_pricing
+from ..datasets import get_pricing, superset_reads
 from ..engine import load as _load_engine
 
 bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
@@ -401,15 +401,25 @@ def get_cost_breakdown(symbols, start_date="2020-01-01", year=None) -> dict:
 
 
 def _roll_for(symbols, start_date) -> dict:
-    """Estimate from daily closes, for the symbols the dataset does not cover."""
+    """Estimate from daily closes, for the symbols the dataset does not cover.
+
+    The prices are usually in memory already: ``run_strategy`` loaded them a
+    moment ago with the same window, under a larger symbol set (the 249
+    renamed tickers of a ``sp500`` universe are among its ~2 100 names).
+    ``superset_reads`` lets this load take its rows from those shards instead
+    of reading the 779 files a second time (4 s, measured on 0.1.49). The
+    rows are the ones a fresh read gives; only the closes are used here, so
+    an integer column changing dtype cannot reach the estimate.
+    """
     out: dict[str, Cost] = {}
     try:
-        df = get_pricing(
-            symbol_list=list(symbols),
-            fields=["open", "high", "low", "close"],
-            start_date=start_date,
-            extend=True,
-        )
+        with superset_reads():
+            df = get_pricing(
+                symbol_list=list(symbols),
+                fields=["open", "high", "low", "close"],
+                start_date=start_date,
+                extend=True,
+            )
     except Exception as exc:  # noqa: BLE001
         print(f"[costs] pricing unavailable for the Roll fallback ({exc})")
         return out

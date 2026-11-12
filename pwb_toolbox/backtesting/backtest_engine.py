@@ -282,7 +282,43 @@ def _era_cuts(closes: pd.DataFrame, gap_years: int) -> dict:
     A hole is ``gap_years`` full calendar years with no bar, bars on both
     sides. Only symbols with at least one hole are returned, cut at the last
     one.
+
+    One pass over the whole panel instead of one per column (8.8 s on a
+    2 136-name ``sp500`` panel of 6 022 bars, measured on 0.1.49). A gap counts
+    as a hole when ``gap.days >= 365 * gap_years + 1``; ``Timedelta.days`` is
+    the floor of the gap in days, so for a non-negative gap that is the same
+    as ``gap >= that many days``, compared here in nanoseconds.
     """
+    cuts = {}
+    if closes.shape[1] == 0 or len(closes.index) < 2:
+        return cuts
+    if not isinstance(closes.index, pd.DatetimeIndex) or closes.index.hasnans:
+        return _era_cuts_by_column(closes, gap_years)
+    # Nanoseconds whatever the index's resolution; UTC instants if it has a zone.
+    stamps = closes.index.values.astype("datetime64[ns]").view("i8")
+    threshold = (365 * gap_years + 1) * 86_400 * 10**9
+    rows = np.arange(len(stamps))
+    columns = list(closes.columns)
+    # Column blocks keep the temporaries to a few tens of MB on a wide panel.
+    for lo in range(0, len(columns), 256):
+        block = closes.iloc[:, lo:lo + 256].notna().to_numpy()
+        # Row of the previous bar of the same column, -1 before the first.
+        last = np.where(block, rows[:, None], -1)
+        last = np.maximum.accumulate(last, axis=0)
+        prev = np.vstack([np.full((1, block.shape[1]), -1), last[:-1]])
+        valid_prev = block & (prev >= 0)
+        gap = np.where(valid_prev, stamps[:, None] - stamps[np.maximum(prev, 0)], 0)
+        hole = valid_prev & (gap >= threshold)
+        counts = hole.sum(axis=0)
+        for j in np.flatnonzero(counts):
+            last_hole = len(rows) - 1 - int(np.argmax(hole[::-1, j]))
+            first = int(np.argmax(block[:, j]))
+            cuts[columns[lo + j]] = (closes.index[last_hole], closes.index[first], int(counts[j]))
+    return cuts
+
+
+def _era_cuts_by_column(closes: pd.DataFrame, gap_years: int) -> dict:
+    """The per-column definition, for an index the vector pass does not take."""
     cuts = {}
     for symbol in closes.columns:
         dates = closes.index[closes[symbol].notna()]
@@ -314,14 +350,32 @@ class FillAudit(bt.Analyzer):
 
     def start(self):
         self.held = {}
+        self._years_of = {}
 
     def next(self):
+        # One date conversion per distinct bar stamp, not one per feed: every
+        # feed of a run_strategy panel shares the calendar, and on a 2 136-name
+        # ``sp500`` run the per-feed ``num2date`` was ~10.6 M calls, 15-19 s
+        # (measured on 0.1.49). The key is what ``date(0)`` reads -- the raw
+        # stamp and the line's time zone -- so the year is the one it returns.
         inactive = self.p.inactive or {}
+        years_of = self._years_of
         for data in self.datas:
             years = inactive.get(data._name)
             if not years:
                 continue
-            year = data.datetime.date(0).year
+            line = data.datetime
+            try:
+                key = (line[0], getattr(line, "_tz", None))
+                year = years_of.get(key)
+            except TypeError:  # an unhashable time zone: no cache for it
+                key, year = None, None
+            if year is None:
+                year = line.date(0).year
+                if key is not None:
+                    if len(years_of) > 4096:
+                        years_of.clear()
+                    years_of[key] = year
             if year not in years:
                 continue
             if self.strategy.getposition(data).size:

@@ -1,4 +1,11 @@
-"""The array-backed feed must give the same backtest as backtrader's PandasData."""
+"""The array-backed feed must give the same backtest as backtrader's PandasData,
+and must be the feed ``run_strategy`` actually builds on backtrader.
+
+0.1.42 to 0.1.49 shipped the class switched off: the engine test read an
+instance attribute off the class, so ``ArrayPandasData`` was
+``bt.feeds.PandasData`` and every backtest ran on the slow feed. The two
+``RunStrategyFeedTest`` cases fail on that code.
+"""
 
 import unittest
 
@@ -6,7 +13,11 @@ import numpy as np
 import pandas as pd
 
 from pwb_toolbox import engine
+from pwb_toolbox.backtesting import BaseStrategy
+from pwb_toolbox.backtesting import backtest_engine as be
 from pwb_toolbox.backtesting.feeds import ArrayPandasData
+
+from _synthetic import offline, panel
 
 bt = engine.load()
 
@@ -72,6 +83,46 @@ class ArrayFeedTest(unittest.TestCase):
         with_observers = _run(ArrayPandasData, frames)
         without = _run(ArrayPandasData, frames, stdstats=False)
         np.testing.assert_allclose(with_observers.values, without.values, rtol=0, atol=1e-9)
+
+
+class _RecordFeeds(BaseStrategy):
+    params = (("indicator_cls", None), ("indicator_kwargs", {}))
+
+    def __init__(self):
+        super().__init__()
+        self.pbar.disable = True
+        self.feed_types = [type(data) for data in self.datas]
+
+    def next(self):
+        pass
+
+
+@unittest.skipUnless(engine.is_backtrader(), "the array feed only exists on backtrader")
+class RunStrategyFeedTest(unittest.TestCase):
+    def test_array_feed_is_switched_on_under_backtrader(self):
+        self.assertIsNot(ArrayPandasData, bt.feeds.PandasData)
+        self.assertTrue(issubclass(ArrayPandasData, bt.feeds.PandasData))
+        self.assertIsNot(ArrayPandasData._load, bt.feeds.PandasData._load)
+
+    def test_run_strategy_builds_its_feeds_from_arrays(self):
+        rng = np.random.default_rng(3)
+        closes = {s: 50 * np.exp(np.cumsum(rng.normal(0, 0.01, 60))) for s in ("A", "B")}
+        with offline(panel(closes)):
+            strategy = be.run_strategy(
+                indicator_cls=None,
+                indicator_kwargs={},
+                strategy_cls=_RecordFeeds,
+                strategy_kwargs={},
+                symbols=["A", "B"],
+                start_date="2020-01-01",
+                cash=100_000.0,
+                broker_kwargs={"commission": 0.0},
+            )
+        self.assertEqual(len(strategy.feed_types), 2)
+        for feed_type in strategy.feed_types:
+            self.assertTrue(issubclass(feed_type, ArrayPandasData))
+            self.assertIs(feed_type._load, ArrayPandasData._load)
+            self.assertIsNot(feed_type._load, bt.feeds.PandasData._load)
 
 
 if __name__ == "__main__":
