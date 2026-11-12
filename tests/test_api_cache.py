@@ -290,3 +290,46 @@ class ApiHelpersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThrottleTest(unittest.TestCase):
+    """A 429 pauses every download of the process and is retried; an error never
+    carries the API key."""
+
+    def _response(self, status, body=b"x", headers=None):
+        resp = mock.MagicMock(status_code=status, headers=headers or {})
+        resp.__enter__.return_value = resp
+        if status >= 400:
+            err = ds.requests.exceptions.HTTPError(
+                f"{status} Client Error for url: https://h/x?pwb_api_key=SECRET123&a=1", response=resp)
+            resp.raise_for_status.side_effect = err
+        else:
+            resp.iter_content.return_value = [body]
+        return resp
+
+    def setUp(self):
+        ds._API_GATE["until"] = 0.0
+
+    def test_429_waits_at_the_gate_then_succeeds(self):
+        answers = [self._response(429, headers={"Retry-After": "0"}), self._response(429), self._response(200, b"abc")]
+        with mock.patch.object(ds.requests, "get", side_effect=answers), \
+             mock.patch.object(ds, "_HTTP_429_WAIT_SECONDS", 0.01), \
+             mock.patch.object(ds.time, "sleep"):
+            buf = io.BytesIO()
+            size, digest = ds._http_download("https://h/x?pwb_api_key=SECRET123", buf)
+        self.assertEqual((size, buf.getvalue()), (3, b"abc"))
+        self.assertEqual(digest, hashlib.sha256(b"abc").hexdigest())
+
+    def test_errors_are_redacted(self):
+        with mock.patch.object(ds.requests, "get", return_value=self._response(403)):
+            with self.assertRaises(ds.requests.exceptions.HTTPError) as ctx:
+                ds._http_download("https://h/x?pwb_api_key=SECRET123", io.BytesIO())
+        self.assertNotIn("SECRET123", str(ctx.exception))
+        answers = [self._response(429) for _ in range(ds._HTTP_429_ATTEMPTS)]
+        with mock.patch.object(ds.requests, "get", side_effect=answers), \
+             mock.patch.object(ds, "_HTTP_429_WAIT_SECONDS", 0.0), \
+             mock.patch.object(ds.time, "sleep"):
+            with self.assertRaises(ds.requests.exceptions.HTTPError) as ctx:
+                ds._http_download("https://h/x?pwb_api_key=SECRET123", io.BytesIO())
+        self.assertNotIn("SECRET123", str(ctx.exception))
+        self.assertIn("429", str(ctx.exception))

@@ -16,7 +16,7 @@ pip install pwb-toolbox
 This package requires Python 3.10 or higher.
 
 To use PWB datasets, you can supply a Papers With Backtest API key via the `PWB_API_KEY` environment variable. When that is set,
-`load_dataset` will download parquet shards directly from the PWB API, eight at a time, into a local cache
+`load_dataset` will download parquet shards directly from the PWB API, four at a time, into a local cache
 (`~/.cache/pwb_toolbox/api`, or `$PWB_CACHE_DIR/api`; capped at `PWB_API_CACHE_MAX_GB`, 10 GB by default, least recently
 used files evicted first; `PWB_API_CACHE=0` turns it off). A file is kept under its content hash, so a second call, or a
 new version of a dataset that leaves a month unchanged, downloads nothing for it. If no API key is available, you can

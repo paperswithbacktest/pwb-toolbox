@@ -589,7 +589,8 @@ def _empty_frame(columns=None) -> pd.DataFrame:
 # A download goes to a temporary file, is checked against the expected size
 # (and SHA-256 when known), and only then renamed into place: a partial or
 # corrupt file is never served. A cached file whose size differs from what is
-# expected is downloaded again. Downloads run ``PWB_API_WORKERS`` at a time (8).
+# expected is downloaded again. Downloads run ``PWB_API_WORKERS`` at a time (4;
+# eight drew 429s from the Hub behind the API, see ``_http_download``).
 # The cache lives in ``$PWB_CACHE_DIR/api`` (``~/.cache/pwb_toolbox/api`` by
 # default, ``$XDG_CACHE_HOME`` honoured), is capped at ``PWB_API_CACHE_MAX_GB``
 # (10) with the least recently used files evicted first, and ``PWB_API_CACHE=0``
@@ -600,7 +601,7 @@ def _empty_frame(columns=None) -> pd.DataFrame:
 # and ETFs-Daily-Price), so there is no byte range to skip. Dates do: shards are
 # named after their month and only the months of the window are fetched.
 _API_BASE_URL = "https://data.paperswithbacktest.com/v1/datasets"
-_API_WORKERS_DEFAULT = 8
+_API_WORKERS_DEFAULT = 4
 _API_CACHE_MAX_GB_DEFAULT = 10.0
 _API_INDEXES: dict = {}
 
@@ -684,9 +685,17 @@ def _api_file_path(url: str, dataset_name: str):
 def _api_probe(url: str):
     """``(etag, size)`` of a file, from a one-byte range request; ``None`` when
     the answer does not carry both."""
-    try:
-        resp = requests.get(url, headers={"Range": "bytes=0-0"}, timeout=_HTTP_TIMEOUT_SECONDS)
-    except requests.exceptions.RequestException:
+    for throttled in range(1, _HTTP_429_ATTEMPTS + 1):
+        _api_gate_wait()
+        try:
+            resp = requests.get(url, headers={"Range": "bytes=0-0"}, timeout=_HTTP_TIMEOUT_SECONDS)
+        except requests.exceptions.RequestException:
+            return None
+        if resp.status_code != 429:
+            break
+        resp.close()
+        _api_gate_close(resp, throttled)
+    else:
         return None
     try:
         etag = resp.headers.get("ETag") or resp.headers.get("etag")
@@ -703,19 +712,63 @@ def _api_probe(url: str):
         resp.close()
 
 
+# Too many requests: the API answers 429 when the Hub behind it throttles its
+# token, which every subscriber shares. Measured on 12 Nov 2026: eight parallel
+# downloads, right after ~3 400 other file requests on the same token, drew 429s
+# within the minute, and four retries 2-8 s apart were not enough to see the
+# window reopen. So a 429 pauses every download of the process (the gate below),
+# for the ``Retry-After`` the answer gives or 30 s doubling up to 5 min, and is
+# retried up to ``_HTTP_429_ATTEMPTS`` times; other failures keep the policy of
+# ``_http_get``.
+_HTTP_429_ATTEMPTS = 8
+_HTTP_429_WAIT_SECONDS = 30.0
+_HTTP_429_MAX_WAIT_SECONDS = 300.0
+_API_GATE = {"until": 0.0}
+_API_GATE_LOCK = threading.Lock()
+
+
+def _api_gate_wait() -> None:
+    while True:
+        with _API_GATE_LOCK:
+            delay = _API_GATE["until"] - time.monotonic()
+        if delay <= 0:
+            return
+        time.sleep(min(delay, 5.0))
+
+
+def _api_gate_close(resp, throttled: int) -> None:
+    wait = None
+    header = (resp.headers.get("Retry-After") if resp is not None else None) or ""
+    if header.strip().isdigit():
+        wait = float(header.strip())
+    if wait is None:
+        wait = _HTTP_429_WAIT_SECONDS * 2 ** (throttled - 1)
+    wait = min(wait, _HTTP_429_MAX_WAIT_SECONDS)
+    with _API_GATE_LOCK:
+        _API_GATE["until"] = max(_API_GATE["until"], time.monotonic() + wait)
+
+
+def _redact_key(text: str) -> str:
+    return re.sub(r"(pwb_api_key=)[^&\s]+", r"\1***", str(text))
+
+
 def _http_download(url: str, fh) -> tuple[int, str]:
     """Stream ``url`` into the open file ``fh``: ``(bytes, sha256)``.
 
-    The retry policy of ``_http_get``; a retry starts the file over.
+    The retry policy of ``_http_get``, except for a 429 (see above); a retry
+    starts the file over. An error never carries the API key.
     """
     import hashlib
 
     last_exc = None
-    for attempt in range(_HTTP_ATTEMPTS):
+    failures = throttled = 0
+    while True:
+        _api_gate_wait()
         fh.seek(0)
         fh.truncate()
         digest = hashlib.sha256()
         size = 0
+        resp = None
         try:
             with requests.get(url, stream=True, timeout=_HTTP_TIMEOUT_SECONDS) as resp:
                 resp.raise_for_status()
@@ -727,14 +780,23 @@ def _http_download(url: str, fh) -> tuple[int, str]:
             return size, digest.hexdigest()
         except requests.exceptions.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else None
-            if status is not None and status != 429 and status < 500:
-                raise
+            if status == 429:
+                throttled += 1
+                last_exc = exc
+                if throttled >= _HTTP_429_ATTEMPTS:
+                    break
+                _api_gate_close(exc.response, throttled)
+                continue
+            if status is not None and status < 500:
+                raise requests.exceptions.HTTPError(_redact_key(exc), response=exc.response) from None
             last_exc = exc
         except requests.exceptions.RequestException as exc:
             last_exc = exc
-        if attempt < _HTTP_ATTEMPTS - 1:
-            time.sleep(_HTTP_BACKOFF_SECONDS * 2**attempt)
-    raise last_exc
+        failures += 1
+        if failures >= _HTTP_ATTEMPTS:
+            break
+        time.sleep(_HTTP_BACKOFF_SECONDS * 2 ** (failures - 1))
+    raise type(last_exc)(_redact_key(last_exc)) from None
 
 
 class _CorruptDownload(IOError):
