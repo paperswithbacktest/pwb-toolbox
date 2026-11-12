@@ -17,6 +17,15 @@ inherited unchanged.
 The speed-up exists for backtrader only. Tradewind's ``PandasData`` already
 reads its bars from arrays, and none of the internals patched below exist
 there, so on that engine ``ArrayPandasData`` *is* ``bt.feeds.PandasData``.
+
+Which engine is running is told by its module name, and by nothing else.
+From 0.1.42 to 0.1.49 the test was ``hasattr(bt.feeds.PandasData,
+"_colmapping")``; ``_colmapping`` is set on each feed in ``__init__``, never on
+the class, so the test was always false and every backtest ran on the plain
+``PandasData``. Measured on 0.1.49 (12 Nov 2026), restoring this class: the
+engine of a ``sp500`` point-in-time strategy 1 242 -> 300 s, the whole run
+x3.4 (fundamentals strategy x2.6, 7-ETF strategy x1.6), Sharpe and final NAV
+identical to the cent.
 """
 
 from __future__ import annotations
@@ -27,7 +36,7 @@ from ..engine import load as _load_engine
 
 bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
 
-if bt.__name__ != "backtrader" or not hasattr(bt.feeds.PandasData, "_colmapping"):
+if bt.__name__ != "backtrader":
     ArrayPandasData = bt.feeds.PandasData
 else:
     from backtrader.utils.date import date2num
