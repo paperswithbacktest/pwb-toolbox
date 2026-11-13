@@ -611,6 +611,52 @@ def _flatten_out_bars(pivot_df: pd.DataFrame, membership: "_Membership") -> None
         pivot_df[columns] = block
 
 
+def _session_days(index: pd.DatetimeIndex, sessions: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """The weekdays of the panel's span on which at least one symbol traded.
+
+    ``bdate_range`` alone made every weekday a bar, holidays included, and the
+    forward fill copied the last bar into them, its open with it. backtrader
+    fills an order at the open of the next bar, so an order sent at the close
+    of the session before a holiday (New Year's Eve, the eve of Thanksgiving,
+    any daily rebalance) filled at the open of the bar it was computed on: a
+    price older than the signal. A day without a single real bar in the panel
+    is not a session and is not a bar. Weekends stay out, as before, crypto
+    included.
+    """
+    days = pd.bdate_range(index.min(), index.max())
+    kept = days[days.isin(sessions)]
+    return kept if len(kept) else days
+
+
+def _flatten_filled_bars(pivot_df: pd.DataFrame, filled: pd.DataFrame) -> None:
+    """Make every forward-filled bar flat at the previous close, volume zero.
+
+    ``filled`` is the close mask (sessions x symbols) of the cells that had no
+    price before the forward fill. Those that remain after the session filter
+    are holes, or sessions of another market in a mixed panel (a US name on a
+    day only London traded). The fill copies the whole last bar, so an order
+    filled there traded at the open of the day before -- a price older than
+    the close the order was computed on. A flat bar at the last close is the
+    only price that existed. The leading gap before a first bar is the
+    back-fill's and is left to it.
+    """
+    names = list(filled.columns[filled.to_numpy(dtype=bool).any(axis=0)])
+    if not names:
+        return
+    close = pivot_df[[(s, "close") for s in names]].to_numpy(dtype=float)
+    mask = filled[names].to_numpy(dtype=bool) & ~np.isnan(close)
+    if not mask.any():
+        return
+    have = set(pivot_df.columns)
+    for field in ("open", "high", "low", "volume"):
+        columns = [(s, field) for s in names]
+        if any(c not in have for c in columns):
+            continue
+        block = pivot_df[columns].to_numpy(dtype=float, copy=True)
+        block[mask] = 0.0 if field == "volume" else close[mask]
+        pivot_df[columns] = block
+
+
 def _real_outside_prices(pivot_df: pd.DataFrame, membership: "_Membership") -> dict:
     """``{symbol: (open, close)}`` -- the real prices, holes forward-filled, of
     every name that has bars outside its universe, read before they are blanked."""
@@ -1363,6 +1409,11 @@ def run_strategy(
         if isinstance(pivot_df.columns, pd.MultiIndex)
         else pivot_df
     )
+    # The sessions: the dates on which at least one symbol of the panel has a
+    # real close, read before the era cut and the fills. A weekday on which
+    # nothing traded (a US holiday on a US panel) is not a bar; see
+    # ``_session_days``.
+    sessions = closes.index[closes.notna().any(axis=1).to_numpy()]
     if era_gap_years is None:
         era_gap_years = int(os.getenv("PWB_ERA_GAP_YEARS", ERA_GAP_YEARS))
     if era_gap_years:
@@ -1403,7 +1454,7 @@ def run_strategy(
             "PWB_REFUSE_BEFORE_LISTING", "1" if REFUSE_BEFORE_LISTING else "0"
         ) != "0"
     # Create trading-day index (optional but keeps Cerebro happy)
-    trading_days = pd.bdate_range(pivot_df.index.min(), pivot_df.index.max())
+    trading_days = _session_days(pivot_df.index, sessions)
     membership = _pit_membership(symbols, present, trading_days, cut=pit_exit != "hold")
     pivot_df = pivot_df.reindex(trading_days)
     real_prices = None
@@ -1423,7 +1474,17 @@ def run_strategy(
         if empty:
             pivot_df = pivot_df.drop(columns=empty, level=0)
             pivot_df.columns = pivot_df.columns.remove_unused_levels()
-    pivot_df.ffill(inplace=True)  # forward-fill holidays
+    # The cells the forward fill is about to make: a hole in a series, a
+    # session of another market (a US name on a London-only day), a bar
+    # outside a point-in-time universe.
+    filled = (
+        pivot_df.xs("close", axis=1, level=1).isna()
+        if isinstance(pivot_df.columns, pd.MultiIndex)
+        else None
+    )
+    pivot_df.ffill(inplace=True)  # forward-fill holes
+    if filled is not None:
+        _flatten_filled_bars(pivot_df, filled)
     pivot_df.bfill(inplace=True)  # back-fill leading IPO gaps
     all_years = set(trading_days.year)
     inactive = {
