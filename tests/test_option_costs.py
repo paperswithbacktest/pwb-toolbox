@@ -127,6 +127,20 @@ class OptionCostsTest(unittest.TestCase):
             self.assertEqual((cost.year, cost.source), (used, SOURCE_EXTRAPOLATED), year)
         self.assertEqual(model.resolve_year(2021), (2026, SOURCE_EXTRAPOLATED))  # tie: later
 
+    def test_a_year_estimated_from_trades_is_labelled_estimated(self):
+        est = _table(years=(2018,))
+        est["method"] = np.where(est["symbol"].str.startswith("tier_"), "trade_estimate",
+                                 "trade_estimate_tier_fallback")
+        model = oc.OptionsCostModel(pd.concat([est, _table(years=(2026,))]))
+        self.assertEqual(model.estimated_years, (2018,))
+        self.assertEqual(model.resolve_year(2018), (2018, oc.SOURCE_ESTIMATED))
+        self.assertEqual(model.resolve_year(2026), (2026, SOURCE_MEASURED))
+        self.assertEqual(model.resolve_year(None), (2026, SOURCE_MEASURED))
+        # A year missing from the table still takes the nearest one, extrapolated.
+        self.assertEqual(model.resolve_year(2012), (2018, SOURCE_EXTRAPOLATED))
+        cost = model.breakdown(1.5, 1.0, underlying="SPY", year=2018)
+        self.assertEqual((cost.source, cost.method), (oc.SOURCE_ESTIMATED, "trade_estimate_tier_fallback"))
+
     def test_a_tier_row_may_also_come_with_a_null_symbol(self):
         table = _table()
         table.loc[table["symbol"].str.startswith("tier_"), "symbol"] = None
