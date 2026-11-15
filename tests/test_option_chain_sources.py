@@ -21,8 +21,8 @@ from unittest import mock
 import pandas as pd
 import pyarrow.parquet as pq
 
-import pwb_toolbox.datasets as ds
-from pwb_toolbox.datasets import options as opt
+import pwb.datasets as ds
+from pwb.datasets import options as opt
 from test_option_chain import _month_table
 
 MONTHS = ("2024-01", "2024-02", "2024-03", "2024-04")

@@ -7,7 +7,7 @@ keeps that fallback offline; a test that needs one sets
 ``checks._INDEX_ROUTES`` itself.
 """
 
-import pwb_toolbox.backtesting.checks as _checks
+import pwb.backtesting.checks as _checks
 
 _checks._INDEX_ROUTES = {}
 

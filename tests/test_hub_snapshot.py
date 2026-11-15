@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-import pwb_toolbox.datasets as ds
+import pwb.datasets as ds
 
 
 def _fake_cache(root, repo_id, sha, files):

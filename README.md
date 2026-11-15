@@ -3,17 +3,22 @@
   <h1>Papers With Backtest Toolbox</h1>
 </div>
 
-The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms.
+The `paperswithbacktest` package (`import pwb`) is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms.
 
 
 ## Installation
 
-To install the pwb-toolbox package:
+To install the paperswithbacktest package:
 
 ```bash
-pip install pwb-toolbox
+pip install paperswithbacktest
 ```
 This package requires Python 3.10 or higher.
+
+**Formerly `pwb-toolbox`.** The package was renamed `paperswithbacktest` and its import
+`pwb_toolbox` became `pwb`. `pip install pwb-toolbox` still works: its last release installs
+this package and keeps `import pwb_toolbox` (every `pwb_toolbox.<module>` is the same module as
+`pwb.<module>`) with a `DeprecationWarning`. Replace `pwb_toolbox` with `pwb` in your imports.
 
 To use PWB datasets, you can supply a Papers With Backtest API key via the `PWB_API_KEY` environment variable. When that is set,
 `load_dataset` will download parquet shards directly from the PWB API, four at a time, into a local cache
@@ -28,14 +33,14 @@ huggingface-cli login
 
 ## Usage
 
-The `pwb-toolbox` package offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:
+The `paperswithbacktest` package (`import pwb`) offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:
 
 ### Datasets
 
-The `pwb_toolbox.datasets` module offers to load datasets for different asset classes, such as bonds, commodities, cryptocurrencies, ETFs, forex, indices, and stocks, using the `get_pricing` or the `load_dataset` functions:
+The `pwb.datasets` module offers to load datasets for different asset classes, such as bonds, commodities, cryptocurrencies, ETFs, forex, indices, and stocks, using the `get_pricing` or the `load_dataset` functions:
 
 ```python
-import pwb_toolbox.datasets as pwb_ds
+import pwb.datasets as pwb_ds
 
 df = pwb_ds.get_pricing(["AAPL", "MSFT", "GOOGL"])
 df = pwb_ds.load_dataset("Bonds-Daily-Price")
@@ -69,17 +74,17 @@ For more, see [docs/datasets.md](/docs/datasets.md).
 
 ### Backtesting
 
-The `pwb_toolbox.backtesting` module offers simple building blocks for running Backtrader simulations.
+The `pwb.backtesting` module offers simple building blocks for running Backtrader simulations.
 
-It runs on backtrader by default, or on [Tradewind](https://github.com/paperswithbacktest/tradewind), the Apache 2.0 engine with the same API (`pip install pwb-toolbox[tradewind]`). Choose once, before `pwb_toolbox.backtesting` is imported: `PWB_BACKTEST_ENGINE=tradewind` in the environment, or `pwb_toolbox.engine.select("tradewind")` in code. The engine that was not chosen is never imported, and `pwb_toolbox.backtesting.bt` is the one that was.
+It runs on backtrader by default, or on [Tradewind](https://github.com/paperswithbacktest/tradewind), the Apache 2.0 engine with the same API (`pip install paperswithbacktest[tradewind]`). Choose once, before `pwb.backtesting` is imported: `PWB_BACKTEST_ENGINE=tradewind` in the environment, or `pwb.engine.select("tradewind")` in code. The engine that was not chosen is never imported, and `pwb.backtesting.bt` is the one that was.
 
 Here is a strategy example:
 
 ```python
 import numpy as np
 import backtrader as bt
-import pwb_toolbox.backtesting as pwb_bt
-import pwb_toolbox.datasets as pwb_ds
+import pwb.backtesting as pwb_bt
+import pwb.datasets as pwb_ds
 
 
 # ────────────────────────────────────────────────────────────────
@@ -164,7 +169,7 @@ For more about backtesting, see [docs/backtesting.md](/docs/backtesting.md).
 
 ### Execution
 
-The execution helpers in `pwb_toolbox.execution` can connect to brokers to run
+The execution helpers in `pwb.execution` can connect to brokers to run
 strategies in real time.  A typical session collects account information,
 computes target positions and submits the necessary orders.
 
@@ -179,14 +184,14 @@ For more about execution, see [docs/execution.md](/docs/execution.md).
 ### Performance Analysis
 
 After running a live trading session, you can analyze the returned equity series using the
-`pwb_toolbox.performance` module.
+`pwb.performance` module.
 
 ```python
-from pwb_toolbox.backtesting.examples import GoldenCrossAlpha, EqualWeightPortfolio
-from pwb_toolbox.backtesting import run_backtest
-from pwb_toolbox.backtesting.execution_models import ImmediateExecutionModel
-from pwb_toolbox.performance import total_return, cagr
-from pwb_toolbox.performance.plots import plot_equity_curve
+from pwb.backtesting.examples import GoldenCrossAlpha, EqualWeightPortfolio
+from pwb.backtesting import run_backtest
+from pwb.backtesting.execution_models import ImmediateExecutionModel
+from pwb.performance import total_return, cagr
+from pwb.performance.plots import plot_equity_curve
 
 result, equity = run_backtest(
     ManualUniverseSelectionModel(["SPY", "QQQ"]),
@@ -251,7 +256,7 @@ sudo pkill -u ubuntu
 
 ## Contributing
 
-Contributions to the `pwb-toolbox` package are welcome! If you have any improvements, new datasets, or strategy ideas to share, please follow these guidelines:
+Contributions to the `paperswithbacktest` package are welcome! If you have any improvements, new datasets, or strategy ideas to share, please follow these guidelines:
 
 1. Fork the repository and create a new branch for your feature.
 2. Make your changes and ensure they adhere to the package's coding style.

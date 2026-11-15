@@ -8,8 +8,8 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-import pwb_toolbox.backtesting.option_costs as oc
-from pwb_toolbox.backtesting.commission import SOURCE_EXTRAPOLATED, SOURCE_MEASURED
+import pwb.backtesting.option_costs as oc
+from pwb.backtesting.commission import SOURCE_EXTRAPOLATED, SOURCE_MEASURED
 
 PRICE_LOWS = (0.0, 0.10, 0.50, 1.0, 2.0, 5.0, 10.0, 25.0)
 VOLUME_LOWS = (0.0, 1e3, 1e4, 1e5, 1e6)
@@ -177,7 +177,7 @@ class OptionCostsTest(unittest.TestCase):
                 oc.options_half_spread(0.3, 1.0, tier=1)
 
     def test_exported_from_the_backtesting_package(self):
-        from pwb_toolbox import backtesting
+        from pwb import backtesting
 
         for name in ("options_half_spread", "options_cost_breakdown", "option_volume_tier",
                      "load_options_cost_model", "OptionsCostModel", "OPTIONS_PARAMS_REPO"):

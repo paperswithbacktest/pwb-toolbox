@@ -15,11 +15,11 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-import pwb_toolbox.backtesting as pwb_bt
-import pwb_toolbox.backtesting.commission as cm
-import pwb_toolbox.datasets as pwb_ds
-import pwb_toolbox.datasets.pit_universe as pit
-from pwb_toolbox.backtesting import backtest_engine as be
+import pwb.backtesting as pwb_bt
+import pwb.backtesting.commission as cm
+import pwb.datasets as pwb_ds
+import pwb.datasets.pit_universe as pit
+from pwb.backtesting import backtest_engine as be
 
 MEMBERS = ["AAPL", "AET", "ETH", "MSFT", "YHOO"]
 

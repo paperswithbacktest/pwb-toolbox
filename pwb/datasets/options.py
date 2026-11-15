@@ -22,7 +22,7 @@ loader never does that:
 
 Example::
 
-    from pwb_toolbox.datasets import load_option_chain
+    from pwb.datasets import load_option_chain
 
     chain = load_option_chain(["SPY"], "2024-01-01", "2024-03-31",
                               columns=["expiration", "strike", "option_type", "close",

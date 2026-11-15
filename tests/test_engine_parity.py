@@ -4,7 +4,7 @@ Not a test of the engines (Tradewind's own oracle harness does that): a test
 that everything *this package* wires around a strategy -- ``BaseStrategy``'s
 log, ``ArrayPandasData``, the per-symbol ``SpreadImpactCommission`` with a
 yearly schedule, ``FundingAudit`` / ``FillAudit``, the listing guard and the
-exposure cap -- behaves the same whichever engine ``pwb_toolbox.engine``
+exposure cap -- behaves the same whichever engine ``pwb.engine``
 picked. Synthetic bars, no download, a few seconds.
 
 Skipped unless both engines are importable by this interpreter.
@@ -17,17 +17,17 @@ import subprocess
 import sys
 import unittest
 
-from pwb_toolbox import engine
+from pwb import engine
 
 SCRIPT = r"""
 import json
 import numpy as np
 import pandas as pd
-import pwb_toolbox.backtesting as pwb_bt
-from pwb_toolbox.backtesting.backtest_engine import (
+import pwb.backtesting as pwb_bt
+from pwb.backtesting.backtest_engine import (
     FillAudit, FundingAudit, _refuse_before_listing, _with_exposure_cap,
 )
-from pwb_toolbox.backtesting.feeds import ArrayPandasData
+from pwb.backtesting.feeds import ArrayPandasData
 
 bt = pwb_bt.bt
 rng = np.random.default_rng(3)

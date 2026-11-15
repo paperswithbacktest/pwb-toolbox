@@ -12,10 +12,10 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from pwb_toolbox import engine
-from pwb_toolbox.backtesting import BaseStrategy
-from pwb_toolbox.backtesting import backtest_engine as be
-from pwb_toolbox.backtesting.feeds import ArrayPandasData
+from pwb import engine
+from pwb.backtesting import BaseStrategy
+from pwb.backtesting import backtest_engine as be
+from pwb.backtesting.feeds import ArrayPandasData
 
 from _synthetic import offline, panel
 

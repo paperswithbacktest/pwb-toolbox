@@ -2,10 +2,21 @@ from ..engine import load as _load_engine
 from ..engine import name as engine_name
 
 # The engine every class below is built on: backtrader by default, Tradewind when
-# ``pwb_toolbox.engine.select("tradewind")`` or ``PWB_BACKTEST_ENGINE=tradewind``
+# ``pwb.engine.select("tradewind")`` or ``PWB_BACKTEST_ENGINE=tradewind``
 # said so before this import. A strategy that needs ``bt`` takes it from here
-# (``from pwb_toolbox.backtesting import bt``) and runs on whichever was chosen.
+# (``from pwb.backtesting import bt``) and runs on whichever was chosen.
 bt = _load_engine()
+
+# ``pwb.backtesting.bt`` is also an import path, with the engine's sub-modules, so a
+# strategy never names an engine: ``from pwb.backtesting.bt import indicators as btind``,
+# ``from pwb.backtesting.bt.feeds import PandasData`` (the corpus codemod's "toolbox" form).
+import sys as _sys
+
+_sys.modules[__name__ + ".bt"] = bt
+for _sub in ("feeds", "indicators", "analyzers"):
+    if hasattr(bt, _sub):
+        _sys.modules[f"{__name__}.bt.{_sub}"] = getattr(bt, _sub)
+del _sys, _sub
 
 from .base_strategy import BaseStrategy
 from .commission import (

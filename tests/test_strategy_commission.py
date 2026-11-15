@@ -7,16 +7,16 @@ consulted. The probe of PR #62: 1 bp measured on ``A`` and 1 % asked by the
 strategy charged **0.10** on a 1 000 fill instead of **10.00**.
 
 Rule since 0.1.43: each fill pays the higher of the two. Runs on whichever
-engine ``pwb_toolbox.engine`` selected (backtrader or Tradewind).
+engine ``pwb.engine`` selected (backtrader or Tradewind).
 """
 
 import unittest
 from unittest import mock
 
-import pwb_toolbox.backtesting as pwb_bt
-from pwb_toolbox.backtesting import BaseStrategy, bt
-from pwb_toolbox.backtesting import backtest_engine as be
-from pwb_toolbox.backtesting.commission import Cost
+import pwb.backtesting as pwb_bt
+from pwb.backtesting import BaseStrategy, bt
+from pwb.backtesting import backtest_engine as be
+from pwb.backtesting.commission import Cost
 
 from _synthetic import offline, panel
 

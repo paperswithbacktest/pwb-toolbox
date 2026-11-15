@@ -17,8 +17,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import pwb_toolbox.datasets as ds
-from pwb_toolbox.datasets import options as opt
+import pwb.datasets as ds
+from pwb.datasets import options as opt
 
 UNDERLYINGS = [f"U{i:03d}" for i in range(400)] + ["AAPL", "SPY"]
 

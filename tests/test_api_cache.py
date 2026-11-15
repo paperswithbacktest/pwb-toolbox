@@ -23,7 +23,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import pwb_toolbox.datasets as ds
+import pwb.datasets as ds
 
 NAME = "Test-Daily-Price"
 MONTHS = ["2019-01", "2019-02", "2019-03", "2019-04"]

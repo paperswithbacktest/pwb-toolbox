@@ -1,6 +1,6 @@
 from typing import List
 import pandas as pd
-import pwb_toolbox.datasets as pwb_ds
+import pwb.datasets as pwb_ds
 
 
 def get_most_liquid_symbols(n: int = 1_200, as_of=None) -> List[str]:
@@ -20,7 +20,7 @@ def get_most_liquid_symbols(n: int = 1_200, as_of=None) -> List[str]:
     strategy that wants the membership enforced per date should load through
     ``symbols=["sp500"]``, which applies it, or call this per rebalance date.
     """
-    from pwb_toolbox.datasets.pit_universe import load_pit_universe, pit_symbols
+    from pwb.datasets.pit_universe import load_pit_universe, pit_symbols
 
     if as_of is None:
         return pit_symbols(n)

@@ -15,7 +15,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-import pwb_toolbox.datasets as ds
+import pwb.datasets as ds
 
 DATES = ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
 

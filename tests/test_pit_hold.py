@@ -16,10 +16,10 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from pwb_toolbox.backtesting import BaseStrategy
-from pwb_toolbox.backtesting import backtest_engine as be
-from pwb_toolbox.datasets import PIT_UNIVERSES
-from pwb_toolbox.datasets import pit_universe
+from pwb.backtesting import BaseStrategy
+from pwb.backtesting import backtest_engine as be
+from pwb.datasets import PIT_UNIVERSES
+from pwb.datasets import pit_universe
 
 from _synthetic import offline, panel
 
@@ -166,7 +166,7 @@ class _Base(unittest.TestCase):
             return (cut if kwargs.get("pit_cut", True) else prices).copy()
 
         from unittest import mock
-        import pwb_toolbox.datasets as pwb_ds
+        import pwb.datasets as pwb_ds
 
         with mock.patch.object(pwb_ds, "get_pricing", loader):
             return be.run_strategy(
@@ -392,7 +392,7 @@ class LongAbsenceTest(unittest.TestCase):
         cut = full.copy()
         cut.loc[cut.index[self.OUT[0]:self.OUT[1]], "X"] = np.nan
         from unittest import mock
-        import pwb_toolbox.datasets as pwb_ds
+        import pwb.datasets as pwb_ds
 
         loader = lambda *a, **k: (cut if k.get("pit_cut", True) else full).copy()
         with mock.patch.object(pwb_ds, "get_pricing", loader):

@@ -26,10 +26,10 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import pwb_toolbox.datasets as ds
-from pwb_toolbox import engine
-from pwb_toolbox.backtesting import backtest_engine as be
-from pwb_toolbox.backtesting import commission
+import pwb.datasets as ds
+from pwb import engine
+from pwb.backtesting import backtest_engine as be
+from pwb.backtesting import commission
 
 bt = engine.load()
 
