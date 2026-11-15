@@ -28,7 +28,9 @@ underlying with fewer than 20 quotes, filled with its tier's value and labelled
 Years
 -----
 Each row carries the year it was measured. A year in the table is used as is
-(``source = "measured"``); any other year takes the **nearest measured year**
+(``source = "measured"``, or ``"estimated"`` for a year the table estimates
+from trades -- 2014 to 2021, ``method`` ``trade_estimate...``); any other year
+takes the **nearest measured year**
 and is labelled ``"extrapolated"``, so a backtest can say its early-year costs
 rest on a later measurement. With ``year=None`` the latest measurement is used.
 
@@ -57,6 +59,9 @@ from .commission import (
 )
 
 OPTIONS_PARAMS_REPO = "paperswithbacktest/Options-Yearly-TransactionCostParams"
+# A year of the table estimated from trades rather than measured on quotes.
+SOURCE_ESTIMATED = "estimated"
+METHOD_TRADE_ESTIMATE = "trade_estimate"
 
 # Within this distance of 1, ``otm`` is near the money.
 NEAR_THE_MONEY = 0.10
@@ -117,6 +122,11 @@ class OptionsCostModel:
             self._rows[(int(year), kind, key)] = tuple(rows)
             self._methods[(int(year), kind, key)] = tuple(methods)
         self.years = tuple(sorted({k[0] for k in self._rows}))
+        # Years the table estimates from trades instead of measuring on quotes
+        # (2014-2021): every row of theirs says ``trade_estimate...``.
+        trade = table["method"].astype(str).str.startswith(METHOD_TRADE_ESTIMATE)
+        by_year = trade.groupby(table["year"].astype(int)).all()
+        self.estimated_years = tuple(sorted(int(y) for y, v in by_year.items() if v))
         for year in self.years:
             have = {k[2] for k in self._rows if k[0] == year and k[1] == SEGMENT_TIER}
             if have != set(range(len(self.volume_edges) + 1)):
@@ -131,14 +141,17 @@ class OptionsCostModel:
     def resolve_year(self, year=None):
         """``(year used, source)``: the year itself, or the nearest measured one."""
         if year is None:
-            return self.years[-1], SOURCE_MEASURED
+            return self.years[-1], self._source(self.years[-1])
         year = int(year)
         if year in self.years:
-            return year, SOURCE_MEASURED
+            return year, self._source(year)
         # Nearest; on a tie the later measurement, which is the one a reader
         # of the card would expect to be current.
         best = min(self.years, key=lambda y: (abs(y - year), -y))
         return best, SOURCE_EXTRAPOLATED
+
+    def _source(self, year: int) -> str:
+        return SOURCE_ESTIMATED if year in self.estimated_years else SOURCE_MEASURED
 
     def underlyings(self, year=None) -> list:
         """Underlyings with a row of their own in that year's measurement."""
