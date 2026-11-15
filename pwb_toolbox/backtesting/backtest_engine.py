@@ -10,6 +10,7 @@ import numpy as np
 import pwb_toolbox.backtesting as pwb_bt
 import pwb_toolbox.datasets as pwb_ds
 
+from ..engine import check as _check_engine
 from ..engine import load as _load_engine
 
 bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
@@ -1251,8 +1252,16 @@ def run_strategy(
     scaling="bar",
     debit_tolerance=DEBIT_TOLERANCE,
     pit_exit=None,
+    engine=None,
 ):
-    """Run a tactical asset allocation strategy with Backtrader.
+    """Run a tactical asset allocation strategy with Backtrader (or Tradewind).
+
+    ``engine`` -- ``"backtrader"`` or ``"tradewind"``: the engine this run must be
+    on. The package binds to one engine when it is imported
+    (``pwb_toolbox.engine``: ``PWB_BACKTEST_ENGINE``, ``engine.use()``, or
+    ``python -m pwb_toolbox.engine --engine NAME script.py``), so a run cannot
+    switch; naming the other one raises ``RuntimeError`` instead of returning a
+    NAV from the wrong engine. ``None`` (default) runs on the engine in force.
 
     ``era_gap_years`` -- a symbol whose price series has a hole of at least
     that many full calendar years keeps only what follows its **last** such
@@ -1350,6 +1359,7 @@ def run_strategy(
     A run that stays underfunded is returned with ``run_report["underfunded"]``
     set, so the caller can refuse it rather than record a number.
     """
+    _check_engine(engine)
     if not 0 < max_leverage <= 1:
         raise ValueError(
             f"max_leverage={max_leverage}: it must be in (0, 1]. backtrader refuses "

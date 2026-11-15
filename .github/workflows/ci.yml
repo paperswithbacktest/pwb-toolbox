@@ -1,0 +1,27 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    # Both engines in one environment, so the parity tests run instead of skipping.
+    # pandas/numpy pinned to the campaign server's (pandas 3 changes the corpus' results);
+    # Tradewind pinned to a commit of its main, so a bit-for-bit test cannot move under us.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    env:
+      TQDM_DISABLE: "1"
+      TRADEWIND_REF: 66ebe4ec55ef4bbb92b817a2e8ea49225f9eada9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e . "pandas==2.3.*" "numpy==2.2.*" "pytest>=8"
+      - run: python -m pip install "tradewind @ git+https://github.com/paperswithbacktest/tradewind@${TRADEWIND_REF}"
+      - run: python -c "import backtrader, tradewind; print('engines:', backtrader.__name__, tradewind.__name__)"
+      - run: python -m pytest -q -p no:cacheprovider
