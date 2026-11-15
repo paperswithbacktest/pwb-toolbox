@@ -2,7 +2,7 @@
 
 The strategy below is written the way ~150 corpus strategies are: it names
 ``backtrader`` itself (``import backtrader as bt``) next to ``BaseStrategy``. It
-runs through ``python -m pwb_toolbox.engine --engine NAME --report``, which is
+runs through ``python -m pwb.engine --engine NAME --report``, which is
 how a campaign switches engine without touching a strategy: on Tradewind the
 name ``backtrader`` resolves to Tradewind and no module of a backtrader package
 may be loaded.
@@ -31,7 +31,7 @@ import tempfile
 import textwrap
 import unittest
 
-from pwb_toolbox import engine
+from pwb import engine
 
 BOTH = bool(importlib.util.find_spec("backtrader") and importlib.util.find_spec("tradewind"))
 
@@ -45,8 +45,8 @@ STRATEGY = textwrap.dedent(
     import numpy as np
     import pandas as pd
 
-    import pwb_toolbox.backtesting as pwb_bt
-    from pwb_toolbox.backtesting.feeds import ArrayPandasData
+    import pwb.backtesting as pwb_bt
+    from pwb.backtesting.feeds import ArrayPandasData
 
     GRID = os.environ.get("GRID") == "1"
     rng = np.random.default_rng(11)
@@ -113,7 +113,7 @@ def _run(engine_name, script, extra_env=None):
     env = {k: v for k, v in os.environ.items() if k != engine.ENV_VAR}
     env.update(TQDM_DISABLE="1", **(extra_env or {}))
     proc = subprocess.run(
-        [sys.executable, "-m", "pwb_toolbox.engine", "--engine", engine_name, "--report", script],
+        [sys.executable, "-m", "pwb.engine", "--engine", engine_name, "--report", script],
         env=env, capture_output=True, text=True, check=False,
     )
     if proc.returncode:
@@ -193,7 +193,7 @@ class AliasAndCheckTest(unittest.TestCase):
     @unittest.skipUnless(BOTH, "both engines are needed")
     def test_alias_is_refused_once_the_real_backtrader_is_loaded(self):
         proc = _subprocess(
-            "import backtrader, pwb_toolbox.engine as e\n"
+            "import backtrader, pwb.engine as e\n"
             "try:\n    e.use('tradewind')\nexcept RuntimeError as exc:\n    print('refused', exc)\n",
             "tradewind",
         )
@@ -202,12 +202,12 @@ class AliasAndCheckTest(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("tradewind"), "tradewind not installed")
     def test_alias_gives_the_submodules_the_corpus_imports(self):
         proc = _subprocess(
-            "import pwb_toolbox.engine as e\n"
+            "import pwb.engine as e\n"
             "bt = e.use('tradewind')\n"
             "import backtrader, backtrader.feeds, backtrader.indicators as btind\n"
             "from backtrader.utils.date import num2date\n"
             "from backtrader.feeds import PandasData\n"
-            "import pwb_toolbox.backtesting as b\n"
+            "import pwb.backtesting as b\n"
             "assert backtrader is bt and btind is bt.indicators and PandasData is bt.PandasData\n"
             "assert num2date is bt.num2date and b.bt is bt\n"
             "assert b.BaseStrategy.__mro__[1].__module__.split('.')[0] == 'tradewind'\n"
@@ -219,7 +219,7 @@ class AliasAndCheckTest(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("backtrader"), "backtrader not installed")
     def test_alias_is_a_no_op_on_backtrader(self):
         proc = _subprocess(
-            "import sys, pwb_toolbox.engine as e\n"
+            "import sys, pwb.engine as e\n"
             "bt = e.use()\n"
             "import backtrader\n"
             "print(bt is backtrader, 'tradewind' in sys.modules)\n",
@@ -230,7 +230,7 @@ class AliasAndCheckTest(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("backtrader"), "backtrader not installed")
     def test_run_strategy_refuses_the_engine_it_is_not_on(self):
         proc = _subprocess(
-            "import pwb_toolbox.backtesting as b\n"
+            "import pwb.backtesting as b\n"
             "try:\n"
             "    b.run_strategy(None, {}, None, {}, [], '2020-01-01', 1, engine='tradewind')\n"
             "except RuntimeError as exc:\n"

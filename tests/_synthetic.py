@@ -11,7 +11,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-import pwb_toolbox.datasets as pwb_ds
+import pwb.datasets as pwb_ds
 
 
 def panel(closes: dict, start="2020-01-01", opens=None) -> pd.DataFrame:

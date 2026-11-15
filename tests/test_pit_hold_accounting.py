@@ -16,11 +16,11 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-import pwb_toolbox.datasets as pwb_ds
-from pwb_toolbox.backtesting import BaseStrategy
-from pwb_toolbox.backtesting import backtest_engine as be
-from pwb_toolbox.datasets import PIT_UNIVERSES
-from pwb_toolbox.datasets import pit_universe
+import pwb.datasets as pwb_ds
+from pwb.backtesting import BaseStrategy
+from pwb.backtesting import backtest_engine as be
+from pwb.datasets import PIT_UNIVERSES
+from pwb.datasets import pit_universe
 
 from _synthetic import panel
 

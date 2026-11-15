@@ -17,7 +17,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import pwb_toolbox.datasets as ds
+import pwb.datasets as ds
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
 MONTHS = ["2024-01", "2024-02", "2024-03"]

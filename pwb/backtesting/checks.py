@@ -114,7 +114,7 @@ def _index_routes() -> dict:
     global _INDEX_ROUTES
     if _INDEX_ROUTES is None:
         try:
-            import pwb_toolbox.datasets as pwb_ds
+            import pwb.datasets as pwb_ds
 
             universe = pwb_ds.load_dataset("Universe-Daily-Price")
             _INDEX_ROUTES = {
@@ -269,7 +269,7 @@ def universe_facts(symbols, present, routes: dict | None = None) -> dict:
     ``present`` is ``run_strategy``'s row mask (``True`` where a symbol has a
     real bar). Computed at load time so the check does not keep the panel.
     """
-    import pwb_toolbox.datasets as pwb_ds
+    import pwb.datasets as pwb_ds
 
     if isinstance(symbols, str):
         symbols = [symbols]
@@ -574,9 +574,9 @@ def enabled() -> bool:
 def toolbox_version() -> str | None:
     """The version of the code running, not of whatever the metadata says is installed."""
     try:
-        import pwb_toolbox
+        import pwb
 
-        return getattr(pwb_toolbox, "__version__", None)
+        return getattr(pwb, "__version__", None)
     except Exception:  # noqa: BLE001
         return None
 

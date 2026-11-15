@@ -355,7 +355,7 @@ _PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _is_ours(filename: str) -> bool:
-    """A frame or class of pwb_toolbox itself: the harness, not the strategy."""
+    """A frame or class of pwb itself: the harness, not the strategy."""
     try:
         return os.path.abspath(filename).startswith(_PACKAGE_DIR + os.sep)
     except (TypeError, ValueError):
@@ -439,7 +439,7 @@ def strategy_source(strategy_cls=None, indicator_cls=None, caller=None) -> list[
        its file, from ``linecache`` (notebook cells register there), or
        recovered from the caller of ``exec`` (:func:`_exec_source`);
     2. the files the strategy and indicator classes were defined in, when
-       they are not that script and not pwb_toolbox itself.
+       they are not that script and not pwb itself.
 
     An empty list means nothing could be read: the check then says so rather
     than passing.
@@ -480,11 +480,11 @@ def strategy_source(strategy_cls=None, indicator_cls=None, caller=None) -> list[
 
 
 def main() -> int:
-    """``python -m pwb_toolbox.backtesting.lookahead <strategy.py> [datasets_csv]``."""
+    """``python -m pwb.backtesting.lookahead <strategy.py> [datasets_csv]``."""
     import json
 
     if len(sys.argv) < 2:
-        print("Usage: python -m pwb_toolbox.backtesting.lookahead <strategy_path> [allowed_datasets_csv]",
+        print("Usage: python -m pwb.backtesting.lookahead <strategy_path> [allowed_datasets_csv]",
               file=sys.stderr)
         return 1
     path = sys.argv[1]

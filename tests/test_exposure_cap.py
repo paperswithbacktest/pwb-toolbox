@@ -21,8 +21,8 @@ import backtrader as bt
 import numpy as np
 import pandas as pd
 
-from pwb_toolbox.backtesting import BaseStrategy
-from pwb_toolbox.backtesting import backtest_engine as be
+from pwb.backtesting import BaseStrategy
+from pwb.backtesting import backtest_engine as be
 
 from _synthetic import offline, panel
 

@@ -29,8 +29,8 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-import pwb_toolbox.datasets as ds
-from pwb_toolbox.datasets import pit_universe
+import pwb.datasets as ds
+from pwb.datasets import pit_universe
 
 ETF = "paperswithbacktest/ETFs-Daily-Price"
 STK = "paperswithbacktest/Stocks-Daily-Price"

@@ -22,8 +22,8 @@ import textwrap
 
 import pandas as pd
 
-from pwb_toolbox.backtesting import lookahead
-from pwb_toolbox.backtesting.lookahead import check_anchored_calendar_offsets
+from pwb.backtesting import lookahead
+from pwb.backtesting.lookahead import check_anchored_calendar_offsets
 
 # A first session on the 1st, two first sessions after a weekend, and a 2 January.
 MONDAY_THE_1ST = pd.Timestamp("2019-07-01")

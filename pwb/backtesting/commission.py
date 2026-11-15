@@ -62,7 +62,7 @@ import pandas as pd
 from ..datasets import get_pricing, superset_reads
 from ..engine import load as _load_engine
 
-bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
+bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb.engine
 
 _MIN_OBS = 5  # need at least this many returns to attempt Roll
 _EPS = 1e-12

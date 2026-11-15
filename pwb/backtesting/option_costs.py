@@ -5,7 +5,7 @@ the close and pays half the quoted spread on each side. Until this module, the
 model behind that half spread was a literal pasted into every option strategy
 (``HALF_SPREAD_BY_TIER`` and ``HALF_SPREAD_BY_UNDERLYING``). It now lives in
 ``paperswithbacktest/Options-Yearly-TransactionCostParams``, like the stock,
-forex and crypto spreads in :mod:`pwb_toolbox.backtesting.commission`, and this
+forex and crypto spreads in :mod:`pwb.backtesting.commission`, and this
 module reads it.
 
 The model
@@ -36,7 +36,7 @@ rest on a later measurement. With ``year=None`` the latest measurement is used.
 
 Usage::
 
-    from pwb_toolbox.backtesting import options_half_spread, option_volume_tier
+    from pwb.backtesting import options_half_spread, option_volume_tier
 
     tier = option_volume_tier(mean_daily_option_volume)
     cost = 100 * options_half_spread(price, otm, tier=tier, underlying="SPY", year=2018)

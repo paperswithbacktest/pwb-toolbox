@@ -1,6 +1,6 @@
 """Which engine runs the backtests: backtrader, or Tradewind.
 
-``pwb_toolbox.backtesting`` is written against the backtrader API, and Tradewind
+``pwb.backtesting`` is written against the backtrader API, and Tradewind
 (``pip install tradewind``) implements that same API under the Apache 2.0 licence.
 Every module of the backtesting package takes its ``bt`` from here instead of
 importing backtrader itself, so the choice is made once, in one place, and the
@@ -8,7 +8,7 @@ engine that was not chosen is never imported.
 
 How to choose, in order of precedence:
 
-1. ``pwb_toolbox.engine.select("tradewind")`` **before** ``pwb_toolbox.backtesting``
+1. ``pwb.engine.select("tradewind")`` **before** ``pwb.backtesting``
    is imported. The base classes (``BaseStrategy`` is a ``bt.Strategy``) are bound
    at import time, so a choice made after that is refused rather than half applied.
 2. The environment variable ``PWB_BACKTEST_ENGINE`` (``backtrader`` or ``tradewind``),
@@ -26,7 +26,7 @@ so such code runs unchanged on the chosen engine; with backtrader chosen it does
 nothing. It is what the grand remeasure's parity runs did by hand
 (``measure_one_nav_tw*.py``), moved here so a campaign switches with one flag::
 
-    python -m pwb_toolbox.engine --engine tradewind [--report] script.py [args ...]
+    python -m pwb.engine --engine tradewind [--report] script.py [args ...]
 
 runs ``script.py`` as ``__main__`` on that engine; ``--report`` adds one
 ``ENGINE ...`` line on exit saying which engine ran and whether any module was
@@ -60,7 +60,7 @@ def _normalise(name) -> str:
 def select(name: str) -> str:
     """Choose the engine for this process. Returns the normalised name.
 
-    Must run before ``pwb_toolbox.backtesting`` is imported: once the package is
+    Must run before ``pwb.backtesting`` is imported: once the package is
     bound to an engine, asking for the other one raises ``RuntimeError`` instead
     of leaving half the classes on each engine.
     """
@@ -68,7 +68,7 @@ def select(name: str) -> str:
     key = _normalise(name)
     if _loaded is not None and _loaded[0] != key:
         raise RuntimeError(
-            f"pwb_toolbox.backtesting is already running on {_loaded[0]!r}; "
+            f"pwb.backtesting is already running on {_loaded[0]!r}; "
             f"select({key!r}) must be called before it is imported"
         )
     _selected = key
@@ -158,7 +158,7 @@ def use(engine: str | None = None, alias: bool = True):
 
     With ``alias`` (the default) code that imports ``backtrader`` by name runs on
     the chosen engine too (:func:`alias_backtrader`). Like :func:`select`, it must
-    run before ``pwb_toolbox.backtesting`` is imported.
+    run before ``pwb.backtesting`` is imported.
     """
     if engine is not None:
         select(engine)
@@ -178,9 +178,9 @@ def check(engine: str | None) -> str:
     if engine is not None and _normalise(engine) != current:
         raise RuntimeError(
             f"this process runs on {current!r}, not {_normalise(engine)!r}: the engine is "
-            f"chosen before pwb_toolbox.backtesting is imported -- set {ENV_VAR}="
-            f"{_normalise(engine)}, call pwb_toolbox.engine.use({_normalise(engine)!r}) first, "
-            f"or run the script with python -m pwb_toolbox.engine --engine {_normalise(engine)}"
+            f"chosen before pwb.backtesting is imported -- set {ENV_VAR}="
+            f"{_normalise(engine)}, call pwb.engine.use({_normalise(engine)!r}) first, "
+            f"or run the script with python -m pwb.engine --engine {_normalise(engine)}"
         )
     return current
 
@@ -206,13 +206,13 @@ def report_line() -> str:
 
 
 def main(argv=None) -> int:
-    """``python -m pwb_toolbox.engine [--engine NAME] [--report] script.py [args ...]``."""
+    """``python -m pwb.engine [--engine NAME] [--report] script.py [args ...]``."""
     import argparse
     import runpy
     import sys
 
     parser = argparse.ArgumentParser(
-        prog="python -m pwb_toolbox.engine",
+        prog="python -m pwb.engine",
         description="Run a script as __main__ on the chosen backtest engine.",
     )
     parser.add_argument("--engine", choices=ENGINES, default=None,

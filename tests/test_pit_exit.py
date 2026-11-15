@@ -13,10 +13,10 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from pwb_toolbox.backtesting import BaseStrategy
-from pwb_toolbox.backtesting import backtest_engine as be
-from pwb_toolbox.datasets import PIT_UNIVERSES
-from pwb_toolbox.datasets import pit_universe
+from pwb.backtesting import BaseStrategy
+from pwb.backtesting import backtest_engine as be
+from pwb.datasets import PIT_UNIVERSES
+from pwb.datasets import pit_universe
 
 from _synthetic import offline, panel
 

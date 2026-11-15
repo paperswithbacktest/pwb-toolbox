@@ -5,7 +5,7 @@ from unittest import mock
 
 import pandas as pd
 
-import pwb_toolbox.backtesting.commission as cm
+import pwb.backtesting.commission as cm
 
 
 def _table(repo_id):

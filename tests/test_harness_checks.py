@@ -16,11 +16,11 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-import pwb_toolbox.backtesting as pwb_bt
-import pwb_toolbox.backtesting.checks as checks
-import pwb_toolbox.backtesting.commission as cm
-from pwb_toolbox.datasets import PIT_UNIVERSES
-from pwb_toolbox.datasets import pit_universe
+import pwb.backtesting as pwb_bt
+import pwb.backtesting.checks as checks
+import pwb.backtesting.commission as cm
+from pwb.datasets import PIT_UNIVERSES
+from pwb.datasets import pit_universe
 
 from _synthetic import offline, panel
 
@@ -33,8 +33,8 @@ INDEX = {"A": "Stocks-Daily-Price", "B": "Stocks-Daily-Price", "X": "Stocks-Dail
 VINTAGES = {s: {y: 0.0005 for y in range(2010, 2027)} for s in NAMES + ("SPY", "TLT")}
 
 RUN = Template('''
-import pwb_toolbox.backtesting as pwb_bt
-from pwb_toolbox.backtesting import BaseStrategy
+import pwb.backtesting as pwb_bt
+from pwb.backtesting import BaseStrategy
 
 
 class Monthly(BaseStrategy):
@@ -333,12 +333,12 @@ class ExecutionRule(unittest.TestCase):
 class Version(unittest.TestCase):
     def test_the_reported_version_is_the_release(self):
         import configparser
-        import pwb_toolbox
+        import pwb
 
         setup = configparser.ConfigParser()
         setup.read(os.path.join(os.path.dirname(__file__), "..", "setup.cfg"))
-        self.assertEqual(pwb_toolbox.__version__, setup["metadata"]["version"])
-        self.assertEqual(checks.toolbox_version(), pwb_toolbox.__version__)
+        self.assertEqual(pwb.__version__, setup["metadata"]["version"])
+        self.assertEqual(checks.toolbox_version(), pwb.__version__)
 
 
 if __name__ == "__main__":

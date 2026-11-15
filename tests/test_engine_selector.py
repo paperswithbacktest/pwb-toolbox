@@ -2,7 +2,7 @@
 
 Every case that binds the package runs in a subprocess, because a bound package
 cannot be unbound: ``BaseStrategy`` is a subclass of the chosen engine's
-``Strategy`` from the moment ``pwb_toolbox.backtesting`` is imported.
+``Strategy`` from the moment ``pwb.backtesting`` is imported.
 """
 
 import importlib.util
@@ -11,7 +11,7 @@ import subprocess
 import sys
 import unittest
 
-from pwb_toolbox import engine
+from pwb import engine
 
 ENV = engine.ENV_VAR
 
@@ -33,7 +33,7 @@ def _run(code, engine_name=None):
 
 
 REPORT = (
-    "import sys, pwb_toolbox.backtesting as b; "
+    "import sys, pwb.backtesting as b; "
     "print(b.engine_name(), b.bt.__name__, b.BaseStrategy.__mro__[1].__module__.split('.')[0], "
     "'backtrader' in sys.modules, 'tradewind' in sys.modules)"
 )
@@ -58,13 +58,13 @@ class EngineSelectorTest(unittest.TestCase):
 
     @unittest.skipUnless(_installed("tradewind"), "tradewind not installed")
     def test_select_before_import_wins_over_the_default(self):
-        code = "import pwb_toolbox.engine as e; e.select('tradewind'); " + REPORT
+        code = "import pwb.engine as e; e.select('tradewind'); " + REPORT
         self.assertEqual(_run(code), "tradewind tradewind tradewind False True")
 
     @unittest.skipUnless(_installed("tradewind"), "tradewind not installed")
     def test_select_after_import_is_refused(self):
         code = (
-            "import pwb_toolbox.engine as e, pwb_toolbox.backtesting\n"
+            "import pwb.engine as e, pwb.backtesting\n"
             "try:\n    e.select('backtrader')\n"
             "except RuntimeError as exc:\n    print('refused')\n"
         )
@@ -73,14 +73,14 @@ class EngineSelectorTest(unittest.TestCase):
     @unittest.skipUnless(_installed("tradewind"), "tradewind not installed")
     def test_array_feed_is_the_engines_pandas_feed_on_tradewind(self):
         code = (
-            "import pwb_toolbox.backtesting as b; from pwb_toolbox.backtesting.feeds import ArrayPandasData; "
+            "import pwb.backtesting as b; from pwb.backtesting.feeds import ArrayPandasData; "
             "print(ArrayPandasData is b.bt.feeds.PandasData)"
         )
         self.assertEqual(_run(code, "tradewind"), "True")
 
     def test_unknown_engine_in_the_environment_is_an_error(self):
         proc = subprocess.run(
-            [sys.executable, "-c", "import pwb_toolbox.backtesting"],
+            [sys.executable, "-c", "import pwb.backtesting"],
             env={**os.environ, ENV: "zipline"}, capture_output=True, text=True, check=False,
         )
         self.assertNotEqual(proc.returncode, 0)

@@ -7,13 +7,13 @@ import sys
 import time
 import pandas as pd
 import numpy as np
-import pwb_toolbox.backtesting as pwb_bt
-import pwb_toolbox.datasets as pwb_ds
+import pwb.backtesting as pwb_bt
+import pwb.datasets as pwb_ds
 
 from ..engine import check as _check_engine
 from ..engine import load as _load_engine
 
-bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
+bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb.engine
 from . import checks as _checks
 from . import lookahead as _lookahead
 from .feeds import ArrayPandasData
@@ -577,7 +577,7 @@ def _pit_membership(symbols, present: pd.DataFrame, trading_days, cut: bool = Tr
     names = [s for s in present.columns if s in added and s not in explicit]
     if not names:
         return None
-    from pwb_toolbox.datasets.pit_universe import _ASOF_TOLERANCE, membership_mask
+    from pwb.datasets.pit_universe import _ASOF_TOLERANCE, membership_mask
 
     member = membership_mask(trading_days, names, *spec).to_numpy()
     rows = present[names].reindex(trading_days, fill_value=False).to_numpy(dtype=bool)
@@ -1258,8 +1258,8 @@ def run_strategy(
 
     ``engine`` -- ``"backtrader"`` or ``"tradewind"``: the engine this run must be
     on. The package binds to one engine when it is imported
-    (``pwb_toolbox.engine``: ``PWB_BACKTEST_ENGINE``, ``engine.use()``, or
-    ``python -m pwb_toolbox.engine --engine NAME script.py``), so a run cannot
+    (``pwb.engine``: ``PWB_BACKTEST_ENGINE``, ``engine.use()``, or
+    ``python -m pwb.engine --engine NAME script.py``), so a run cannot
     switch; naming the other one raises ``RuntimeError`` instead of returning a
     NAV from the wrong engine. ``None`` (default) runs on the engine in force.
 

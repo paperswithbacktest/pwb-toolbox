@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 import pandas as pd
-import pwb_toolbox.performance as pwb_perf
+import pwb.performance as pwb_perf
 
 
 def run_portfolio(

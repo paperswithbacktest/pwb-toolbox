@@ -7,7 +7,7 @@ package which provides convenient synchronous access to IB.
 
 Example
 -------
-    >>> from pwb_toolbox.execution import create_connector
+    >>> from pwb.execution import create_connector
     >>> ibc = create_connector({"broker": "ib"})
     >>> ibc.connect()
     >>> nav = ibc.get_account_nav()

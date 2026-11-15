@@ -23,7 +23,7 @@ CCXT Exchanges
 
 Example
 -------
-    >>> from pwb_toolbox.execution import create_connector
+    >>> from pwb.execution import create_connector
     >>> conn = create_connector({"broker": "ccxt", "exchange": "binance"})
     >>> conn.connect()
 """

@@ -613,7 +613,7 @@ def _api_cache_root():
     root = os.getenv("PWB_CACHE_DIR")
     if not root:
         base = os.getenv("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-        root = os.path.join(base, "pwb_toolbox")
+        root = os.path.join(base, "pwb_toolbox")  # kept across the rename to pwb: the same cache
     return os.path.join(root, "api")
 
 
@@ -1947,7 +1947,7 @@ def load_dataset(
         # same repository, and an exact match let that spelling through.
         raise ValueError(
             "Options-Daily-Price is not loaded whole: use "
-            "pwb_toolbox.datasets.load_option_chain(underlyings, start, end, columns=...), "
+            "pwb.datasets.load_option_chain(underlyings, start, end, columns=...), "
             "which downloads only the chains and months asked for."
         )
 
