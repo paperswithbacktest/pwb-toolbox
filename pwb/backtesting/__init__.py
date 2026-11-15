@@ -7,6 +7,17 @@ from ..engine import name as engine_name
 # (``from pwb.backtesting import bt``) and runs on whichever was chosen.
 bt = _load_engine()
 
+# ``pwb.backtesting.bt`` is also an import path, with the engine's sub-modules, so a
+# strategy never names an engine: ``from pwb.backtesting.bt import indicators as btind``,
+# ``from pwb.backtesting.bt.feeds import PandasData`` (the corpus codemod's "toolbox" form).
+import sys as _sys
+
+_sys.modules[__name__ + ".bt"] = bt
+for _sub in ("feeds", "indicators", "analyzers"):
+    if hasattr(bt, _sub):
+        _sys.modules[f"{__name__}.bt.{_sub}"] = getattr(bt, _sub)
+del _sys, _sub
+
 from .base_strategy import BaseStrategy
 from .commission import (
     get_commissions,

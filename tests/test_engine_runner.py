@@ -137,6 +137,11 @@ class SameNavToTheBitTest(unittest.TestCase):
             fh.write(STRATEGY)
         cls.bt_result, cls.bt_report = _run("backtrader", cls.script, {"GRID": cls.GRID})
         cls.tw_result, cls.tw_report = _run("tradewind", cls.script, {"GRID": cls.GRID})
+        # the same file after the corpus codemod's "toolbox" form: it names no engine
+        cls.neutral = os.path.join(cls.tmp.name, "strategy_neutral.py")
+        with open(cls.neutral, "w", encoding="utf-8") as fh:
+            fh.write(STRATEGY.replace("import backtrader as bt\n", "from pwb.backtesting import bt\n"))
+        cls.neutral_tw, _ = _run("tradewind", cls.neutral, {"GRID": cls.GRID})
 
     @classmethod
     def tearDownClass(cls):
@@ -162,6 +167,12 @@ class SameNavToTheBitTest(unittest.TestCase):
         self.assertEqual(ref["hex"], cand["hex"])
         self.assertEqual(ref["cash"], cand["cash"])
         self.assertEqual(ref["positions"], cand["positions"])
+
+    def test_engine_neutral_file_gives_the_same_path(self):
+        with open(self.neutral, encoding="utf-8") as fh:
+            self.assertNotIn("backtrader", fh.read())
+        self.assertEqual(self.neutral_tw["bt"], "tradewind")
+        self.assertEqual(self.neutral_tw["hex"], self.tw_result["hex"])
 
 
 @unittest.skipUnless(BOTH, "both engines are needed")
@@ -239,6 +250,19 @@ class AliasAndCheckTest(unittest.TestCase):
         )
         self.assertIn("refused: this process runs on 'backtrader', not 'tradewind'", proc.stdout,
                       proc.stderr)
+
+    def test_engine_is_an_import_path_under_the_toolbox(self):
+        for name in [n for n in ("backtrader", "tradewind") if importlib.util.find_spec(n)]:
+            proc = _subprocess(
+                "import pwb.backtesting as b\n"
+                "from pwb.backtesting.bt import indicators as btind, num2date\n"
+                "from pwb.backtesting.bt.feeds import PandasData\n"
+                "import pwb.backtesting.bt as bt2\n"
+                "assert bt2 is b.bt and btind is b.bt.indicators and PandasData is b.bt.feeds.PandasData\n"
+                "print(b.bt.__name__)\n",
+                name,
+            )
+            self.assertEqual(proc.stdout.strip(), name, proc.stderr)
 
     def test_check_accepts_the_engine_in_force(self):
         self.assertEqual(engine.check(None), engine.name())
