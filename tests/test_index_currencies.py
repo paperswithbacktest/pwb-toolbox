@@ -148,7 +148,16 @@ class LoadTest(unittest.TestCase):
         df = _load(symbols=["UKX"], to_usd=True)
         self.assertAlmostEqual(_close(df, "UKX"), 8121.01 * 1.2550, places=6)
 
-    def test_one_rate_per_day_keeps_high_above_low(self):
+    def test_open_is_converted_at_the_pair_open(self):
+        df = _load(symbols=["UKX"], to_usd=True)
+        # index open 8121.01 * 0.99, GBPUSD open 1.2550 * 0.99 (same-day market quote)
+        self.assertAlmostEqual(float(df["open"].iloc[0]), 8121.01 * 0.99 * 1.2550 * 0.99, places=6)
+
+    def test_pegged_currency_uses_one_rate_for_all_columns(self):
+        df = _load(symbols=["DSM"], to_usd=True)
+        self.assertAlmostEqual(float(df["open"].iloc[0]), 10571.09 * 0.99 / 3.64, places=6)
+
+    def test_high_stays_above_low(self):
         df = _load(symbols=["NKY", "UKX"], to_usd=True)
         self.assertTrue((df["high"] >= df["low"]).all())
         self.assertTrue((df["volume"] == 5).all())

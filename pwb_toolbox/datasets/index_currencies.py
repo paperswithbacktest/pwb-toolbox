@@ -35,8 +35,10 @@ continuous across the changeover. Before 1999 the founding members use the
 synthetic ``EURUSD`` of the forex table, which stands for the legacy currencies
 at their irrevocable rates -- an approximation, documented here.
 
-The rate applies to open, high, low and close alike (the close of the day): a
-single rate per day keeps ``high >= low``.
+Open, high and low take the pair's own open, high and low where the row is converted at
+the market pair quoted that very day -- what the loader always did, so the indices it
+already converted correctly do not move. Elsewhere (a peg, a stale quote, a pre-euro
+segment) one rate, the close's, applies to all four columns.
 """
 
 from __future__ import annotations
@@ -72,7 +74,8 @@ INDEX_CURRENCY = {
     "BGSMDC": "BWP",  # Botswana
     "BHSEEI": "BHD",  # Bahrain
     "BKA": "KWD",  # Boursa Kuwait All Share (not Bosnia)
-    "BLOM": "LBP",  # Lebanon
+    "BLOM": "USD",  # Beirut: constituents trade in dollars; the level did not follow the
+    #                 lira's 98 % fall after 2019 (786 at end-2019, 2 517 at end-2024)
     "BSX": "BMD",  # Bermuda
     "BUX": "HUF",  # Hungary
     "BVLX": "EUR",  # Lisbon PSI All-Share (not Bolivia)
@@ -229,6 +232,45 @@ def needed_currencies(symbols) -> list:
     return sorted(out)
 
 
+def _fx_bars(df_forex: pd.DataFrame) -> dict:
+    """``{XXX: DataFrame of XXXUSD open/high/low/close indexed by sorted day}``."""
+    if df_forex is None or df_forex.empty:
+        return {}
+    cols = [c for c in ("open", "high", "low", "close") if c in df_forex.columns]
+    fx = df_forex[df_forex["symbol"].astype(str).str.endswith("USD")]
+    out = {}
+    for symbol, rows in fx.groupby("symbol"):
+        frame = rows[cols].astype("float64").set_index(pd.to_datetime(rows["date"]))
+        frame = frame[np.isfinite(frame["close"]) & (frame["close"] > 0)]
+        frame = frame[~frame.index.duplicated(keep="last")].sort_index()
+        out[str(symbol)[:-3]] = frame
+    return out
+
+
+def _intraday_ratio(bars: dict, symbol: str, days: pd.DatetimeIndex, col: str) -> np.ndarray:
+    """``XXXUSD[col] / XXXUSD[close]`` on the index's own day, 1 elsewhere.
+
+    Applied only where the row's rate is the market pair of the index's currency quoted that
+    very day -- not a peg, not a stale quote, not a pre-euro legacy segment -- so that open,
+    high and low are converted at the pair's own open, high and low, as before 2026-11-16.
+    """
+    out = np.ones(len(days))
+    ccy = INDEX_CURRENCY.get(symbol)
+    if not ccy or ccy == "USD" or ccy in PEGS:
+        return out
+    frame = bars.get(ccy)
+    if frame is None or col not in frame.columns:
+        return out
+    eligible = np.ones(len(days), dtype=bool)
+    adoption = EURO_ADOPTIONS.get(symbol)
+    if adoption is not None:
+        eligible &= days.values >= np.datetime64(pd.Timestamp(adoption[0]))
+    ratio = (frame[col] / frame["close"]).reindex(days).to_numpy()
+    good = eligible & np.isfinite(ratio) & (ratio > 0)
+    out[good] = ratio[good]
+    return out
+
+
 def _fx_table(df_forex: pd.DataFrame) -> dict:
     """``{XXX: close series of XXXUSD indexed by sorted day}``."""
     if df_forex is None or df_forex.empty:
@@ -312,10 +354,12 @@ def convert_indices_to_usd(df_indices: pd.DataFrame, df_forex: pd.DataFrame, req
     if df_indices.empty or "symbol" not in df_indices.columns:
         return df_indices
     fx = _fx_table(df_forex)
+    bars = _fx_bars(df_forex)
     requested = set(requested or ())
     days_all = pd.to_datetime(df_indices["date"])
     keep = np.ones(len(df_indices), dtype=bool)
     rate_all = np.ones(len(df_indices))
+    intraday = {c: np.ones(len(df_indices)) for c in ("open", "high", "low")}
     out = df_indices.copy()
     price_cols = [c for c in _PRICE_COLUMNS if c in out.columns]
     for col in price_cols:
@@ -337,6 +381,8 @@ def convert_indices_to_usd(df_indices: pd.DataFrame, df_forex: pd.DataFrame, req
             if not ok.any() and symbol in requested:
                 unconvertible.append(symbol)
         rate_all[idx] = rate
+        for col in intraday:
+            intraday[col][idx] = _intraday_ratio(bars, symbol, days, col)
         keep[idx[~ok]] = False
     if unconvertible:
         reasons = ", ".join(
@@ -359,5 +405,7 @@ def convert_indices_to_usd(df_indices: pd.DataFrame, df_forex: pd.DataFrame, req
             stacklevel=3,
         )
     for col in price_cols:
-        out[col] = out[col].to_numpy() * rate_all
+        base = col[4:] if col.startswith("adj_") else col
+        factor = rate_all * intraday[base] if base in intraday else rate_all
+        out[col] = out[col].to_numpy() * factor
     return out[keep].reset_index(drop=True)

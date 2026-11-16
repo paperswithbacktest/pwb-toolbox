@@ -2107,7 +2107,7 @@ def _indices_to_usd(df: pd.DataFrame, requested=None) -> pd.DataFrame:
             FOREX_DAILY_DATASET,
             symbols=[f"{ccy}USD" for ccy in currencies],
             to_usd=True,
-            columns=["close"],
+            columns=["open", "high", "low", "close"],
         )
     else:
         df_forex = None
