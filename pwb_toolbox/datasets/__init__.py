@@ -20,6 +20,13 @@ import pyarrow.parquet as pq
 import requests
 from tqdm import tqdm
 
+from .index_currencies import (  # noqa: F401  (re-exported)
+    INDEX_CURRENCY,
+    IndexCurrencyWarning,
+    convert_indices_to_usd,
+    needed_currencies,
+)
+
 
 def _get_hf_token() -> str:
     token = os.getenv("HF_ACCESS_TOKEN")
@@ -2073,8 +2080,7 @@ def load_dataset(
         if path == FOREX_DAILY_DATASET:
             df = _forex_to_usd(df)
         elif path == "Indices-Daily-Price":
-            df_forex = load_dataset("Forex-Daily-Price", to_usd=True)
-            df = __convert_indices_to_usd(df, df_forex)
+            df = _indices_to_usd(df, symbol_filter)
 
     if path in DAILY_PRICE_DATASETS and rate_to_price and path == "Bonds-Daily-Price":
         df = __convert_bond_rates_to_prices(df)
@@ -2089,142 +2095,23 @@ def load_dataset(
     return df
 
 
-def __convert_indices_to_usd(
-    df_indices: pd.DataFrame, df_forex: pd.DataFrame
-) -> pd.DataFrame:
-    mapping = {
-        "ADSMI": "AED",  # United Arab Emirates
-        "AEX": "EUR",  # Netherlands
-        "AS30": "AUD",  # Australia
-        "AS51": "AUD",  # Australia
-        "AS52": "AUD",  # Australia
-        "ASE": "EUR",  # Greece
-        "ATX": "EUR",  # Austria
-        "BEL20": "EUR",  # Belgium
-        "BELEX15": "RSD",  # Serbia
-        "BGSMDC": "BWP",  # Botswana
-        "BHSEEI": "BHD",  # Bahrain
-        "BKA": "BAM",  # Bosnia and Herzegovina
-        "BLOM": "LBP",  # Lebanon
-        "BSX": "BMD",  # Bermuda
-        "BUX": "HUF",  # Hungary
-        "BVLX": "BOB",  # Bolivia
-        "BVPSBVPS": "PAB",  # Panama
-        "BVQA": "USD",  # Ecuador
-        "CAC": "EUR",  # France
-        "CASE": "EGP",  # Egypt
-        "CCMP": "USD",  # United States
-        "COLCAP": "COP",  # Colombia
-        "CRSMBCT": "CRC",  # Costa Rica
-        "CSEALL": "LKR",  # Sri Lanka
-        "CYSMMAPA": "EUR",  # Cyprus
-        "DARSDSEI": "TZS",  # Tanzania
-        "DAX": "EUR",  # Germany
-        "DFMGI": "AED",  # United Arab Emirates
-        "DSEX": "BDT",  # Bangladesh
-        "DSM": "QAR",  # Qatar
-        "ECU": "USD",  # Ecuador
-        "FBMKLCI": "MYR",  # Malaysia
-        "FSSTI": "SGD",  # Singapore
-        "FTN098": "NAD",  # Namibia
-        "FTSEMIB": "EUR",  # Italy
-        "GGSECI": "GHS",  # Ghana
-        "HEX": "EUR",  # Finland
-        "HEX25": "EUR",  # Finland
-        "HSI": "HKD",  # Hong Kong
-        "IBEX": "EUR",  # Spain
-        "IBOV": "BRL",  # Brazil
-        "IBVC": "VES",  # Venezuela
-        "ICEXI": "ISK",  # Iceland
-        "IGPA": "CLP",  # Chile
-        "INDEXCF": "RUB",  # Russia
-        "INDU": "USD",  # United States
-        "INDZI": "IDR",  # Indonesia
-        "ISEQ": "EUR",  # Ireland
-        "JALSH": "ZAR",  # South Africa
-        "JCI": "IDR",  # Indonesia
-        "JMSMX": "JMD",  # Jamaica
-        "JOSMGNFF": "JOD",  # Jordan
-        "KFX": "DKK",  # Denmark
-        "KNSMIDX": "KES",  # Kenya
-        "KSE100": "PKR",  # Pakistan
-        "KZKAK": "KZT",  # Kazakhstan
-        "LSXC": "LAK",  # Laos
-        "LUXXX": "EUR",  # Luxembourg
-        "MALTEX": "EUR",  # Malta
-        "MBI": "MKD",  # North Macedonia
-        "MERVAL": "ARS",  # Argentina
-        "MEXBOL": "MXN",  # Mexico
-        "MONEX": "EUR",  # Montenegro
-        "MOSENEW": "MAD",  # Morocco
-        "MSETOP": "MKD",  # North Macedonia
-        "MSM30": "OMR",  # Oman
-        "NDX": "USD",  # United States
-        "NGSEINDX": "NGN",  # Nigeria
-        "NIFTY": "INR",  # India
-        "NKY": "JPY",  # Japan
-        "NSEASI": "KES",  # Kenya
-        "NZSE50FG": "NZD",  # New Zealand
-        "OMX": "SEK",  # Sweden
-        "OSEAX": "NOK",  # Norway
-        "PCOMP": "PHP",  # Philippines
-        "PFTS": "UAH",  # Ukraine
-        "PSI20": "EUR",  # Portugal
-        "PX": "CZK",  # Czech Republic
-        "RIGSE": "EUR",  # Latvia
-        "RTY": "USD",  # United States
-        "SASEIDX": "SAR",  # Saudi Arabia
-        "SASX10": "BAM",  # Bosnia and Herzegovina
-        "SBITOP": "EUR",  # Slovenia
-        "SEMDEX": "MUR",  # Mauritius
-        "SENSEX": "INR",  # India
-        "SET50": "THB",  # Thailand
-        "SHCOMP": "CNY",  # China
-        "SHSZ300": "CNY",  # China
-        "SKSM": "EUR",  # Slovakia
-        "SMI": "CHF",  # Switzerland
-        "SOFIX": "BGN",  # Bulgaria
-        "SPBLPGPT": "PEN",  # Peru
-        "SPTSX": "CAD",  # Canada
-        "SPX": "USD",  # United States
-        "SSE50": "CNY",  # China
-        "SX5E": "EUR",  # Europe
-        "TA125": "ILS",  # Israel
-    }
-    frames = []
-
-    # iterate over the symbols that actually exist in df_indices
-    for symbol in df_indices["symbol"].unique():
-        df_idx = df_indices[df_indices["symbol"] == symbol].copy()
-
-        # 1) Figure out what currency the index is quoted in.
-        ccy = mapping.get(symbol)  # None if not mapped
-        if ccy is None or ccy == "USD":
-            # Unknown or already USD – just keep the original rows
-            frames.append(df_idx)
-            continue
-
-        # 2) Find the matching FX rate (home-ccy → USD)
-        pair = ccy + "USD"
-        df_fx = df_forex[df_forex["symbol"] == pair].copy()
-
-        if df_idx.empty or df_fx.empty:
-            # No FX data – keep raw index levels instead of dropping them
-            frames.append(df_idx)
-            continue
-
-        # 3) Merge on date and convert OHLC
-        merged = pd.merge(df_idx, df_fx, on="date", suffixes=("", "_fx"))
-        for col in ("open", "high", "low", "close"):
-            merged[col] = merged[col] * merged[f"{col}_fx"]
-
-        frames.append(merged[["symbol", "date", "open", "high", "low", "close"]])
-
-    if not frames:
-        return pd.DataFrame(columns=df_indices.columns)
-
-    # Combine everything back into one DataFrame
-    return pd.concat(frames, ignore_index=True)
+def _indices_to_usd(df: pd.DataFrame, requested=None) -> pd.DataFrame:
+    """Every index level in dollars; see :mod:`pwb_toolbox.datasets.index_currencies`."""
+    if df.empty or "symbol" not in df.columns:
+        return df
+    currencies = needed_currencies(df["symbol"].unique())
+    if currencies:
+        # Asked for under the XXXUSD spelling: with to_usd=True the forex
+        # loader serves the long series whatever the stored spelling.
+        df_forex = load_dataset(
+            FOREX_DAILY_DATASET,
+            symbols=[f"{ccy}USD" for ccy in currencies],
+            to_usd=True,
+            columns=["close"],
+        )
+    else:
+        df_forex = None
+    return convert_indices_to_usd(df, df_forex, requested=requested)
 
 
 def __convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) -> pd.DataFrame:
