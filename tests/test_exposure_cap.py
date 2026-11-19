@@ -293,15 +293,20 @@ class HandComputedNavTest(unittest.TestCase):
         self.assertEqual(strategy.run_report["attempts"], 2)
 
     def test_long_short_at_gross_2_keeps_both_legs_at_99(self):
-        # The long leg is submitted first and refused (cash 100 000 < 100 100).
-        # Scaling the long side to 99 % funds it whatever the order; 0.1.41
-        # scaled the gross to 99 % instead and halved the book (495 shares).
+        # The long leg is submitted first, and as sent it is refused (cash
+        # 100 000 < 100 100). 0.1.43-0.1.52 then scaled the long side to 99 %
+        # (990 shares); 0.1.41 scaled the gross and halved the book (495).
+        # Since 0.1.53 the batch is checked sales first: the short's proceeds
+        # fund the long, and the book is the one the strategy asked for, in
+        # whichever order it sent the legs (see the test below).
         strategy = _book({"A": 1.0, "B": -1.0}, commission=0.001)
-        shares = 990
+        shares = 1_000
         cash = 100_000 - shares * 100 * 1.001 + shares * 100 * 0.999
         expected = cash + shares * 110 - shares * 90
         self.assertAlmostEqual(strategy.log_data[-1]["value"], expected, places=6)
         self.assertEqual(strategy.funding_audit["margin"], 0)
+        self.assertEqual(strategy.run_report["attempts"], 1)
+        self.assertEqual(strategy.sells_first_audit["batches"], 1)
 
     def test_long_short_that_is_funded_is_left_alone(self):
         # Short leg first, no commission: fundable as published, never scaled.

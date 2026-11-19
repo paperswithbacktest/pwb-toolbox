@@ -244,15 +244,23 @@ MAX_LEVERAGE = 0.99
 # The name it had in 0.1.31-0.1.42, when it bounded the gross.
 TARGET_GROSS = MAX_LEVERAGE
 
-# Fallback step, applied when scaling the over-exposed bars was not enough
-# (orders refused for another reason: buys submitted before the sells that
-# fund them, an overnight gap), and the number of times it may be applied
-# before the run is given up on.
+# Fallback step, applied when scaling the over-exposed bars was not enough,
+# and the number of times it may be applied before the run is given up on.
+# Two causes used to trigger it that no step cures and that are no longer
+# counted (0.1.53): buys checked before the sells that fund them -- the batch
+# is now checked sells first, see ``_check_sells_first`` -- and an order
+# accepted at the close it was sized on and refused at the next open because
+# the price gapped up (``FundingAudit.margin_fill``). A book at 99 % lost 10 %
+# of its exposure per step for that; such a run is now re-run once with the
+# cash its largest gap needed (``gap_cushion``), never deeper than one step.
 DELEVERAGE_STEP = 0.90
 DELEVERAGE_MAX_STEPS = 5
 
 # Share of orders a run may fail to fund before it counts as underfunded. An
-# isolated rejection on a gap day is noise; a systematic one freezes the NAV.
+# isolated rejection is noise; a systematic one freezes the NAV. Only the
+# refusals of the broker's check -- the orders of a bar priced at the close
+# they were sized on, after that bar's sales -- are counted against it: they
+# are the book asking for more than the account holds.
 MARGIN_TOLERANCE = 0.02
 # Debit a run may show, as a share of the NAV of the same bar, before it
 # counts as underfunded. A debit of a dollar used to re-run the whole backtest.
@@ -399,6 +407,14 @@ class FundingAudit(bt.Analyzer):
     * ``margin``   -- orders backtrader refused outright, because funding them
       would have taken cash that the position being opened had just consumed.
       This is the one that freezes a NAV and publishes as a Sharpe of zero.
+      It is split in two: ``margin_check``, refused by the broker's check of
+      the bar's orders at the close they were sized on (the book asks for more
+      than the account holds -- what ``_underfunded`` counts, as
+      ``funding_reject_rate``), and ``margin_fill``, accepted there and
+      refused at the fill because the price moved overnight (a book at 99 %
+      on a day its asset opens 2 % higher). Those are not counted as
+      underfunding; above the tolerance they buy one re-run with the cash the
+      largest gap needed (``max_fill_gap``, ``run_strategy``).
     * ``min_cash``  -- the low-water mark of the balance where the broker funds
       the order anyway and lets the account run a debit.
     * ``min_cash_ratio`` -- the same low-water mark as a share of that bar's
@@ -409,7 +425,10 @@ class FundingAudit(bt.Analyzer):
 
     def start(self):
         self.margin = 0
+        self.margin_fill = 0
+        self.fill_gaps = []  # fill price over sizing price, per buy refused at the fill
         self.submitted = 0
+        self._accepted = set()  # refs the broker's check let through
         self.min_cash = None
         self.min_cash_ratio = None
         self.min_value = None
@@ -417,8 +436,15 @@ class FundingAudit(bt.Analyzer):
     def notify_order(self, order):
         if order.status == order.Submitted:
             self.submitted += 1
+        elif order.status == order.Accepted:
+            self._accepted.add(order.ref)
         elif order.status == order.Margin:
             self.margin += 1
+            if order.ref in self._accepted:
+                self.margin_fill += 1
+                gap = _fill_gap(order, _cheat_on_close(self.strategy.broker))
+                if gap is not None:
+                    self.fill_gaps.append(gap)
 
     def next(self):
         broker = self.strategy.broker
@@ -444,14 +470,42 @@ class FundingAudit(bt.Analyzer):
 
     def get_analysis(self):
         submitted = max(self.submitted, 1)
+        margin_check = self.margin - self.margin_fill
         return {
             "margin": self.margin,
+            "margin_check": margin_check,
+            "margin_fill": self.margin_fill,
             "submitted": self.submitted,
             "reject_rate": self.margin / submitted,
+            "funding_reject_rate": margin_check / submitted,
+            "fill_reject_rate": self.margin_fill / submitted,
+            "max_fill_gap": max(self.fill_gaps) if self.fill_gaps else None,
             "min_cash": self.min_cash,
             "min_cash_ratio": self.min_cash_ratio,
             "min_value": self.min_value,
         }
+
+
+def _fill_gap(order, coc: bool = False):
+    """The price a buy refused at the fill was to pay, over the close it was sized on.
+
+    Read when the refusal is notified, on the bar of the fill: a market order
+    fills at that bar's open (at the close it was placed on under
+    cheat-on-close, where there is no gap). None for a sale or an unknown price.
+    """
+    try:
+        if not order.isbuy():
+            return None
+        sized = float(order.created.price)
+        if order.exectype == order.Market and not coc:
+            paid = float(order.data.open[0])
+        else:
+            paid = float(order.created.price if order.price is None else order.price)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+    if not (sized > 0 and np.isfinite(paid) and paid > 0):
+        return None
+    return paid / sized
 
 
 def _underfunded(audit: dict, tolerance: float, debit_tolerance: float = DEBIT_TOLERANCE) -> bool:
@@ -460,9 +514,17 @@ def _underfunded(audit: dict, tolerance: float, debit_tolerance: float = DEBIT_T
     The margin check itself stays in force -- this only decides whether the
     same strategy is worth re-running smaller. A debit counts only beyond
     ``debit_tolerance`` of the NAV: one day a dollar short used to re-run the
-    whole backtest at a fraction of its exposure.
+    whole backtest at a fraction of its exposure. Refusals count only when the
+    broker's check made them (``funding_reject_rate``): an order refused at
+    the fill was fundable at the price it was sized on, and the overnight move
+    that refused it is not cured by a smaller book (0.1.31-0.1.52 re-ran the
+    whole run at 90 % for it, up to five times). An audit without the split
+    is read as before.
     """
-    if audit["reject_rate"] > tolerance:
+    rate = audit.get("funding_reject_rate")
+    if rate is None:
+        rate = audit["reject_rate"]
+    if rate > tolerance:
         return True
     ratio = audit.get("min_cash_ratio")
     if ratio is None and audit.get("min_cash") is not None:
@@ -730,6 +792,118 @@ def _refuse_outside_universe(
         return original(order, check=check)
 
     broker.submit = submit
+    return audit
+
+
+def _linked(broker, order) -> bool:
+    """Whether ``order`` belongs to a bracket or an OCO group, whose order is the engine's."""
+    if getattr(order, "parent", None) is not None or not getattr(order, "transmit", True):
+        return True
+    if getattr(order, "_tw_bracket", None) is not None:
+        return True
+    # backtrader files every order under ``_ocos`` as the head of its own
+    # group; it is linked when the group has another member.
+    ocos = getattr(broker, "_ocos", None) or {}
+    head = ocos.get(order.ref)
+    if head is None:
+        return False
+    return head != order.ref or len((getattr(broker, "_ocol", None) or {}).get(head, ())) > 1
+
+
+def _batch_refuses(broker, orders) -> bool:
+    """Whether the broker's own check of ``orders``, in that order, would refuse one.
+
+    The same pre-execution both engines run on a bar's batch: a running cash,
+    each order priced at the close it was sized on, every order's cash flow
+    carried to the next one (a refused buy's included -- which is why a single
+    buy ahead of its sales can refuse every buy behind it).
+    """
+    if hasattr(broker, "check_submitted"):  # backtrader
+        cash = broker.cash
+        positions = {}
+        for order in orders:
+            position = positions.get(order.data)
+            if position is None:
+                position = positions[order.data] = broker.positions[order.data].clone()
+            cash = broker._execute(order, cash=cash, position=position)
+            if cash < 0.0:
+                return True
+        return False
+    from tradewind.models import BatchState  # Tradewind: ``acceptance``
+
+    state = BatchState(broker.cash, {}, broker._now)
+    for order in orders:
+        security = order.data.security
+        check = security.models.buying_power.check_order(
+            security, order, broker._check_price(order, order.data), state
+        )
+        state.running_cash -= check.cash_consumed
+        if not check.accepted:
+            return True
+    return False
+
+
+def _check_sells_first(broker) -> dict:
+    """Make the broker check a bar's sales before its purchases when the order placed would refuse one.
+
+    Both engines check the orders a bar submitted as one batch, in submission
+    order, against a running cash; a strategy that rebalances name by name
+    -- ``for d in self.datas: self.order_target_percent(d, w[d])`` -- sends a
+    buy before the sale that funds it, the buy is refused (``Margin``), and
+    the cash it would have used is carried negative, so every buy behind it
+    is refused too. ``the_law_of_small_numbers…``: 64 of its 67 refusals were
+    buys queued ahead of the bar's sales, and the run was then re-run at 90 %,
+    three times, for a book that never asked for more than it held.
+
+    The batch is put in the order a trader places it -- every sale (reductions
+    of a long, new shorts: both bring cash in), then every purchase, each group
+    in the order the strategy sent it -- and only when the batch as sent would
+    have a refusal: a batch the account funds as it stands is left alone, so a
+    run that was never refused is the same run to the last bit. It sits on the
+    broker, so it covers every way an order is placed (``order_target_*``,
+    ``buy``/``sell`` by size, ``close``, an order sent from ``notify_order``);
+    what it changes for a strategy that places its own orders by quantity is
+    the order of their checks and fills within the bar, at the same prices --
+    never which orders are sent nor their size. Brackets and OCO groups are left
+    in the engine's order. The orders are still checked: a batch over the
+    account after its sales is refused as before.
+
+    Returns the audit: ``{"batches": n, "orders": moved, "first": date, "last": date}``.
+    """
+    audit = {"batches": 0, "orders": 0, "first": None, "last": None}
+    name = "check_submitted" if hasattr(broker, "check_submitted") else "acceptance"
+    original = getattr(broker, name, None)
+    if original is None or not hasattr(broker, "submitted"):
+        return audit
+
+    def check(*args, **kwargs):
+        queue = getattr(broker, "submitted", None)
+        if queue is not None and len(queue) > 1:
+            orders = list(queue)
+            buys = [o for o in orders if o.isbuy()]
+            sells = [o for o in orders if not o.isbuy()]
+            first_buy = next((i for i, o in enumerate(orders) if o.isbuy()), None)
+            if (
+                buys and sells and first_buy is not None
+                and any(not o.isbuy() for o in orders[first_buy + 1:])
+                and not any(_linked(broker, o) for o in orders)
+                and _batch_refuses(broker, orders)
+            ):
+                queue.clear()
+                queue.extend(sells + buys)
+                moved = sum(1 for a, b in zip(orders, sells + buys) if a is not b)
+                audit["batches"] += 1
+                audit["orders"] += moved
+                try:
+                    day = orders[0].data.datetime.date(0)
+                except (IndexError, ValueError):
+                    day = None
+                if audit["first"] is None:
+                    audit["first"] = day
+                audit["last"] = day
+        return original(*args, **kwargs)
+
+    setattr(broker, name, check)
     return audit
 
 
@@ -1315,7 +1489,14 @@ def run_strategy(
     A hole in the prices of a *member* is forward-filled in every mode. The
     refusals and closes are on the returned strategy as ``membership_audit``.
 
-    **Funding.** The run is first made as published. If it outgrew the account
+    **Funding.** A bar's orders are checked sales first whenever the order the
+    strategy sent them in would see one refused (``_check_sells_first``), and
+    only the refusals of that check count below. Orders refused at the fill
+    because the price gapped overnight (``margin_fill``) are not underfunding,
+    but they are the purchases of the days the asset rallies: above
+    ``margin_tolerance`` the run is made once more with every target scaled by
+    the sizing close over the highest such open (``gap_cushion``, at least
+    ``DELEVERAGE_STEP``), and returned whatever that run's gaps. The run is first made as published. If it outgrew the account
     -- more than ``margin_tolerance`` of its orders refused for margin, a debit
     beyond ``debit_tolerance`` of the NAV, or the NAV through zero -- and
     ``deleverage`` is on, it is run again with each target of
@@ -1543,6 +1724,9 @@ def run_strategy(
         else:
             schemes = None
         _apply_broker_kwargs(cerebro.broker, run_broker_kwargs)
+        # A bar's sales are checked before its purchases when the batch as
+        # sent would see one refused; see ``_check_sells_first``.
+        sells_first = _check_sells_first(cerebro.broker)
         # After the caller's kwargs, so only the strategy's own calls are seen.
         commission_policy = (
             _strategy_commission_floor(cerebro.broker, schemes)
@@ -1576,6 +1760,7 @@ def run_strategy(
                 strategy.order_journal = None
                 strategy.order_journal_error = f"{type(exc).__name__}: {exc}"
         strategy.listing_audit = listing_audit
+        strategy.sells_first_audit = sells_first
         if listing_audit:
             worst = max(listing_audit.items(), key=lambda kv: kv[1]["orders"])
             refused = sum(entry["orders"] for entry in listing_audit.values())
@@ -1631,6 +1816,9 @@ def run_strategy(
             "scaled_bars": len(scaled),
             "median_scale": float(np.median(scaled)) if scaled else 1.0,
             "underfunded": bool(underfunded),
+            "deleverage_steps": steps,
+            "gap_cushion": cushion,
+            "sells_first": dict(strategy.sells_first_audit),
             "funding": dict(strategy.funding_audit),
             "funding_as_published": (
                 dict(as_published.funding_audit) if as_published is not strategy else None
@@ -1699,6 +1887,12 @@ def run_strategy(
             "scaling": scaling,
             "scaling_used": report["scaling_used"],
             "reject_rate": round(funding["reject_rate"], 6),
+            "margin_check": funding["margin_check"],
+            "margin_fill": funding["margin_fill"],
+            "sells_first_batches": strategy.sells_first_audit["batches"],
+            "step_cap": round(cap, 6),
+            "deleverage_steps": steps,
+            "gap_cushion": round(cushion, 6),
             "min_cash_ratio": (
                 None if funding["min_cash_ratio"] is None
                 else round(funding["min_cash_ratio"], 6)
@@ -1709,6 +1903,7 @@ def run_strategy(
 
     cap, schedule, steps, attempts, as_published = 1.0, None, 0, 0, None
     fallback = False
+    cushion = 1.0
     while True:
         strategy = attempt(cap, schedule)
         attempts += 1
@@ -1716,11 +1911,38 @@ def run_strategy(
             as_published = strategy
         audit = strategy.funding_audit
         underfunded = _underfunded(audit, margin_tolerance, debit_tolerance)
+        if not underfunded and deleverage and cushion == 1.0:
+            # Fundable at the closes it was sized on, refused at the opens: a
+            # book at 99 % misses each purchase whose price opens higher, and
+            # those are the days its asset rallies -- a bias, not noise
+            # (``the_case_for_risk_managed_gold``: Sharpe 0.39 at 89.1 %, 0.29
+            # at 99 % with six such misses). Once, the targets are sized with
+            # the cash the largest of those gaps needed, never more than one
+            # step: 99 % x 1/1.03 for a 3 % gap, not five steps of 10 %.
+            gap = audit.get("max_fill_gap")
+            if (
+                audit.get("fill_reject_rate", 0.0) > margin_tolerance
+                and gap is not None and gap > 1.0
+                and strategy._pwb_cap_records
+            ):
+                cushion = max(DELEVERAGE_STEP, 1.0 / gap)
+                cap *= cushion
+                print(
+                    f"Refused at the fill: {audit['margin_fill']}/{audit['submitted']} "
+                    f"orders fundable at their sizing close, refused at an open up to "
+                    f"{gap - 1:.2%} higher -- re-running every target at {cushion:.1%} "
+                    f"of itself, once"
+                )
+                continue
         if not underfunded or not deleverage:
             return finish(strategy, as_published, attempts, cap, underfunded)
 
         why = (
-            f"{audit['margin']}/{audit['submitted']} orders refused for margin"
+            f"{audit['margin_check']}/{audit['submitted']} orders refused for margin"
+            + (
+                f" (and {audit['margin_fill']} at the fill, not counted)"
+                if audit.get("margin_fill") else ""
+            )
             + (
                 f", min cash {audit['min_cash']:,.0f} ({audit['min_cash_ratio']:.2%} of NAV)"
                 if audit["min_cash_ratio"] is not None
