@@ -51,7 +51,7 @@ from .backtest_engine import (
     DEBIT_TOLERANCE,
 )
 from .optimization_engine import optimize_strategy_ga
-from .indicators import SigmoidLongCompositeIndicator
+from .indicators import CrossSectionalQuantileSignal, SigmoidLongCompositeIndicator
 from .portfolio import run_portfolio, generate_reports
 from .strategies import (
     DailyEqualWeightPortfolio,

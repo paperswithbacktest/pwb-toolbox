@@ -1,5 +1,7 @@
 # Backtesting
 
+This page ships with the package: `python -m pwb_toolbox.docs backtesting` prints it.
+
 ## Choosing the engine
 
 Every class in `pwb_toolbox.backtesting` is built on one engine, bound when the package is imported: backtrader by default, or [Tradewind](https://github.com/paperswithbacktest/tradewind), the Apache 2.0 engine compatible with the backtrader API. Choose before the import, by precedence:
@@ -214,11 +216,80 @@ scale sent with any target, `1.0` when untouched), `strategy.requested_long` and
 and `strategy.run_report`; the same summary is printed on one `Exposure: {...}` line.
 Read `exposure_cap` before comparing returns across runs.
 
-With `"sp500"` or `"liquid1000"` in `symbols`, a name that leaves the universe is
-closed on its first bar outside, at its last member close, and any other order on it
-is refused (`order.Rejected`) until it is a member again; `strategy.membership_audit`
-lists both. Its bars outside are flat in the feed (`BaseStrategy.is_tradable` returns
-`False` on them), so screen on tradable names to keep the book invested.
+With `"sp500"` or `"liquid1000"` in `symbols`, `pit_exit` (default `"hold"`,
+`PWB_PIT_EXIT` in the environment) says what happens to a name that leaves the
+universe. With `"hold"`, the default, a position formed among the members is kept
+until the strategy's next rebalancing bar and earns the name's **real** returns
+meanwhile (marked through the cash, one bar late); whatever the strategy still holds
+in a non-member then is closed by the harness, and an order that opens, adds to or
+flips a position in a non-member is refused (a sale passes). With `"liquidate"`
+(0.1.43) the position is closed on the first bar outside, at the last member close,
+and any other order on the name is refused (`order.Rejected`) until it is a member
+again. `strategy.membership_audit` lists the refusals and closes. In both modes the
+bars outside are flat in the feed and `is_member` / `BaseStrategy.is_tradable` answer
+`False` on them, so screen on members to keep the book invested.
+
+### Short borrow
+
+Shorting a stock costs a borrow fee; by default the harness charges none.
+`run_strategy(..., short_borrow_bps=50)` charges every short position held over a
+night `|value| x 50 / 10 000 x calendar days / 365` (ACT/365, a Monday pays for the
+weekend), out of the cash, at the end of each bar. `PWB_SHORT_BORROW_BPS` in the
+environment sets the default for a whole campaign; `0` (the default) leaves the NAV
+exactly as before the parameter existed. Like the marks of `pit_exit="hold"`, a charge
+reaches the NAV one bar after it is booked. The total is `strategy.borrow_cost` and
+`strategy.run_report["borrow"]` (`total`, `short_borrow_bps`, `start_nav_share`,
+`bars`, `pending_at_end`, `short_names`), printed on one line whenever the book was short:
+
+```
+Short borrow: {"short_borrow_bps": 50.0, "total": 1843.12, "start_nav_share": 0.018431, "bars": 4512, "short_names": 311}
+```
+
+A `setcommission(interest=...)` of the strategy is not applied (the measured
+per-symbol schemes replace a strategy's scheme), so this is the only borrow cost.
+
+### Long-short by quantiles
+
+`CrossSectionalQuantileSignal` ranks the whole universe once per bar and gives each
+name `+1` (long quantiles), `-1` (short quantiles) or `0`;
+`MonthlyLongShortQuantilePortfolio` trades it on the first session of each month,
+equal weight, gross exposure `leverage`. Momentum 12-1 by deciles on the S&P 500,
+point in time, with a 50 bp/yr borrow on the short leg:
+
+```python
+from pwb_toolbox.backtesting import (
+    CrossSectionalQuantileSignal,
+    MonthlyLongShortQuantilePortfolio,
+    run_strategy,
+)
+
+strategy = run_strategy(
+    indicator_cls=CrossSectionalQuantileSignal,
+    indicator_kwargs={"lookback": 252, "skip": 21, "quantiles": 10},  # close[-21] / close[-252] - 1
+    strategy_cls=MonthlyLongShortQuantilePortfolio,
+    strategy_kwargs={"leverage": 0.9},
+    symbols=["sp500"],
+    start_date="2000-01-01",
+    cash=1_000_000.0,
+    short_borrow_bps=50,
+)
+print(strategy.run_report["borrow"])
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `lookback`, `skip` | `252`, `21` | the score is `close[-skip] / close[-lookback] - 1` |
+| `quantiles` | `10` | groups of equal count, `0` the lowest score |
+| `long_q`, `short_q` | highest, lowest | an int or a list of quantiles to go long / short |
+| `score` | momentum | a callable `score(feed) -> float` reading `[0]` and negative indices only; NaN skips the name |
+| `min_names` | `quantiles` | fewer scorable names than this: every signal is `0` |
+
+A name is ranked only on bars where the strategy's `is_member` and `is_tradable`
+say so, i.e. a member of the point-in-time universe of the day. The indicator reads the
+other names' feeds, so it makes backtrader run bar by bar (`runonce=False`), and a run
+with it is slower than a vectorised one. Under `pit_exit="hold"` a feed is flat while
+the name is out of the universe: the window of a name that has just come back (or
+just listed) may start on that flat price.
 
 ### Fees a strategy sets itself
 
@@ -258,13 +329,16 @@ one `Checks: lookahead pass, universe pass, execution pass, costs pass (3 ms)` l
 | `lookahead` | the code reads future data: a positive index on a feed (`self.data.close[1]`), quarterly fundamentals merged without a reporting lag, an anchored offset that rolls into the current period (`d - MonthBegin(1)`) | a pattern that needs a reader (`shift(-n)`, a `MonthEnd(1)` correct only on a month end...), or the code could not be found |
 | `universe` | -- | a fixed list of single stocks (or of three coins or more) replayed over 5 years or more: today's survivors |
 | `execution` | an order filled on the bar whose data produced it (cheat-on-close, cheat-on-open) | nothing was filled |
-| `costs` | more than 20 % of the traded value of stocks and ETFs charged the default floor instead of a measured spread | more than 5 % of it; or a flat commission set by the strategy |
+| `costs` | more than 20 % of the traded value of stocks and ETFs charged the default floor instead of a measured spread | more than 5 % of it; or a flat commission set by the strategy; or a book that held short positions with `short_borrow_bps=0` ("short leg carries no borrow cost") |
 
 The rules and thresholds are in `pwb_toolbox/backtesting/checks.py`; the look-ahead
 analysis is `pwb_toolbox/backtesting/lookahead.py` (also `python -m
 pwb_toolbox.backtesting.lookahead strategy.py`). A check never stops a backtest: one
 that cannot run is reported as `warn` with the reason. `PWB_HARNESS_CHECKS=0` in the
-environment switches them off. Post the block unchanged with the run's results:
+environment switches them off. When the book held short positions, the `costs`
+detail carries `shortBorrowBps`, `shortBorrowCost`, `shortBorrowStartNavShare` and
+`shortNames`, and its summary ends with `short borrow 50 bp/yr (1,843 paid)` or
+`short leg carries no borrow cost`. Post the block unchanged with the run's results:
 `requests.post(".../api/v1/me/strategies/{slug}/results", json={..., "checks": strategy.checks})`.
 
 ### Option contracts
@@ -460,7 +534,8 @@ with different rebalancing rules and signal expectations:
 - **MonthlyLongShortPortfolio** – once per month allocates half of the leverage
   to longs and half to shorts based on a universe‑aware signal.
 - **MonthlyLongShortQuantilePortfolio** – monthly rebalance that ranks assets
-  by a per‑asset signal and goes long the strongest and short the weakest.
+  by a per‑asset signal and goes long the strongest and short the weakest; pair
+  it with `CrossSectionalQuantileSignal` (see "Long-short by quantiles").
 - **MonthlyRankedEqualWeightPortfolio** – monthly equal‑weight portfolio with an
   optional ranking step and support for keeping only the top *N* assets.
 - **QuarterlyTopMomentumPortfolio** – every quarter concentrates exposure in the
