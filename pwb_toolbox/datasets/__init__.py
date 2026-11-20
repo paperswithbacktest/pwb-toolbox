@@ -669,11 +669,29 @@ def _api_file_index(dataset_name: str):
 
 
 def _api_listing(dataset_name: str, split: str, pwb_api_key: str, revision=None) -> list:
-    params = {"pwb_api_key": pwb_api_key, "split": split}
+    """The API's file list for a split.
+
+    The key travels in the ``pwb-api-key`` header, which the API reads before
+    the ``pwb_api_key`` query parameter: in the query it ended up in the URL of
+    every ``HTTPError`` (``403 Client Error ... for url: ...?pwb_api_key=<key>``),
+    so in tracebacks and logs. An error raised here never carries the key.
+    """
+    params = {"split": split}
     if revision:
         params["revision"] = revision
-    resp = requests.get(f"{_API_BASE_URL}/{dataset_name}", params=params, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(
+            f"{_API_BASE_URL}/{dataset_name}",
+            params=params,
+            headers={"pwb-api-key": pwb_api_key},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        message = _redact_key(exc)
+        if pwb_api_key:
+            message = message.replace(pwb_api_key, "***")
+        raise type(exc)(message, response=getattr(exc, "response", None)) from None
     return resp.json().get("files", [])
 
 

@@ -333,3 +333,38 @@ class ThrottleTest(unittest.TestCase):
                 ds._http_download("https://h/x?pwb_api_key=SECRET123", io.BytesIO())
         self.assertNotIn("SECRET123", str(ctx.exception))
         self.assertIn("429", str(ctx.exception))
+
+
+class ListingKeyTest(unittest.TestCase):
+    """The file list asks with the key in a header; an error never carries it."""
+
+    def test_key_goes_in_the_header(self):
+        resp = mock.MagicMock(status_code=200)
+        resp.json.return_value = {"files": ["f"]}
+        with mock.patch.object(ds.requests, "get", return_value=resp) as get:
+            self.assertEqual(ds._api_listing("X", "train", "SECRET123", revision="abc"), ["f"])
+        _, kwargs = get.call_args
+        self.assertEqual(kwargs["headers"], {"pwb-api-key": "SECRET123"})
+        self.assertEqual(kwargs["params"], {"split": "train", "revision": "abc"})
+        self.assertNotIn("SECRET123", get.call_args.args[0])
+
+    def test_errors_are_redacted(self):
+        resp = mock.MagicMock(status_code=403)
+        resp.raise_for_status.side_effect = ds.requests.exceptions.HTTPError(
+            "403 Client Error: Forbidden for url: https://h/v1/datasets/X?split=train&pwb_api_key=SECRET123",
+            response=resp)
+        with mock.patch.object(ds.requests, "get", return_value=resp):
+            with self.assertRaises(ds.requests.exceptions.HTTPError) as ctx:
+                ds._api_listing("X", "train", "SECRET123")
+        self.assertNotIn("SECRET123", str(ctx.exception))
+        self.assertIn("403", str(ctx.exception))
+        self.assertIs(ctx.exception.response, resp)
+        self.assertIsNone(ctx.exception.__cause__)
+        self.assertTrue(ctx.exception.__suppress_context__)
+
+        # a transport error that echoes the key elsewhere than in a query string
+        err = ds.requests.exceptions.ConnectionError("Max retries exceeded (key SECRET123)")
+        with mock.patch.object(ds.requests, "get", side_effect=err):
+            with self.assertRaises(ds.requests.exceptions.ConnectionError) as ctx:
+                ds._api_listing("X", "train", "SECRET123")
+        self.assertNotIn("SECRET123", str(ctx.exception))
