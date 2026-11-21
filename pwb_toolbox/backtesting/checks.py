@@ -20,6 +20,7 @@ Four checks, each a rule with its thresholds declared below:
   bar whose data produced it (cheat-on-close, cheat-on-open) fails.
 * ``costs`` -- the share of the traded value charged the default floor rather
   than a measured spread; an equity at the floor has no reason to be there.
+  A book that was short and paid no borrow (``short_borrow_bps=0``) warns.
 
 A check never stops a backtest: if computing one raises, it is reported as
 ``warn`` with the reason, and the run goes on. ``PWB_HARNESS_CHECKS=0`` in the
@@ -68,6 +69,9 @@ EXECUTION_SAME_BAR_TOLERANCE = 0
 #: it warns. 0.1.47 put every member of ``["sp500"]`` there: 100 %.
 COSTS_DEFAULT_FAIL_SHARE = 0.20
 COSTS_DEFAULT_WARN_SHARE = 0.05
+#: Appended to the summary of a book that held short positions and paid
+#: nothing to borrow them; a ``pass`` becomes a ``warn`` (a ``fail`` stays).
+COSTS_NO_BORROW = "short leg carries no borrow cost"
 
 # How a feed's repository maps to an asset class.
 _REPO_CLASS = {
@@ -473,13 +477,41 @@ def check_execution(journal: dict, flags: dict) -> dict:
 
 
 def check_costs(journal: dict, schemes, policy, caller_commission=None,
-                routes: dict | None = None, members=frozenset()) -> dict:
+                routes: dict | None = None, members=frozenset(), borrow=None) -> dict:
     """``fail`` when the traded value of measurable names sits at the default floor.
 
     The class of each name is judged here, from the feed it was read from, not
     from the cost module's own routing: 0.1.47's defect was that routing, and a
     check that reused it would have agreed with it.
+
+    ``borrow`` is ``run_report["borrow"]``. When the book held short positions
+    the detail carries ``shortBorrowBps``, ``shortBorrowCost`` and
+    ``shortNames``; when it held them at ``short_borrow_bps=0`` the summary
+    says ``COSTS_NO_BORROW`` and a ``pass`` becomes a ``warn``.
     """
+    item = _check_spread_costs(journal, schemes, policy, caller_commission, routes, members)
+    if not borrow or not borrow.get("short_names"):
+        return item
+    bps = float(borrow.get("short_borrow_bps") or 0.0)
+    item["detail"] = {
+        **(item.get("detail") or {}),
+        "shortNames": borrow["short_names"],
+        "shortBorrowBps": bps,
+        "shortBorrowCost": float(borrow.get("total") or 0.0),
+        "shortBorrowStartNavShare": borrow.get("start_nav_share"),
+    }
+    if bps > 0:
+        item["summary"] += f"; short borrow {bps:g} bp/yr ({float(borrow.get('total') or 0.0):,.0f} paid)"
+    else:
+        item["summary"] += f"; {COSTS_NO_BORROW}"
+        if item["status"] == "pass":
+            item["status"] = "warn"
+    return item
+
+
+def _check_spread_costs(journal: dict, schemes, policy, caller_commission=None,
+                        routes: dict | None = None, members=frozenset()) -> dict:
+    """The spread part of ``check_costs``, as it was before the borrow."""
     traded = journal["by_symbol"]
     total = sum(v["value"] for v in traded.values())
     paid = sum(v["comm"] for v in traded.values())
@@ -615,7 +647,7 @@ def compute(context: dict) -> dict:
 
     ``context`` keys: ``sources`` (or ``sources_error``), ``facts`` (or
     ``facts_error``), ``membership``, ``members``, ``journal``, ``flags``,
-    ``schemes``, ``policy``, ``caller_commission``, ``routes``. A missing piece makes its
+    ``schemes``, ``policy``, ``caller_commission``, ``routes``, ``borrow``. A missing piece makes its
     check a ``warn`` with the reason, never an exception.
     """
 
@@ -635,6 +667,7 @@ def compute(context: dict) -> dict:
         _safely("costs", lambda: check_costs(
             need("journal"), context.get("schemes"), context.get("policy"),
             context.get("caller_commission"), context.get("routes"), members,
+            context.get("borrow"),
         )),
     ]
     return {

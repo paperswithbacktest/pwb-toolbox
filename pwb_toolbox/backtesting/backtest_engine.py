@@ -283,6 +283,18 @@ REFUSE_BEFORE_LISTING = True
 PIT_EXITS = ("hold", "liquidate", "freeze")
 PIT_EXIT = "hold"
 
+# Annual cost of borrowing the shares a book is short, in basis points of
+# their value; see ``run_strategy``. 0 charges nothing, as every release before
+# this one did. ``PWB_SHORT_BORROW_BPS`` in the environment overrides the
+# default for a whole campaign.
+SHORT_BORROW_BPS = 0.0
+# Day count of the charge: calendar days between two bars over 365, the
+# convention of a stock loan, and of backtrader's own ``interest``. A Monday
+# pays for the weekend, a holiday is paid by the bar after it, and a calendar
+# with more or fewer sessions a year (forex, a foreign exchange) pays the same
+# rate per year.
+SHORT_BORROW_DAYS_PER_YEAR = 365.0
+
 
 def _era_cuts(closes: pd.DataFrame, gap_years: int) -> dict:
     """``{symbol: (first bar kept, first bar on disk, earlier eras)}``.
@@ -450,13 +462,17 @@ class FundingAudit(bt.Analyzer):
         broker = self.strategy.broker
         cash = broker.get_cash()
         marked = float(getattr(self.strategy, "_pwb_ms_marked", 0.0) or 0.0)
-        if getattr(self.strategy, "_pwb_ms_added", False):
+        if getattr(self.strategy, "_pwb_ms_added", False) or getattr(
+            self.strategy, "_pwb_borrow_added", False
+        ):
             # pit_exit="hold": the cash the harness books to mark a non-member
             # to its real close is value, not money -- a held name that fell
             # after its exit would read as a debit -- and a settlement booked
             # this bar is money the broker has not applied yet. All of it is
             # counted once everything asked for has landed -- also on a bar
             # where no mark is left but the reversal of the last one has not.
+            # A short-borrow charge booked this bar is money too, pending in
+            # the same queue (``short_borrow_bps``).
             cash = cash + _pending_cash(broker) - marked
         if self.min_cash is None or cash < self.min_cash:
             self.min_cash = cash
@@ -949,7 +965,7 @@ def _reduces(position: float, size: float) -> bool:
 
 def _with_exposure_cap(
     strategy_cls, cap: float = 1.0, schedule=None, membership=None, guard=None,
-    pit_exit="liquidate", real_prices=None,
+    pit_exit="liquidate", real_prices=None, short_borrow_bps=0.0,
 ):
     """Subclass ``strategy_cls`` to scale, and record, every target it asks for.
 
@@ -1004,8 +1020,21 @@ def _with_exposure_cap(
     ``_record(...)`` had it called with the wrapper's two arguments, and 21 of
     the published strategies use one of those names. A subclass that is not
     the strategy's author must not pick the names its author would.
+
+    With ``short_borrow_bps`` above 0, every short position held over a night
+    pays ``|shares| x close x short_borrow_bps / 1e4 x calendar days / 365``,
+    measured at the close of the bar before (the real close for a non-member
+    held under "hold", as the exposure records value it) and taken from the
+    cash with ``add_cash`` at the end of the bar that ends the interval
+    (``_pwb_borrow``): like the marks of "hold", it reaches the NAV one bar
+    later, and the charge of the last bar never does. It is real money, so
+    ``FundingAudit`` counts it while it is pending (``_pwb_borrow_added``).
+    At 0 nothing is called and the run is the one of the releases without it,
+    bit for bit; which names were ever short is recorded either way
+    (``_pwb_short_seen``), for the ``costs`` check.
     """
     days, scales = schedule if schedule else ((), ())
+    borrow_rate = float(short_borrow_bps or 0.0) / 1e4
     guard = guard if guard is not None else {}
     hold = membership is not None and pit_exit == "hold"
 
@@ -1036,6 +1065,14 @@ def _with_exposure_cap(
             self._pwb_ms_accrued = {}  # name -> cash booked to mark it to its real close
             self._pwb_ms_marked = 0.0  # their sum: in the broker's cash, not money (FundingAudit)
             self._pwb_ms_added = False  # the harness has called add_cash (FundingAudit)
+            self._pwb_shorts = {}  # name -> data whose position is short
+            self._pwb_short_seen = set()  # every name that was ever short
+            self._pwb_borrow_day = None  # date of the last bar seen
+            self._pwb_borrow_value = 0.0  # value of the shorts at that bar's close
+            self._pwb_borrow_added = False  # a borrow charge was booked (FundingAudit)
+            self._pwb_borrow_last = 0.0  # the latest charge (pending at the end of the run)
+            self.borrow_cost = 0.0  # every charge booked, in cash
+            self.borrow_bars = 0  # bars that paid a charge
             super().__init__(*args, **kwargs)
 
         # -- targets ----------------------------------------------------------
@@ -1282,6 +1319,14 @@ def _with_exposure_cap(
             entry["cash"] += cash
 
         def notify_order(self, order):
+            if order.status in (order.Completed, order.Partial):
+                # Which names are short: read, never charged, at 0 bps.
+                name = getattr(order.data, "_name", None) or id(order.data)
+                if self.getposition(order.data).size < 0:
+                    self._pwb_shorts[name] = order.data
+                    self._pwb_short_seen.add(name)
+                else:
+                    self._pwb_shorts.pop(name, None)
             if membership is not None and order.status == order.Completed:
                 name = getattr(order.data, "_name", None)
                 if real_prices is not None and name in real_prices:
@@ -1362,12 +1407,38 @@ def _with_exposure_cap(
                     self._pwb_ms_accrued.pop(name, None)
             self._pwb_ms_marked = float(sum(self._pwb_ms_accrued.values()))
 
+        # -- short borrow ---------------------------------------------------------
+        def _pwb_borrow(self):
+            """Charge the shorts held since the previous bar's close (``short_borrow_bps``)."""
+            day = self.datas[0].datetime.date(0)
+            prev, value = self._pwb_borrow_day, self._pwb_borrow_value
+            if day == prev:
+                return
+            if prev is not None and value > 0:
+                charge = value * borrow_rate * (day - prev).days / SHORT_BORROW_DAYS_PER_YEAR
+                if charge:
+                    self.broker.add_cash(-charge)
+                    self._pwb_borrow_added = True
+                    self._pwb_borrow_last = charge
+                    self.borrow_cost += charge
+                    self.borrow_bars += 1
+            self._pwb_borrow_day = day
+            self._pwb_borrow_value = 0.0
+            for name, data in list(self._pwb_shorts.items()):
+                size = self.getposition(data).size
+                if size < 0:
+                    self._pwb_borrow_value -= size * self._pwb_mark_price(name, data)
+                else:
+                    del self._pwb_shorts[name]
+
         def _pwb_after_bar(self):
             self._pwb_cap_close_bar()
             if membership is not None and self.datas:
                 self._pwb_ms_step()
                 if real_prices is not None:
                     self._pwb_accrue()
+            if borrow_rate and self.datas:
+                self._pwb_borrow()
 
         def prenext(self):
             super().prenext()
@@ -1425,6 +1496,7 @@ def run_strategy(
     scaling="bar",
     debit_tolerance=DEBIT_TOLERANCE,
     pit_exit=None,
+    short_borrow_bps=None,
 ):
     """Run a tactical asset allocation strategy with Backtrader.
 
@@ -1530,6 +1602,27 @@ def run_strategy(
     and of scaled bars); the same summary is printed on one ``Exposure:`` line.
     A run that stays underfunded is returned with ``run_report["underfunded"]``
     set, so the caller can refuse it rather than record a number.
+
+    **Short borrow.** ``short_borrow_bps`` (default ``SHORT_BORROW_BPS``, 0.0;
+    ``PWB_SHORT_BORROW_BPS`` in the environment) is the annual cost of
+    borrowing the shares the book is short, in basis points of their value.
+    Each bar, the shorts held at the previous close pay
+    ``|value| x short_borrow_bps / 1e4 x calendar days / 365`` out of the cash
+    (ACT/365: a Monday pays for the weekend, and a forex or foreign calendar
+    pays the same rate per year as a US one). The charge is booked with
+    ``add_cash`` at the end of the bar and reaches the NAV one bar later, like
+    the marks of ``pit_exit="hold"``; the last bar's charge is booked but never
+    reaches the NAV (``run_report["borrow"]["pending_at_end"]``). A non-member
+    held short under "hold" pays on its real close. backtrader's own
+    ``interest`` (``setcommission(interest=...)``) is not applied: the
+    measured per-symbol schemes replace a strategy's scheme. The total is
+    ``strategy.borrow_cost`` and ``run_report["borrow"]`` (``total``,
+    ``short_borrow_bps``, ``start_nav_share``, ``bars``, ``short_names``),
+    printed on one ``Short borrow:`` line whenever the book was short; the
+    ``costs`` check warns when it was short and charged nothing. At 0 the run
+    is the one of the releases before the parameter, bit for bit. A
+    long-short template: ``docs/backtesting.md``, "Long-short by quantiles"
+    (``python -m pwb_toolbox.docs backtesting``).
     """
     if not 0 < max_leverage <= 1:
         raise ValueError(
@@ -1544,6 +1637,15 @@ def run_strategy(
         pit_exit = os.getenv("PWB_PIT_EXIT", PIT_EXIT) or PIT_EXIT
     if pit_exit not in PIT_EXITS:
         raise ValueError(f"pit_exit={pit_exit!r}: one of {PIT_EXITS}")
+    if short_borrow_bps is None:
+        short_borrow_bps = float(
+            os.getenv("PWB_SHORT_BORROW_BPS", SHORT_BORROW_BPS) or SHORT_BORROW_BPS
+        )
+    short_borrow_bps = float(short_borrow_bps)
+    if not np.isfinite(short_borrow_bps) or short_borrow_bps < 0:
+        raise ValueError(
+            f"short_borrow_bps={short_borrow_bps!r}: an annual cost in basis points, 0 or more"
+        )
     # The automatic checks (``checks.py``): the strategy's code is read now,
     # while the frames that hold it -- a file, a notebook cell, the caller of
     # ``exec`` -- are still on the stack. Nothing here may stop the run.
@@ -1694,6 +1796,7 @@ def run_strategy(
             _with_exposure_cap(
                 strategy_cls, cap, schedule=schedule, membership=acting, guard=guard,
                 pit_exit=pit_exit, real_prices=real_prices,
+                short_borrow_bps=short_borrow_bps,
             ),
             total_days=len(trading_days),
             indicator_cls=indicator_cls,
@@ -1839,6 +1942,16 @@ def run_strategy(
                 )),
             },
         }
+        short_names = sorted(map(str, strategy._pwb_short_seen))
+        report["borrow"] = {
+            "short_borrow_bps": short_borrow_bps,
+            "total": float(strategy.borrow_cost),
+            "start_nav_share": float(strategy.borrow_cost) / cash if cash else None,
+            "bars": int(strategy.borrow_bars),
+            "pending_at_end": float(strategy._pwb_borrow_last) if strategy.borrow_bars else 0.0,
+            "short_names": len(short_names),
+            "day_count": "ACT/365",
+        }
         strategy.exposure_cap = report["exposure_cap"]
         strategy.requested_long = as_published.requested_long
         strategy.requested_gross = as_published.requested_gross
@@ -1852,6 +1965,7 @@ def run_strategy(
                 schemes=getattr(strategy, "cost_schemes", None),
                 policy=report["commission_policy"],
                 caller_commission=broker_kwargs.get("commission"),
+                borrow=report["borrow"],
             )
             if getattr(strategy, "order_journal_error", None):
                 context["journal_error"] = strategy.order_journal_error
@@ -1874,6 +1988,18 @@ def run_strategy(
                 "symbols": policy["symbols"],
                 "calls": len(policy["calls"]),
                 "ignored": sorted({k for c in policy["calls"] for k in c["ignored"]}),
+            }))
+        borrow = report["borrow"]
+        if borrow["short_names"] or borrow["total"]:
+            print("Short borrow: " + json.dumps({
+                "short_borrow_bps": borrow["short_borrow_bps"],
+                "total": round(borrow["total"], 2),
+                "start_nav_share": (
+                    None if borrow["start_nav_share"] is None
+                    else round(borrow["start_nav_share"], 6)
+                ),
+                "bars": borrow["bars"],
+                "short_names": borrow["short_names"],
             }))
         funding = strategy.funding_audit
         print("Exposure: " + json.dumps({

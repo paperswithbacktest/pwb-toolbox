@@ -1,0 +1,548 @@
+# Backtesting
+
+This page ships with the package: `python -m pwb_toolbox.docs backtesting` prints it.
+
+## Choosing the engine
+
+Every class in `pwb_toolbox.backtesting` is built on one engine, bound when the package is imported: backtrader by default, or [Tradewind](https://github.com/paperswithbacktest/tradewind), the Apache 2.0 engine compatible with the backtrader API. Choose before the import, by precedence:
+
+1. `pwb_toolbox.engine.select("tradewind")` in code;
+2. `PWB_BACKTEST_ENGINE=tradewind` (or `backtrader`) in the environment, which switches a whole campaign without touching a strategy;
+3. the default, `backtrader`.
+
+The engine that was not chosen is never imported (`pip install pwb-toolbox[tradewind]` pulls Tradewind in). A strategy that needs the engine module takes it from the package, `from pwb_toolbox.backtesting import bt`, and runs on whichever was chosen; `pwb_toolbox.backtesting.engine_name()` says which. Selecting after the import raises, rather than leaving half the classes on each engine.
+
+## Example of trading strategy
+
+`BaseStrategy`: Convenience strategy parent class that keeps a progress bar, records NAV history, exposes `is_tradable`, and returns the latest portfolio sizing.
+
+`run_strategy`: High-level helper that pulls price data, wires a backesting engine, attaches the broker and strategy, and executes the backtest in one call.
+
+```python
+import numpy as np
+import backtrader as bt
+import pwb_toolbox.backtesting as pwb_bt
+import pwb_toolbox.datasets as pwb_ds
+
+
+# ────────────────────────────────────────────────────────────────
+# 1.  SIGNAL
+# ----------------------------------------------------------------
+class DualMomentumSignal(bt.Indicator):
+    """
+    Per‑asset momentum signal (12‑month Rate‑of‑Change) plus a helper
+    that the portfolio can call to obtain the whole allocation vector
+    for the *current* bar.
+    """
+
+    lines = ("momentum",)
+    params = (("period", 252),)  # ≈12 months of trading days
+
+    def __init__(self):
+        # Rate‑of‑Change over the period (use adjusted prices if your feed provides them)
+        self.lines.momentum = bt.indicators.RateOfChange(
+            self.data.close, period=self.p.period
+        )
+
+    # ----- helper ------------------------------------------------
+    @staticmethod
+    def build_weights(
+        momentum_now: dict,
+        asset_groups: list[list[str]],
+        treasury_bill: str,
+        momentum_threshold: float,
+        leverage: float,
+    ) -> dict[str, float]:
+        """
+        Returns dict {symbol: target weight}.  Weights sum to *leverage*.
+
+        Implements *dual momentum* per Antonacci:
+        pick the RS winner in each module *and* require its lookback return
+        to exceed the T‑bill lookback return; otherwise allocate that module to T‑bills.
+        """
+        longs: list[str] = []
+        tbill_slots = 0
+
+        # dynamic absolute momentum hurdle = T‑bill momentum (fallback to provided threshold if NaN)
+        tbill_mom = momentum_now.get(treasury_bill, np.nan)
+        abs_hurdle = tbill_mom if not np.isnan(tbill_mom) else momentum_threshold
+
+        # 1) Select the best performer in each group (relative momentum) with absolute check vs T‑bill
+        for group in asset_groups:
+            # Skip this group if any of its assets' momentum is still NaN
+            if any(np.isnan(momentum_now.get(s, np.nan)) for s in group):
+                continue
+
+            perf_vals = [momentum_now[s] for s in group]
+            max_perf = max(perf_vals)
+            max_symb = group[perf_vals.index(max_perf)]
+
+            if max_perf > abs_hurdle:
+                longs.append(max_symb)
+            else:
+                tbill_slots += 1
+
+        traded_slots = len(longs) + tbill_slots
+        if traded_slots == 0:
+            # Nothing to trade yet (e.g., early look‑back period)
+            return {}
+
+        # 2) Equal‑weight the *slots*; each module contributes exactly one slot
+        slot_wt = leverage / traded_slots
+        weights = {symb: slot_wt for symb in longs}
+
+        if tbill_slots:
+            weights[treasury_bill] = slot_wt * tbill_slots
+
+        return weights
+
+
+# ────────────────────────────────────────────────────────────────
+# 2.  MONTHLY PORTFOLIO
+# ----------------------------------------------------------------
+class MonthlyDualMomentumPortfolio(pwb_bt.BaseStrategy):
+    """
+    Generic monthly rebalancing engine that asks the signal for a
+    *dict of target weights* and then places the necessary orders.
+    """
+
+    params = (
+        ("leverage", 0.9),
+        ("period", 252),
+        ("momentum_threshold", 0.0),
+        ("asset_groups", None),  # list of lists (set below)
+        ("treasury_bill", "BIL"),
+        ("indicator_cls", None),
+        ("indicator_kwargs", {}),  # kwargs forwarded to signal
+    )
+
+    def __init__(self):
+        super().__init__()
+        # build signals
+        self.sig = {
+            d._name: self.p.indicator_cls(d, period=self.p.period) for d in self.datas
+        }
+        self.last_month = -1
+
+    # ----- helper ------------------------------------------------
+    def _current_weights(self, use_prev_bar: bool = False) -> dict[str, float]:
+        """
+        Compute weight dict using momentum readings.
+        If use_prev_bar=True, take momentum from [-1] (prior bar), which is what we want
+        on the first bar of a new month to mimic 'month-end signal, trade next month'.
+        """
+        idx = -1 if use_prev_bar else 0
+        momentum_now = {symb: self.sig[symb][idx] for symb in self.sig}
+        return self.p.indicator_cls.build_weights(
+            momentum_now=momentum_now,
+            asset_groups=self.p.asset_groups,
+            treasury_bill=self.p.treasury_bill,
+            momentum_threshold=self.p.momentum_threshold,
+            leverage=self.p.leverage,
+        )
+
+    # ----- main step --------------------------------------------
+    def next(self):
+        super().next()
+        today = self.datas[0].datetime.date(0)
+        if today.month == self.last_month:
+            return  # only once per month
+        self.last_month = today.month
+
+        # Use prior bar's momentum when the month flips (month-end signal, trade next bar)
+        tgt_wt = self._current_weights(use_prev_bar=True)
+
+        # 1) Flatten anything that should now be zero.
+        for d in self.datas:
+            if d._name not in tgt_wt or tgt_wt[d._name] == 0:
+                self.order_target_percent(d, target=0.0)
+
+        # 2) Set targets for active assets
+        for d in self.datas:
+            wt = tgt_wt.get(d._name, 0.0)
+            if wt != 0 and self.is_tradable(d):
+                self.order_target_percent(d, target=wt)
+
+
+def run_strategy():
+    symbols = ["SPY", "EFA", "HYG", "LQD", "REM", "VNQ", "TLT", "GLD", "BIL"]
+
+    strategy = pwb_bt.run_strategy(
+        indicator_cls=DualMomentumSignal,  # per‑asset indicator
+        indicator_kwargs={"period": 252},
+        strategy_cls=MonthlyDualMomentumPortfolio,
+        strategy_kwargs={
+            "asset_groups": [
+                ["SPY", "EFA"],  # equities: US vs EAFE+
+                ["HYG", "LQD"],  # credit risk: high yield vs credit
+                ["VNQ", "REM"],  # REITs: equity REIT vs mortgage REIT (per paper)
+                ["TLT", "GLD"],  # economic stress: Treasuries vs gold
+            ],
+            "leverage": 0.9,
+        },
+        symbols=symbols,
+        start_date="1990-01-01",
+        cash=100_000.0,
+    )
+    return strategy
+
+
+if __name__ == "__main__":
+    strategy = run_strategy()
+```
+
+![Backtest result](../static/images/backtest-result.png)
+
+### Funding, and names that leave a point-in-time universe
+
+`run_strategy` first runs the strategy as written. If that run outgrew the account
+(more than 2 % of its orders refused for margin, a debit beyond 1 % of the NAV, or
+the NAV through zero), it runs it once more with the targets of
+`order_target_percent` / `order_target_value` scaled down **on the bars that asked
+for more long exposure than `max_leverage`** (default `0.99`: backtrader refuses a
+100 % book plus its commission, a 99 % one trades). Short legs do not count, since
+their sale funds them; orders by size, `buy`/`sell` and `close` are never scaled.
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `max_leverage` | `0.99` | Long exposure, as a share of NAV, above which a bar's targets are scaled. At most 1: backtrader refuses at execution any buy its cash does not cover. |
+| `scaling` | `"bar"` | `"bar"` scales only the over-exposed bars. `"uniform"` divides the whole run by its peak, which keeps the shape of a book whose leverage is the strategy (managed volatility, betting-against-beta): returns shrink, the Sharpe ratio does not. |
+| `debit_tolerance` | `0.01` | Debit, as a share of NAV, a run may show before it counts as underfunded. |
+| `deleverage` | `True` | `False` keeps the run as published, refusals and all. |
+
+What was applied is on the returned strategy: `strategy.exposure_cap` (smallest
+scale sent with any target, `1.0` when untouched), `strategy.requested_long` and
+`strategy.requested_gross` (peaks of what the book asked for), `strategy.funding_audit`
+and `strategy.run_report`; the same summary is printed on one `Exposure: {...}` line.
+Read `exposure_cap` before comparing returns across runs.
+
+With `"sp500"` or `"liquid1000"` in `symbols`, `pit_exit` (default `"hold"`,
+`PWB_PIT_EXIT` in the environment) says what happens to a name that leaves the
+universe. With `"hold"`, the default, a position formed among the members is kept
+until the strategy's next rebalancing bar and earns the name's **real** returns
+meanwhile (marked through the cash, one bar late); whatever the strategy still holds
+in a non-member then is closed by the harness, and an order that opens, adds to or
+flips a position in a non-member is refused (a sale passes). With `"liquidate"`
+(0.1.43) the position is closed on the first bar outside, at the last member close,
+and any other order on the name is refused (`order.Rejected`) until it is a member
+again. `strategy.membership_audit` lists the refusals and closes. In both modes the
+bars outside are flat in the feed and `is_member` / `BaseStrategy.is_tradable` answer
+`False` on them, so screen on members to keep the book invested.
+
+### Short borrow
+
+Shorting a stock costs a borrow fee; by default the harness charges none.
+`run_strategy(..., short_borrow_bps=50)` charges every short position held over a
+night `|value| x 50 / 10 000 x calendar days / 365` (ACT/365, a Monday pays for the
+weekend), out of the cash, at the end of each bar. `PWB_SHORT_BORROW_BPS` in the
+environment sets the default for a whole campaign; `0` (the default) leaves the NAV
+exactly as before the parameter existed. Like the marks of `pit_exit="hold"`, a charge
+reaches the NAV one bar after it is booked. The total is `strategy.borrow_cost` and
+`strategy.run_report["borrow"]` (`total`, `short_borrow_bps`, `start_nav_share`,
+`bars`, `pending_at_end`, `short_names`), printed on one line whenever the book was short:
+
+```
+Short borrow: {"short_borrow_bps": 50.0, "total": 1843.12, "start_nav_share": 0.018431, "bars": 4512, "short_names": 311}
+```
+
+A `setcommission(interest=...)` of the strategy is not applied (the measured
+per-symbol schemes replace a strategy's scheme), so this is the only borrow cost.
+
+### Long-short by quantiles
+
+`CrossSectionalQuantileSignal` ranks the whole universe once per bar and gives each
+name `+1` (long quantiles), `-1` (short quantiles) or `0`;
+`MonthlyLongShortQuantilePortfolio` trades it on the first session of each month,
+equal weight, gross exposure `leverage`. Momentum 12-1 by deciles on the S&P 500,
+point in time, with a 50 bp/yr borrow on the short leg:
+
+```python
+from pwb_toolbox.backtesting import (
+    CrossSectionalQuantileSignal,
+    MonthlyLongShortQuantilePortfolio,
+    run_strategy,
+)
+
+strategy = run_strategy(
+    indicator_cls=CrossSectionalQuantileSignal,
+    indicator_kwargs={"lookback": 252, "skip": 21, "quantiles": 10},  # close[-21] / close[-252] - 1
+    strategy_cls=MonthlyLongShortQuantilePortfolio,
+    strategy_kwargs={"leverage": 0.9},
+    symbols=["sp500"],
+    start_date="2000-01-01",
+    cash=1_000_000.0,
+    short_borrow_bps=50,
+)
+print(strategy.run_report["borrow"])
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `lookback`, `skip` | `252`, `21` | the score is `close[-skip] / close[-lookback] - 1` |
+| `quantiles` | `10` | groups of equal count, `0` the lowest score |
+| `long_q`, `short_q` | highest, lowest | an int or a list of quantiles to go long / short |
+| `score` | momentum | a callable `score(feed) -> float` reading `[0]` and negative indices only; NaN skips the name |
+| `min_names` | `quantiles` | fewer scorable names than this: every signal is `0` |
+
+A name is ranked only on bars where the strategy's `is_member` and `is_tradable`
+say so, i.e. a member of the point-in-time universe of the day. The indicator reads the
+other names' feeds, so it makes backtrader run bar by bar (`runonce=False`), and a run
+with it is slower than a vectorised one. Under `pit_exit="hold"` a feed is flat while
+the name is out of the universe: the window of a name that has just come back (or
+just listed) may start on that flat price.
+
+### Fees a strategy sets itself
+
+Each symbol is charged its measured half-spread for the year of the bar. A strategy's
+own `self.broker.setcommission(...)` can only make fills dearer: **each fill pays the
+higher of the two**.
+
+* A percentage scheme (`commission=0.001`, i.e. 0.1 %; `percabs=False` reads `0.1` as
+  0.1 %) is a floor on the rate: `max(measured half-spread, requested rate)`. A request
+  of 0, or below the measured spread, changes nothing.
+* A per-unit scheme (`commtype=COMM_FIXED`, or a `margin`) competes fill by fill:
+  `max(spread cost, fee x |size|)`. Its `margin`, `mult`, `stocklike`, `interest` and
+  `leverage` are not taken (they would turn a stock into a future); they are listed
+  as ignored.
+* `name="<symbol>"` applies to that symbol only; each call replaces the previous one.
+
+What was applied is in `strategy.run_report["commission_policy"]` and on one
+`Commission policy: {...}` line. `run_strategy(broker_kwargs={"commission": x})` still
+replaces the measured schemes altogether.
+
+### Checks
+
+Every `run_strategy` computes four checks, like a CI run, and attaches them to the
+strategy it returns as `strategy.checks` (also `strategy.run_report["checks"]`), with
+one `Checks: lookahead pass, universe pass, execution pass, costs pass (3 ms)` line:
+
+```json
+{"computedBy": "harness", "toolboxVersion": "0.1.49", "computedAt": "2026-11-12T10:00:00Z",
+ "items": [{"id": "lookahead", "status": "pass", "summary": "no future data read", "detail": {}},
+           {"id": "universe", "status": "pass", "summary": "point-in-time sp500, 1375 names, 531 delisted included", "detail": {}},
+           {"id": "execution", "status": "pass", "summary": "signal at close, fill at next open", "detail": {}},
+           {"id": "costs", "status": "pass", "summary": "955 of 955 traded names at measured spread (100% of traded value)", "detail": {}}]}
+```
+
+| check | fail | warn |
+|---|---|---|
+| `lookahead` | the code reads future data: a positive index on a feed (`self.data.close[1]`), quarterly fundamentals merged without a reporting lag, an anchored offset that rolls into the current period (`d - MonthBegin(1)`) | a pattern that needs a reader (`shift(-n)`, a `MonthEnd(1)` correct only on a month end...), or the code could not be found |
+| `universe` | -- | a fixed list of single stocks (or of three coins or more) replayed over 5 years or more: today's survivors |
+| `execution` | an order filled on the bar whose data produced it (cheat-on-close, cheat-on-open) | nothing was filled |
+| `costs` | more than 20 % of the traded value of stocks and ETFs charged the default floor instead of a measured spread | more than 5 % of it; or a flat commission set by the strategy; or a book that held short positions with `short_borrow_bps=0` ("short leg carries no borrow cost") |
+
+The rules and thresholds are in `pwb_toolbox/backtesting/checks.py`; the look-ahead
+analysis is `pwb_toolbox/backtesting/lookahead.py` (also `python -m
+pwb_toolbox.backtesting.lookahead strategy.py`). A check never stops a backtest: one
+that cannot run is reported as `warn` with the reason. `PWB_HARNESS_CHECKS=0` in the
+environment switches them off. When the book held short positions, the `costs`
+detail carries `shortBorrowBps`, `shortBorrowCost`, `shortBorrowStartNavShare` and
+`shortNames`, and its summary ends with `short borrow 50 bp/yr (1,843 paid)` or
+`short leg carries no borrow cost`. Post the block unchanged with the run's results:
+`requests.post(".../api/v1/me/strategies/{slug}/results", json={..., "checks": strategy.checks})`.
+
+### Option contracts
+
+Option contracts are not price feeds of the harness: an option strategy keeps its own
+book, reads it from `Options-Daily-Price` with `load_option_chain`, and fills at the
+close. The cost of a fill is half the quoted spread, in dollars, from
+`Options-Yearly-TransactionCostParams`:
+
+```python
+from pwb_toolbox.backtesting import options_half_spread, options_cost_breakdown, option_volume_tier
+
+tier = option_volume_tier(mean_daily_option_volume)          # 0 (<1k contracts) to 4 (>1M)
+otm = strike / spot if call else spot / strike
+cost = 100 * options_half_spread(price, otm, tier=tier, underlying="SPY", year=2018)
+options_cost_breakdown(price, otm, tier=tier, underlying="SPY", year=2018)
+# OptionCost(half_spread=..., source='extrapolated', year=2026, segment='underlying', method='measured')
+```
+
+The half spread depends on the option's price (eight bands), its distance to the money
+(within 10 % or beyond) and the underlying: its own row for the 50 underlyings with the
+largest option volume (`FB` reads `META`'s), its liquidity tier otherwise. It never
+exceeds the price. A year the table has not measured takes the nearest measured year
+and says so (`source="extrapolated"`). The table is read once per process; there is no
+estimate to fall back to, so an unreachable table raises rather than trading for free.
+
+## List of strategies
+
+Samples of Papers With Backtest strategies:
+
+| **Strategy Name** | **URL** | **Description** |
+|---|---|---|
+| Relative Strength Strategies for Investing | https://paperswithbacktest.com/strategies/relative-strength-strategies-for-investing | Ranks assets by recent outperformance and tilts toward leaders. |
+| Optimal Momentum: A Global Cross-Asset Approach | https://paperswithbacktest.com/strategies/optimal-momentum-a-global-cross-asset-approach | Cross-asset momentum framework to allocate across global markets. |
+| Opposing Seasonalities in Treasury vs Equity Returns | https://paperswithbacktest.com/strategies/opposing-seasonalities-in-treasury-versus-equity-returns | Exploits offset seasonal patterns between stocks and Treasuries. |
+| Momentum Effects in Country Equity Indexes | https://paperswithbacktest.com/strategies/momentum-effects-in-country-equity-indexes | Country-level equity momentum rotation. |
+| Does Trend Following Work on Stocks? | https://paperswithbacktest.com/strategies/does-trend-following-work-on-stocks | Tests simple trend rules on individual equities. |
+| Two Centuries of Trend Following | https://paperswithbacktest.com/strategies/two-centuries-of-trend-following | Long-horizon evidence for time-series momentum across assets. |
+| The Volatility Effect: Lower Risk Without Lower Return | https://paperswithbacktest.com/strategies/the-volatility-effect-lower-risk-without-lower-return | Low-volatility tilt aiming for higher risk-adjusted returns. |
+| Pairs Trading: Performance of a Relative-Value Arbitrage Rule | https://paperswithbacktest.com/strategies/pairs-trading-performance-of-a-relative-value-arbitrage-rule | Classic mean-reversion pairs trading. |
+| Best Way to Trade Using the January Barometer | https://paperswithbacktest.com/strategies/what-s-the-best-way-to-trade-using-the-january-barometer | Calendar effect rule based on January returns. |
+| Equity Returns at the Turn of the Month | https://paperswithbacktest.com/strategies/equity-returns-at-the-turn-of-the-month | Captures turn-of-month equity seasonality. |
+| Payday Anomaly | https://paperswithbacktest.com/strategies/payday-anomaly | Exploits salary/payday related flow seasonality. |
+| Fact, Fiction, and Momentum Investing | https://paperswithbacktest.com/strategies/fact-fiction-and-momentum-investing | Evidence-based momentum implementation across assets. |
+| Do Momentum and Reversals Coexist? | https://paperswithbacktest.com/strategies/do-momentum-and-reversals-coexist | Combines intermediate momentum with short-term reversal. |
+| Testing the Significance of Calendar Effects | https://paperswithbacktest.com/strategies/testing-the-significance-of-calendar-effects | Robustness tests on calendar anomalies. |
+| Market Sentiment and an Overnight Anomaly | https://paperswithbacktest.com/strategies/market-sentiment-and-an-overnight-anomaly | Trades overnight edge conditioned on sentiment. |
+| Betting Against Beta | https://paperswithbacktest.com/strategies/betting-against-beta | Low-beta long/short factor (BAB). |
+| Paired Switching for Tactical Portfolio Allocation | https://paperswithbacktest.com/strategies/paired-switching-for-tactical-portfolio-allocation | Switches between two assets using trend/momentum signals. |
+| Pairs Trading on International ETFs | https://paperswithbacktest.com/strategies/pairs-trading-on-international-etfs | Relative-value ETF pairs strategy. |
+| Following the Trend | https://paperswithbacktest.com/strategies/following-the-trend | Multi-asset trend following baseline. |
+| Time-Series Momentum | https://paperswithbacktest.com/strategies/time-series-momentum | Classical TSMOM across futures/indices. |
+| A Quantitative Approach to Tactical Asset Allocation | https://paperswithbacktest.com/strategies/a-quantitative-approach-to-tactical-asset-allocation | TAA using simple momentum and risk screens. |
+| Return Asymmetry in Commodity Futures | https://paperswithbacktest.com/strategies/return-asymmetry-in-commodity-futures | Trades commodities exploiting skew/asymmetry. |
+| Portfolio Diversification Using VIX Options | https://paperswithbacktest.com/strategies/a-study-in-portfolio-diversification-using-vix-options | Uses VIX options as convex diversifiers. |
+| Abnormal Returns with ETF Momentum/Contrarian | https://paperswithbacktest.com/strategies/abnormal-returns-with-momentum-contrarian-strategies-using-exchange-traded-funds | ETF momentum vs contrarian tilts. |
+| Exploration of Long-Short ETF Momentum | https://paperswithbacktest.com/strategies/exploration-of-long-short-etf-momentum-strategies | Long-short momentum across ETF universe. |
+| Consistent Trends with Strong Momentum RSI | https://paperswithbacktest.com/strategies/finding-consistent-trends-with-strong-momentum-rsi-for-trend-following-and-momentum-strategies | Combines RSI with trend filters. |
+| Low Volatility Strategy: Can We Time the Factor? | https://paperswithbacktest.com/strategies/low-volatility-strategy-can-we-time-the-factor | Factor-timing approach for low-vol. |
+| Market States and Momentum | https://paperswithbacktest.com/strategies/market-states-and-momentum | Regime-aware momentum allocation. |
+| Presidential Partisan Cycles and Stock Returns | https://paperswithbacktest.com/strategies/presidential-partisan-cycles-and-the-cross-section-of-stock-returns | Trades political cycle effects. |
+| Protective Asset Allocation (PAA) | https://paperswithbacktest.com/strategies/protective-asset-allocation-paa-a-simple-momentum-based-alternative-for-term-deposits | Downside-aware momentum rotation. |
+| Seasonality, Trend Following & Mean Reversion in Bitcoin | https://paperswithbacktest.com/strategies/seasonality-trend-following-and-mean-reversion-in-bitcoin | Crypto seasonality plus trend/reversion. |
+| Sector Rotation and Monetary Conditions | https://paperswithbacktest.com/strategies/sector-rotation-and-monetary-conditions | Rotates equity sectors by macro/monetary regime. |
+| Stock Return Predictability and Seasonality | https://paperswithbacktest.com/strategies/stock-return-predictability-and-seasonality | Broad calendar/seasonal predictors. |
+| The Low-Vol Anomaly in Equity Sectors Years Later | https://paperswithbacktest.com/strategies/the-low-volatility-anomaly-in-equity-sectors-years-later | Sector-level low-vol anomaly replication. |
+| The Optimism Cycle: Sell in May | https://paperswithbacktest.com/strategies/the-optimism-cycle-sell-in-may | “Sell in May” timing rule variants. |
+| Risk Parity, Momentum & Trend in Allocation | https://paperswithbacktest.com/strategies/the-trend-is-our-friend-risk-parity-momentum-and-trend-following-in-global-asset-allocation | Blends risk parity with momentum. |
+| When to Own Stocks and When to Own Gold | https://paperswithbacktest.com/strategies/when-to-own-stocks-and-when-to-own-gold | Switches between equities and gold by trend. |
+| Rethinking the Portfolio: Dynamic Hedging with Commodities | https://paperswithbacktest.com/strategies/rethinking-the-portfolio-dynamic-hedging-with-commodities | Uses commodities as dynamic hedges. |
+| Risk Premia Harvesting Through Dual Momentum | https://paperswithbacktest.com/strategies/risk-premia-harvesting-through-dual-momentum | Dual momentum (absolute + relative). |
+| Earnings Announcement Drift Strategy | https://paperswithbacktest.com/strategies/a-simple-but-well-performing-strategy-based-on-earnings-announcement-drift | Trades post-earnings drift effect. |
+| Adaptive Asset Allocation: A Primer | https://paperswithbacktest.com/strategies/adaptive-asset-allocation-a-primer | Robust momentum/correlation-aware TAA. |
+| Analysis of Trend-Following Systems | https://paperswithbacktest.com/strategies/analysis-of-trend-following-systems | Compares filters/params for trend systems. |
+| Acceleration Strategies | https://paperswithbacktest.com/strategies/acceleration-strategies | Uses momentum acceleration signals. |
+| Conservative Formula (India) | https://paperswithbacktest.com/strategies/anish-the-conservative-formula-evidence-from-india | Conservative investing rules in India. |
+| Avoid Equity Bear Markets with Market Timing | https://paperswithbacktest.com/strategies/avoid-equity-bear-markets-with-a-market-timing-strategy | Defensive timing rules to sidestep bears. |
+| Anomalies Enhanced: Higher-Freq Information | https://paperswithbacktest.com/strategies/anomalies-enhanced-the-value-of-higher-frequency-information | Adds higher-freq signals to classic anomalies. |
+| Breadth Momentum & Vigilant Asset Allocation (VAA) | https://paperswithbacktest.com/strategies/breadth-momentum-and-vigilant-asset-allocation-vaa-winning-more-by-losing-less | Breadth-driven momentum with loss control. |
+| Betting Against Correlation | https://paperswithbacktest.com/strategies/betting-against-correlation-testing-theories-of-the-low-risk-effect | Low-risk factor via correlation lens. |
+| Update of “Loosening Your Collar” (QQQ Collars) | https://paperswithbacktest.com/strategies/an-update-of-loosening-your-collar-alternative-implementations-of-qqq-collars-credit-crisis-and-out-of-sample-performance | Option collar implementations on QQQ. |
+| Decreasing Carbon Footprint Benchmarks | https://paperswithbacktest.com/strategies/building-benchmarks-portfolios-with-decreasing-carbon-footprints | Portfolio design with declining carbon intensity. |
+| Buy-Side Competition and Momentum Profits | https://paperswithbacktest.com/strategies/buy-side-competition-and-momentum-profits | Momentum returns vs industry competition. |
+| Fibonacci Retracements Tests | https://paperswithbacktest.com/strategies/can-returns-breed-like-rabbits-econometric-tests-for-fibonacci-retracements | Tests trading rules using Fibonacci levels. |
+| Ownership Breadth & Capital Market Anomalies | https://paperswithbacktest.com/strategies/changes-in-ownership-breadth-and-capital-market-anomalies- | Links ownership breadth to anomaly strength. |
+| Chronological Return Ordering | https://paperswithbacktest.com/strategies/chronological-return-ordering-and-the-cross-section-of-international-stock-returns | Return ordering effects across countries. |
+| Comomentum: Inferring Arbitrage Activity | https://paperswithbacktest.com/strategies/comomentum-inferring-arbitrage-activity-from-return-correlations | Uses co-momentum/correlations as signals. |
+| Credit-Informed Tactical Asset Allocation | https://paperswithbacktest.com/strategies/credit-informed-tactical-asset-allocation | TAA using credit spreads/indicators. |
+| Cross-Asset Signals & Time-Series Momentum | https://paperswithbacktest.com/strategies/cross-asset-signals-and-time-series-momentum | Enhances TSMOM with cross-asset leads. |
+| Constant Leverage Covering for Equity Momentum | https://paperswithbacktest.com/strategies/constant-leverage-covering-strategy-for-equity-momentum-portfolio-with-transaction-costs | Maintains target leverage with costs. |
+| Cross-Asset Skew | https://paperswithbacktest.com/strategies/cross-asset-skew | Trades assets by skewness characteristics. |
+| Crypto Factor Portfolios | https://paperswithbacktest.com/strategies/cryptocurrency-factor-portfolios-performance-decomposition-and-pricing-models | Factor construction/pricing in crypto. |
+| Bitcoin Futures Expiration Dynamics | https://paperswithbacktest.com/strategies/cryptocurrency-market-dynamics-around-bitcoin-futures-expiration-events | Trades effects near BTC futures expiry. |
+| Cross-Country Factor Momentum | https://paperswithbacktest.com/strategies/cross-country-factor-momentum | Momentum in factor returns across countries. |
+| Dash for Cash: Month-End Liquidity | https://paperswithbacktest.com/strategies/dash-for-cash-month-end-liquidity-needs-and-the-predictability-of-stock-returns | Month-end liquidity-driven predictability. |
+| Deutsche Bank (House Strategy) | https://paperswithbacktest.com/strategies/deutsche-bank | Reproduction of a DB-published allocation. |
+| Do Fundamentals Drive Crypto Prices? | https://paperswithbacktest.com/strategies/do-fundamentals-drive-cryptocurrency-prices | Tests fundamental signals in crypto. |
+| Diversity Investing | https://paperswithbacktest.com/strategies/diversity-investing | Allocates using diversity/dispersion metrics. |
+| Does Sentiment Matter? | https://paperswithbacktest.com/strategies/does-sentiment-matter | Sentiment-driven allocation overlay. |
+| Double-Bottom Country Trading | https://paperswithbacktest.com/strategies/double-bottom-country-trading-strategy | Pattern-based country ETF timing. |
+| Equilibrium Index & Single-Stock Volatility RP | https://paperswithbacktest.com/strategies/equilibrium-index-and-single-stock-volatility-risk-premia | Volatility risk premia harvest. |
+| Equity Sector Rotation via Credit RV | https://paperswithbacktest.com/strategies/equity-sector-rotation-via-credit-relative-value | Rotates sectors using credit relative-value. |
+| New Stock Trading Rule: Higher Returns, Lower Risk | https://paperswithbacktest.com/strategies/evidence-on-a-new-stock-trading-rule-that-produces-higher-returns-with-lower-risk | Rule-based stock selection with drawdown control. |
+| Equity Convexity & Unconventional Monetary Policy | https://paperswithbacktest.com/strategies/equity-convexity-and-unconventional-monetary-policy | Trades convexity effects around policy shifts. |
+| FOMC Meetings & Stock Performance | https://paperswithbacktest.com/strategies/federal-open-market-comitee-meetings-and-stock-market-performance | Event-driven trading around FOMC. |
+| Fact, Fiction, and Value Investing | https://paperswithbacktest.com/strategies/fact-fiction-and-value-investing | Evidence-based value factor construction. |
+| Firm Complexity & Post-Earnings Drift | https://paperswithbacktest.com/strategies/firm-complexity-and-post-earnings-announcement-drift | Links PEAD strength to firm complexity. |
+| Generalized Momentum & Flexible AA (FAA) | https://paperswithbacktest.com/strategies/generalized-momentum-and-flexible-asset-allocation-faa-an-heuristic-approach | Heuristic flexible allocation using generalized momentum. |
+| Gold Price Ratios & Aggregate Stock Returns | https://paperswithbacktest.com/strategies/gold-price-ratios-and-aggregate-stock-returns | Uses gold/ratio signals to time equities. |
+| Improve Commodity Momentum via Intra-Market Correlation | https://paperswithbacktest.com/strategies/how-to-improve-commodity-momentum-using-intra-market-correlation | Correlation-aware commodity momentum. |
+| Growth, Trend Timing & Lethargic AA (LAA) | https://paperswithbacktest.com/strategies/growth-trend-timing-and-variations-lethargic-asset-allocation-laa- | Slow-moving allocation rules (LAA). |
+| Geopolitical Sentiment via Google Trends | https://paperswithbacktest.com/strategies/insights-from-the-geopolitical-sentiment-index-made-with-google-trends | Macro risk sentiment indicator trading. |
+| Interest-Rate Momentum Across Yield Curves | https://paperswithbacktest.com/strategies/interest-rate-momentum-everywhere-across-global-yield-curves | Momentum on global rates curves. |
+| Investor Overconfidence & Security Market Line (China) | https://paperswithbacktest.com/strategies/investor-overconfidence-and-the-security-market-line-new-evidence-from-china | Behavioral tilt in Chinese equities. |
+| Is Value Strategy Still Alive? (China A-Shares) | https://paperswithbacktest.com/strategies/is-value-strategy-still-alive-evidence-from-the-chinese-a-share-market | Value factor in China A-shares. |
+| Know When to HODL/FODL (Crypto Factors) | https://paperswithbacktest.com/strategies/know-when-to-hodl-em-know-when-to-fodl-em-an-investigation-of-factor-based-investing-in-the-cryptocurrency-space | Factor investing in crypto assets. |
+| Learning & Predictability via Technical Analysis | https://paperswithbacktest.com/strategies/learning-and-predictability-via-technical-analysis-evidence-from-bitcoin-and-stocks-with-hard-to-value-fundamentals | TA-based signals for BTC & hard-to-value stocks. |
+| Long-Only Quality Strategy (India) | https://paperswithbacktest.com/strategies/implementing-a-systematic-long-only-quality-strategy-in-the-indian-market | Quality tilt implementation in India. |
+| Long-Only Factor Portfolios in India | https://paperswithbacktest.com/strategies/long-only-factor-portfolios-in-india | Long-only factor exposures (India). |
+| Long-Only Multi-Asset Momentum | https://paperswithbacktest.com/strategies/long-only-multi-asset-momentum-searching-for-absolute-returns | Absolute-return momentum across assets. |
+| Liquidity Style of Mutual Funds | https://paperswithbacktest.com/strategies/liquidity-style-of-mutual-funds | Uses liquidity style as a predictor. |
+| Market Power, Tech Shocks & Profitability Premium | https://paperswithbacktest.com/strategies/market-power-technology-shocks-and-the-profitability-premium | Profitability premium linked to market power. |
+| Market Timing with Aggregate Accruals | https://paperswithbacktest.com/strategies/market-timing-with-aggregate-accruals | Macro accruals-based timing. |
+| Market Timing with Aggregate & Idiosyncratic Vol | https://paperswithbacktest.com/strategies/market-timing-with-aggregate-and-idiosyncratic-stock-volatilities | Volatility metrics for timing equities. |
+| Market Timing with Moving Averages | https://paperswithbacktest.com/strategies/market-timing-with-moving-averages | MA-based timing overlay. |
+| Percent Accruals | https://paperswithbacktest.com/strategies/percent-accruals | Accruals-based stock selection. |
+| Popularity: Bridge Between Classical & Behavioral | https://paperswithbacktest.com/strategies/popularity-a-bridge-between-classical-and-behavioral-finance | “Popularity” as unifying factor lens. |
+| Predictable End-of-Month Treasury Returns | https://paperswithbacktest.com/strategies/predictable-end-of-month-treasury-returns | Trades EOM patterns in Treasuries. |
+| Pure Momentum in Cryptocurrency Markets | https://paperswithbacktest.com/strategies/pure-momentum-in-cryptocurrency-markets | Pure absolute momentum in crypto. |
+| Real-Time Profitability of Published Anomalies | https://paperswithbacktest.com/strategies/real-time-profitability-of-published-anomalies-an-out-of-sample-test | Out-of-sample anomaly replication. |
+| REIT Momentum & Real Estate Mutual Funds | https://paperswithbacktest.com/strategies/reit-momentum-and-the-performance-of-real-estate-mutual-funds | Momentum within REITs/real estate funds. |
+| Reversals & Returns to Liquidity Provision | https://paperswithbacktest.com/strategies/reversals-and-the-returns-to-liquidity-provision | Short-term reversal and liquidity premia. |
+| Reversing the Trend of Short-Term Reversal | https://paperswithbacktest.com/strategies/reversing-the-trend-of-short-term-reversal | Conditions where reversal flips. |
+| Scaling Up Market Anomalies | https://paperswithbacktest.com/strategies/scaling-up-market-anomalies | Capacity and scalability of anomalies. |
+| Short-Term RS, Turnover & Week-High | https://paperswithbacktest.com/strategies/short-term-relative-strength-strategies-turnover-and-the-connection-between-winner-returns-and-the-week-high | RS strategy linked to week-high. |
+| Skewness Preference Across Countries | https://paperswithbacktest.com/strategies/skewness-preference-across-countries | Investor skewness preference as signal. |
+| Striking Oil—Another Puzzle | https://paperswithbacktest.com/strategies/striking-oil-another-puzzle | Oil-related anomaly in equities. |
+| Tactical Allocation in Falling Stocks | https://paperswithbacktest.com/strategies/tactical-allocation-in-falling-stocks-combining-momentum-and-solvency-ratio-signals | Combines momentum with solvency ratios. |
+| Tactical Asset Allocation & Commodity Futures | https://paperswithbacktest.com/strategies/tactical-asset-allocation-and-commodity-futures | Commodity futures within TAA. |
+| Active vs Passive Smart Factors | https://paperswithbacktest.com/strategies/the-active-vs-passive-smart-factors-market-portfolio-or-both- | Smart beta vs market portfolio blend. |
+| The Best Strategies for the Worst Crises | https://paperswithbacktest.com/strategies/the-best-strategies-for-the-worst-crises | Crisis-robust strategy comparison. |
+| The Canary | https://paperswithbacktest.com/strategies/the-canary | Canary signals for defensive de-risking. |
+| The Dividend Month Premium | https://paperswithbacktest.com/strategies/the-dividend-month-premium | Dividend-month seasonal edge. |
+| The Fed Model & Expected Asset Returns | https://paperswithbacktest.com/strategies/the-fed-model-and-expected-asset-returns | Valuation timing using Fed Model. |
+| The Conservative Formula: Quant Investing Made Easy | https://paperswithbacktest.com/strategies/the-conservative-formula-quantitative-investing-made-easy | Conservative (quality/low-risk) composite. |
+| Small-Firm January Effect Persistence | https://paperswithbacktest.com/strategies/the-persistence-of-the-small-firm-january-effect-is-it-consistent-with-investors-learning-and-arbitrage-efforts | Tests small-cap January effect. |
+| The Presidential Term: Is the Third Year the Charm? | https://paperswithbacktest.com/strategies/the-presidential-term-is-the-third-year-the-charm | Trades presidential-year effects. |
+| The Other Side of Value: Gross Profitability Premium | https://paperswithbacktest.com/strategies/the-other-side-of-value-the-gross-profitability-premium | Profitability factor long/short. |
+| The Seasonality of Bitcoin | https://paperswithbacktest.com/strategies/the-seasonality-of-bitcoin | Seasonal timing rules for BTC. |
+| Price of Commodity Risk in Stocks & Futures | https://paperswithbacktest.com/strategies/the-price-of-commodity-risk-in-stock-and-futures-markets | Links commodity risk premia to equities. |
+| Valuation of R&D Expenditures | https://paperswithbacktest.com/strategies/the-stock-market-valuation-of-research-and-development-expenditures | Trades firms’ R&D capitalization effects. |
+| Time-Varying Global Dollar Risk in FX | https://paperswithbacktest.com/strategies/time-varying-global-dollar-risk-in-currency-markets | Dollar factor timing in FX. |
+| Trading the Term Premium | https://paperswithbacktest.com/strategies/trading-the-term-premium | Duration/term-premium timing. |
+| Trading Time Seasonality in Electricity Futures | https://paperswithbacktest.com/strategies/trading-time-seasonality-in-electricity-futures | Time-of-day/seasonal electricity futures. |
+| US Sector Rotation with Fama-French Alphas | https://paperswithbacktest.com/strategies/us-sector-rotation-with-five-factor-fama-french-alphas | Sector rotation via factor alphas. |
+| Volatility as an Asset Class: Holding VIX | https://paperswithbacktest.com/strategies/volatility-as-an-asset-class-holding-vix-in-a-portfolio | Allocates to VIX/vol as separate sleeve. |
+| Follow the Smart Money: Relative Sentiment Timing | https://paperswithbacktest.com/strategies/want-smart-beta-follow-the-smart-money-market-and-factor-timing-using-relative-sentiment | Uses relative sentiment for market/factor timing. |
+| What Is the Value of Financial News? | https://paperswithbacktest.com/strategies/what-is-the-value-of-financial-news | News-based signal construction. |
+| Value and Momentum in Anomalies | https://paperswithbacktest.com/strategies/value-and-momentum-in-anomalies | Combines value & momentum across anomaly set. |
+| Why Do US Stocks Outperform EM & EAFE? | https://paperswithbacktest.com/strategies/why-do-us-stocks-outperform-em-and-eafe-regions | Drivers of US equity outperformance. |
+| When It Rains, It Pours: Multifactor in Good & Bad Times | https://paperswithbacktest.com/strategies/when-it-rains-it-pours-multifactor-asset-management-in-good-and-bad-times | Regime-aware multifactor allocation. |
+
+## Modules
+
+The backtesting package is composed of a few focused modules:
+
+- `backtest_engine` – glue code that wires together universe selection,
+  alpha models, portfolio construction and execution into a Backtrader run.
+- `base_strategy` – common bookkeeping and helpers used by all provided
+  strategies.
+- `commission` – cost models for simulating broker commissions and spreads.
+- `option_costs` – half bid-ask spread of a listed option, read from
+  `Options-Yearly-TransactionCostParams`.
+- `indicators` – reusable signal and technical indicator implementations.
+- `optimization_engine` – genetic‑algorithm tooling for parameter searches.
+- `portfolio` – utilities for combining the results of several strategies and
+  producing performance reports.
+- `strategies` – ready‑to‑use Backtrader `Strategy` subclasses.
+- `universe` – helpers for building trading universes (e.g. most liquid symbols).
+
+
+`pwb_toolbox.backtesting.strategies` ships a collection of portfolio templates
+with different rebalancing rules and signal expectations:
+
+- **DailyEqualWeightPortfolio** – holds all assets with a long signal and
+  allocates equal weight each day.
+- **DailyLeveragePortfolio** – goes long with fixed leverage when the signal is
+  1 and is otherwise flat.
+- **EqualWeightEntryExitPortfolio** – opens equally‑weighted positions when an
+  entry condition triggers and leaves existing winners untouched.
+- **DynamicEqualWeightPortfolio** – event‑driven equal‑weight portfolio that can
+  rebalance on any signal change or only when the set of long assets changes.
+- **MonthlyLongShortPortfolio** – once per month allocates half of the leverage
+  to longs and half to shorts based on a universe‑aware signal.
+- **MonthlyLongShortQuantilePortfolio** – monthly rebalance that ranks assets
+  by a per‑asset signal and goes long the strongest and short the weakest; pair
+  it with `CrossSectionalQuantileSignal` (see "Long-short by quantiles").
+- **MonthlyRankedEqualWeightPortfolio** – monthly equal‑weight portfolio with an
+  optional ranking step and support for keeping only the top *N* assets.
+- **QuarterlyTopMomentumPortfolio** – every quarter concentrates exposure in the
+  single asset with the strongest recent momentum.
+- **RollingSemesterLongShortPortfolio** – semi‑annual rebalancing template that
+  accumulates long/short signals over six‑month windows.
+- **WeeklyLongShortDecilePortfolio** – rebalances weekly and trades the top and
+  bottom deciles of a signal distribution.
+- **WeightedAllocationPortfolio** – turns user‑provided weights into integer
+  share positions under a leverage constraint.

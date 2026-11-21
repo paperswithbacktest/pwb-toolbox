@@ -285,6 +285,13 @@ class MonthlyLongShortQuantilePortfolio(BaseStrategy):
 
     # -------------------------- monthly rebalance ------------------------------
     def notify_timer(self, timer, when, *args, **kwargs):
+        # The timer fires before the strategy's first bar is processed: run bar
+        # by bar (``runonce=False``, forced by ``CrossSectionalQuantileSignal``)
+        # the signal lines hold no value yet and reading them raises IndexError.
+        # Vectorised, they held one -- and it was the signal of the LAST bar of
+        # the run, a read of the future. There is no ranking before a first bar.
+        if not len(self):
+            return
         self.rebalance()
 
     def rebalance(self):
