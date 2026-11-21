@@ -1,6 +1,7 @@
 <div align="center">
   <img src="static/images/systematic-trading.jpeg" height=200 alt=""/>
   <h1>Papers With Backtest Toolbox</h1>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0"/></a>
 </div>
 
 The `pwb-toolbox` package is designed to provide tools and resources for systematic trading strategies. It includes datasets and strategy ideas to assist in developing and backtesting trading algorithms.
@@ -271,3 +272,7 @@ To upload the package to PyPI, run:
 ```bash
 twine upload dist/*
 ```
+
+## License
+
+`pwb-toolbox` is licensed under the [Apache License 2.0](LICENSE), starting with the first release after 0.1.53. Versions up to and including 0.1.53 were released under the MIT License; see [NOTICE](NOTICE).
