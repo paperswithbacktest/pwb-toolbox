@@ -17,6 +17,20 @@ How to choose, in order of precedence:
 
 The default stays backtrader until Tradewind has reproduced the campaign's 4 200
 reference NAVs; the server run is not changed by this module's existence.
+
+Code that names ``backtrader`` itself -- the papers harness (``backtester.py``)
+and the ~150 ``strategy.py`` that ``import backtrader as bt`` -- would build a
+backtrader ``Cerebro`` around a Tradewind ``BaseStrategy``. :func:`use` (or the
+runner below) makes the name ``backtrader`` resolve to Tradewind for this process,
+so such code runs unchanged on the chosen engine; with backtrader chosen it does
+nothing. It is what the grand remeasure's parity runs did by hand
+(``measure_one_nav_tw*.py``), moved here so a campaign switches with one flag::
+
+    python -m pwb_toolbox.engine --engine tradewind [--report] script.py [args ...]
+
+runs ``script.py`` as ``__main__`` on that engine; ``--report`` adds one
+``ENGINE ...`` line on exit saying which engine ran and whether any module was
+loaded from a backtrader package (it must be none on Tradewind).
 """
 
 from __future__ import annotations
@@ -95,3 +109,148 @@ def is_backtrader() -> bool:
 
 def is_tradewind() -> bool:
     return name() == TRADEWIND
+
+
+# The ``backtrader`` sub-modules the corpus and the papers harness import by name.
+_ALIASED_SUBMODULES = ("feeds", "indicators", "analyzers")
+
+
+def alias_backtrader():
+    """Make ``import backtrader`` (and its common sub-modules) give the loaded engine.
+
+    A no-op on backtrader. On Tradewind, ``sys.modules["backtrader"]`` becomes the
+    Tradewind module, with ``backtrader.feeds``/``.indicators``/``.analyzers`` and
+    ``backtrader.utils.date`` (``date2num``, ``num2date``, ``num2dt``) pointing at
+    Tradewind's own. Refused when the real backtrader is already imported: a
+    process that holds both would mix the engines' classes. Idempotent.
+    """
+    import sys
+    import types
+
+    bt = load()
+    if _loaded[0] != TRADEWIND:
+        return bt
+    current = sys.modules.get("backtrader")
+    if current is bt:
+        return bt
+    if current is not None:
+        raise RuntimeError(
+            "backtrader is already imported in this process; the Tradewind alias "
+            "must be installed before anything imports backtrader"
+        )
+    sys.modules["backtrader"] = bt
+    for sub in _ALIASED_SUBMODULES:
+        if hasattr(bt, sub):
+            sys.modules[f"backtrader.{sub}"] = getattr(bt, sub)
+    utils = types.ModuleType("backtrader.utils")
+    date = types.ModuleType("backtrader.utils.date")
+    for fn in ("date2num", "num2date", "num2dt"):
+        if hasattr(bt, fn):
+            setattr(date, fn, getattr(bt, fn))
+    utils.date = date
+    sys.modules["backtrader.utils"] = utils
+    sys.modules["backtrader.utils.date"] = date
+    return bt
+
+
+def use(engine: str | None = None, alias: bool = True):
+    """Select ``engine`` (default: the environment, else backtrader), load it, return ``bt``.
+
+    With ``alias`` (the default) code that imports ``backtrader`` by name runs on
+    the chosen engine too (:func:`alias_backtrader`). Like :func:`select`, it must
+    run before ``pwb_toolbox.backtesting`` is imported.
+    """
+    if engine is not None:
+        select(engine)
+    if alias:
+        return alias_backtrader()
+    return load()
+
+
+def check(engine: str | None) -> str:
+    """The engine in force, after checking it is ``engine`` when one is named.
+
+    ``run_strategy(engine=...)`` calls this: the package is bound to one engine at
+    import, so a run cannot switch; asking for the other one raises instead of
+    silently running on the wrong engine.
+    """
+    current = name()
+    if engine is not None and _normalise(engine) != current:
+        raise RuntimeError(
+            f"this process runs on {current!r}, not {_normalise(engine)!r}: the engine is "
+            f"chosen before pwb_toolbox.backtesting is imported -- set {ENV_VAR}="
+            f"{_normalise(engine)}, call pwb_toolbox.engine.use({_normalise(engine)!r}) first, "
+            f"or run the script with python -m pwb_toolbox.engine --engine {_normalise(engine)}"
+        )
+    return current
+
+
+def report_line() -> str:
+    """One ``ENGINE ...`` line: the engine in force and any module loaded from backtrader."""
+    import os as _os
+    import sys
+
+    sep = _os.sep
+    leaked = sorted(
+        n for n, m in list(sys.modules.items())
+        if m is not None and f"{sep}backtrader{sep}" in (getattr(m, "__file__", "") or "")
+    )
+    alias = sys.modules.get("backtrader")
+    bt = _loaded[1] if _loaded else None
+    aliased = "none" if alias is None else ("engine" if alias is bt else "backtrader")
+    version = getattr(bt, "__version__", "?") if bt is not None else "?"
+    return (
+        f"ENGINE toolbox={name()} backtrader_name={aliased} version={version} "
+        f"leaked_backtrader_modules={len(leaked)} {leaked[:5]}"
+    )
+
+
+def main(argv=None) -> int:
+    """``python -m pwb_toolbox.engine [--engine NAME] [--report] script.py [args ...]``."""
+    import argparse
+    import runpy
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="python -m pwb_toolbox.engine",
+        description="Run a script as __main__ on the chosen backtest engine.",
+    )
+    parser.add_argument("--engine", choices=ENGINES, default=None,
+                        help=f"default: ${ENV_VAR}, else {DEFAULT}")
+    parser.add_argument("--report", action="store_true",
+                        help="print one ENGINE line on exit (also on os._exit)")
+    parser.add_argument("script")
+    parser.add_argument("args", nargs=argparse.REMAINDER)
+    ns = parser.parse_args(argv)
+
+    if ns.engine is not None:
+        # Child processes the script starts inherit the choice.
+        os.environ[ENV_VAR] = ns.engine
+    use(ns.engine)
+    if ns.report:
+        import atexit
+
+        real_exit = os._exit
+        printed = []
+
+        def _print_report():
+            if not printed:
+                printed.append(True)
+                sys.stdout.write(report_line() + "\n")
+                sys.stdout.flush()
+
+        def _exit_with_report(code=0):
+            _print_report()
+            real_exit(code)
+
+        atexit.register(_print_report)
+        os._exit = _exit_with_report
+    sys.argv = [ns.script] + list(ns.args)
+    runpy.run_path(ns.script, run_name="__main__")
+    return 0
+
+
+if __name__ == "__main__":
+    # ``-m`` runs this file as ``__main__``, a second copy of the module: the state
+    # (the selected and loaded engine) must live in the one the package imports.
+    raise SystemExit(importlib.import_module(__spec__.name).main())
