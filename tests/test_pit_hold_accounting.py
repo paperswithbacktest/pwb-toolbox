@@ -22,7 +22,7 @@ from pwb_toolbox.backtesting import backtest_engine as be
 from pwb_toolbox.datasets import PIT_UNIVERSES
 from pwb_toolbox.datasets import pit_universe
 
-from _synthetic import panel
+from _synthetic import panel, walk
 
 N = 300
 OUT = (105, 200)  # X is not a member on these bars
@@ -33,22 +33,22 @@ NEXT = 120  # the first rebalancing bar after X leaves
 def _prices(move=1.3, last_print=None, hedge=False):
     """A and B wander; X drifts, then moves by ``move`` between its exit and the rebalance."""
     rng = np.random.default_rng(5)
-    a = 100 * np.exp(np.cumsum(rng.normal(0, 0.010, N)))
-    b = 100 * np.exp(np.cumsum(rng.normal(0, 0.010, N)))
-    x = 50 * np.exp(np.cumsum(rng.normal(0, 0.002, N)))
+    a = walk(rng, 100.0, 0.0, 0.010, N)
+    b = walk(rng, 100.0, 0.0, 0.010, N)
+    x = walk(rng, 50.0, 0.0, 0.002, N)
     ramp = np.ones(N)
     ramp[OUT[0]:NEXT + 5] = np.linspace(1.0, move, NEXT + 5 - OUT[0])
     ramp[NEXT + 5:] = move
     x = x * ramp
     # X opens away from its previous close, so that a fill at the open and
     # one at the close are told apart
-    x_open = np.r_[x[0], x[:-1]] * np.exp(rng.normal(0, 0.01, N))
+    x_open = np.r_[x[0], x[:-1]] * (1.0 + 0.01 * rng.standard_normal(N))
     if last_print is not None:
         x[last_print + 1:] = np.nan  # delisted
         x_open[last_print + 1:] = np.nan
     series = {"A": a, "B": b, "X": x}
     if hedge:
-        series["H"] = 80 * np.exp(np.cumsum(rng.normal(0, 0.005, N)))
+        series["H"] = walk(rng, 80.0, 0.0, 0.005, N)
     return panel(series, opens={"X": x_open})
 
 

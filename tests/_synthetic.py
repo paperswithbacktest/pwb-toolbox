@@ -14,6 +14,27 @@ import pandas as pd
 import pwb_toolbox.datasets as pwb_ds
 
 
+def walk(rng, start, mu, sigma, n):
+    """``start * prod(1 + mu + sigma * z)``: a price path with the same bits on every platform.
+
+    Pinned NAVs (``tests/data/short_borrow_nav_reference.json``) need inputs that do
+    not depend on the machine, and two usual spellings do:
+
+    * ``rng.normal(mu, sigma)`` computes ``mu + sigma * z`` in C, which clang on
+      Apple arm64 contracts into one fused multiply-add while the x86-64 wheels
+      round twice: a third of the draws differ by 1 to 7 ulp between a Mac and
+      Linux (``rng.standard_normal`` itself is identical);
+    * ``np.exp`` is not correctly rounded: numpy's AVX-512 kernel, glibc and
+      Apple's libm each return their own last bit on some inputs.
+
+    Here the draws are ``standard_normal`` and the arithmetic is numpy's
+    elementwise ``*``/``+`` and a sequential ``cumprod`` -- IEEE operations that
+    round once each, the same everywhere.
+    """
+    z = rng.standard_normal(n)
+    return start * np.cumprod(1.0 + (mu + sigma * z))
+
+
 def panel(closes: dict, start="2020-01-01", opens=None) -> pd.DataFrame:
     """``(symbol, field)`` panel from ``{symbol: closes}``; NaN closes are absent rows.
 

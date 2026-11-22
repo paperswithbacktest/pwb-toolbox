@@ -1,9 +1,17 @@
 """``run_strategy(short_borrow_bps=...)``: what a short leg pays to borrow its shares.
 
 At 0 -- the default, and without the argument -- the NAV must be the one the
-harness produced before the parameter existed, bit for bit: the reference in
-``tests/data/short_borrow_nav_reference.json`` was written by ``origin/main``
-(a0c8b06, PR #81) on the books of ``_long_short_book.py``.
+harness produced before the parameter existed, bit for bit: in
+``tests/data/short_borrow_nav_reference.json``, ``plain`` was written by
+``origin/main`` before the parameter (a0c8b06, PR #81) on the book of
+``_long_short_book.py``, and ``hold_short`` -- whose marking PR #86 moved to the
+bar itself -- by the harness after #86, without the argument.
+
+The comparison is exact on every platform because the synthetic prices are
+(``_synthetic.walk``): the first references were generated on a Mac from
+``rng.normal`` and ``np.exp``, whose last bits differ on Linux (fused
+multiply-add on Apple arm64, numpy's AVX-512 ``exp``), and CI saw NAVs one ulp
+away. Both were regenerated from ``walk`` on 2026-11-22 (a0c8b06 for ``plain``).
 """
 
 import contextlib
