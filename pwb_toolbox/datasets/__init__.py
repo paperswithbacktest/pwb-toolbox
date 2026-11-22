@@ -1940,7 +1940,10 @@ def load_dataset(
         read, so memory stays bounded to the matching rows. Universe names
         (``"sp500"``...) are resolved as before.
     adjust, extend, to_usd, rate_to_price : bool
-        Post-processing of the daily price datasets, unchanged.
+        Post-processing of the daily price datasets. ``rate_to_price``
+        turns the yields of ``Bonds-Daily-Price`` into zero-coupon prices,
+        the TIPS real yields (``US5YT``...) included; see
+        ``_convert_bond_rates_to_prices``.
     use_hf : bool
         Read from the Hugging Face Hub even when ``PWB_API_KEY`` is set.
     start, end : date-like, optional
@@ -2101,7 +2104,7 @@ def load_dataset(
             df = _indices_to_usd(df, symbol_filter)
 
     if path in DAILY_PRICE_DATASETS and rate_to_price and path == "Bonds-Daily-Price":
-        df = __convert_bond_rates_to_prices(df)
+        df = _convert_bond_rates_to_prices(df)
 
     if columns is not None and read_columns is None:
         unknown = [c for c in columns if c not in df.columns]
@@ -2132,16 +2135,38 @@ def _indices_to_usd(df: pd.DataFrame, requested=None) -> pd.DataFrame:
     return convert_indices_to_usd(df, df_forex, requested=requested)
 
 
-def __convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) -> pd.DataFrame:
-    """
-    Convert bond yields (in percent) to prices, in-place, for rows whose
-    symbols encode maturity like 'US10Y', 'US2Y', 'US3M', etc.
+#: The maturity a ``Bonds-Daily-Price`` symbol encodes: ``US10Y``, ``US3M``, and
+#: the inflation-indexed (TIPS) real yields ``US5YT``, ``US10YT``, ``US30YT``,
+#: whose trailing ``T`` the pattern before 0.1.54 did not read -- they were left
+#: as yields in percent, a "price" that goes through zero (US5YT -1.97 in 2021).
+_BOND_MATURITY = re.compile(r"(\d+)([YM])(T?)$")
 
-    Assumes columns: ['symbol', 'open', 'high', 'low', 'close'] and that
-    open/high/low/close are yields in percent.
+
+class UnconvertedBondRateWarning(UserWarning):
+    """A ``Bonds-Daily-Price`` symbol whose maturity cannot be read stayed a yield."""
+
+
+def _convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) -> pd.DataFrame:
+    """Convert bond yields (in percent) to zero-coupon prices, in place.
+
+    The stored series are yields in percent. A symbol that encodes its maturity
+    -- ``US10Y``, ``US2Y``, ``US3M``, and the real yields of inflation-indexed
+    bonds ``US5YT``/``US10YT``/``US30YT`` -- becomes the price of a zero-coupon
+    bond of that maturity, ``face_value / (1 + y) ** tau``. For a ``...T``
+    series that is the *real* price of an inflation-indexed zero: it exceeds
+    ``face_value`` when the real yield is negative, and its return carries
+    neither the coupon (like every series here) nor the inflation accretion of
+    the principal.
+
+    Rows whose symbol encodes no maturity are left as yields and named in an
+    ``UnconvertedBondRateWarning``: a yield traded as a price is a series that
+    can go through zero.
+
+    Assumes columns: ['symbol', 'open', 'high', 'low', 'close'].
     """
-    # Vectorized extraction of maturity from symbol: last part "10Y", "2Y", "3M", ...
-    m = df["symbol"].str.extract(r"(\d+)([YM])$")  # 0: number, 1: unit
+    if df.empty or "symbol" not in df.columns:
+        return df
+    m = df["symbol"].astype(str).str.extract(_BOND_MATURITY)  # number, unit, real
     num = pd.to_numeric(m[0], errors="coerce")
     unit = m[1]
 
@@ -2149,19 +2174,30 @@ def __convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) 
     years[unit == "Y"] = num[unit == "Y"]
     years[unit == "M"] = num[unit == "M"] / 12.0
 
-    # Only apply to rows where we successfully parsed the maturity
-    mask = years.notna()
+    mask = years.notna() & (years > 0)
+    if not mask.all():
+        left = sorted(df.loc[~mask, "symbol"].astype(str).unique())
+        warnings.warn(
+            f"Bonds-Daily-Price: no maturity readable in {left}; these rows stay "
+            "yields in percent, not prices (rate_to_price could not convert them)",
+            UnconvertedBondRateWarning,
+            stacklevel=3,
+        )
     if not mask.any():
         return df
 
     y = years[mask]
-
-    # Vectorized rate->price for each OHLC column
     for col in ["open", "high", "low", "close"]:
+        if col not in df.columns:
+            continue
         r = df.loc[mask, col] / 100.0  # percent -> fraction
         df.loc[mask, col] = face_value / (1.0 + r) ** y
 
     return df
+
+
+# The name before 0.1.54, kept for callers that reached for it.
+__convert_bond_rates_to_prices = _convert_bond_rates_to_prices
 
 
 #: ``{ETF: [dataset, proxy]}``: the history ``extend=True`` splices in front of
