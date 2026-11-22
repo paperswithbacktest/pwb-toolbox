@@ -1,0 +1,24 @@
+This file was created by using the 202609 CRSP database.
+Synthetic fixture: 4 portfolios, size x BE/ME.
+
+Missing data are indicated by -99.99 or -999.
+
+
+  Average Value Weighted Returns -- Daily
+,SMALL LoBM,SMALL HiBM,BIG LoBM,BIG HiBM
+20240102,   0.10,   0.20,   0.30,   0.40
+20240103,  -0.10,  -0.20,  -0.30,  -0.40
+
+
+  Average Equal Weighted Returns -- Daily
+,SMALL LoBM,SMALL HiBM,BIG LoBM,BIG HiBM
+20240102,   1.10,   1.20,   1.30,   1.40
+20240103,  -1.10,  -1.20,  -1.30,  -1.40
+
+
+  Number of Firms in Portfolios
+,SMALL LoBM,SMALL HiBM,BIG LoBM,BIG HiBM
+20240102,    100,    200,     50,     25
+20240103,    101,    199,     50,     25
+
+Copyright 2026 Eugene F. Fama and Kenneth R. French

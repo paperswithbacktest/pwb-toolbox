@@ -165,3 +165,28 @@ The loader does not answer an empty frame for a reason it could name:
 - a source that answers range requests with whole files raises `RangeNotSupportedError` (nothing is downloaded whole); through the API, with `HF_ACCESS_TOKEN` also set, it reads from the Hub instead and says so in a warning;
 - a file list whose names carry no month is sorted by the `date` statistics in each file's footer (one range request per file), with a warning;
 - a window the table does not cover, or chains with no row in it, return an empty frame with a warning that says which.
+
+## Kenneth French's Data Library: `load_french`
+
+The Fama-French factors, the momentum and reversal factors, the industry portfolios and the sorted portfolios of [Kenneth R. French's Data Library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html) are loaded on the fly from the author's site. **They are not on the Hub and not behind the PWB API**: the library grants no redistribution right, so the zip is downloaded on your machine and kept in a local cache. Cite the library in anything you build on it.
+
+```python
+from pwb_toolbox.datasets import load_french, load_french_blocks, french_datasets
+
+ff5 = load_french("ff5")                                  # monthly, decimal returns
+mom = load_french("mom", frequency="daily")
+ind48_ew = load_french("ind48", weighting="equal")
+ff3_annual = load_french("ff3", frequency="annual")
+firms = load_french("25_size_bm", block="number_of_firms_in_portfolios")
+french_datasets()                                         # every file of the library
+```
+
+- `name`: an alias (`ff3`, `ff5`, `mom`, `st_rev`, `lt_rev`, `ind5` ... `ind49`, `25_size_bm`, `100_size_bm`) or any file name of the library, e.g. `Portfolios_Formed_on_ME` or `6_Portfolios_ME_Prior_12_2`.
+- `frequency`: `monthly`, `annual` (both read the main file), `daily`, `weekly`.
+- `weighting`: `value` (default) or `equal`, for portfolio files.
+- `block`: any other table of the file (`load_french_blocks(name)` lists them: number of firms, average size, BE/ME...). Those are left as published; return tables are divided by 100.
+- `-99.99` and `-999` are NaN. Monthly rows are dated at the month end, annual rows at December 31.
+
+**No point-in-time.** The library is recomputed at each update (about monthly) and the whole history changes with it; only the latest computation is served, so no historical vintage can be loaded. Each frame carries `attrs["downloaded_at"]` and `attrs["crsp_vintage"]` (e.g. `"202609"`) to tie a result to the copy it was computed on.
+
+**Cache.** `$PWB_FRENCH_CACHE_DIR`, else `$PWB_CACHE_DIR/french`, else `~/.cache/pwb/french`; copies are timestamped. A copy younger than `max_age_days` (7) is used without any request, `refresh=True` downloads again, and when the site is unreachable a stale copy is used with a warning.

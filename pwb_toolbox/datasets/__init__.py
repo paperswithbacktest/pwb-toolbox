@@ -2880,3 +2880,9 @@ def get_pricing(
 
 
 from .options import OPTIONS_DAILY_DATASET, load_option_chain  # noqa: E402  (needs _hub_snapshot above)
+from .french import (  # noqa: E402,F401  (Kenneth French's library, downloaded by the user)
+    FRENCH_ALIASES,
+    french_datasets,
+    load_french,
+    load_french_blocks,
+)

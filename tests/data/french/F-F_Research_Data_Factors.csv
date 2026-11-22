@@ -1,0 +1,12 @@
+This file was created using the 202609 CRSP database.
+Synthetic fixture: the numbers are made up.
+
+,Mkt-RF,SMB,HML,RF
+192607,   2.00,  -1.00,   0.50,   0.20
+192608,  -4.00,   3.00, -99.99,   0.25
+
+ Annual Factors: January-December 
+,Mkt-RF,SMB,HML,RF
+  1927,  10.00,  -5.00,   2.00,   3.00
+
+Copyright 2026 Eugene F. Fama and Kenneth R. French
