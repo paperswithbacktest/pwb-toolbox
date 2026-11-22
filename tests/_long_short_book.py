@@ -13,18 +13,16 @@ import numpy as np
 from pwb_toolbox.backtesting import BaseStrategy
 from pwb_toolbox.backtesting import backtest_engine as be
 
-from _synthetic import offline, panel
+from _synthetic import offline, panel, walk
 
 N = 260
 NAMES = ("A", "B", "C", "D", "E", "F")
 
 
 def prices():
+    """Six geometric walks, the same bits on every platform (see ``_synthetic.walk``)."""
     rng = np.random.default_rng(11)
-    return panel({
-        s: 100 * np.exp(np.cumsum(rng.normal(0.0002 * (i - 2.5), 0.012, N)))
-        for i, s in enumerate(NAMES)
-    })
+    return panel({s: walk(rng, 100.0, 0.0002 * (i - 2.5), 0.012, N) for i, s in enumerate(NAMES)})
 
 
 class LongShortBook(BaseStrategy):
