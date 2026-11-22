@@ -247,7 +247,8 @@ class ShortHeldTest(_Base):
         nav = self._nav(strategy, hi) - self._nav(strategy, lo)
         a = strategy.held[lo]["A"]
         expected = a * (self._px("A", "close", hi) - self._px("A", "close", lo))
-        expected += size * (self._px("X", "close", hi - 1) - self._px("X", "close", lo - 1))
+        # on the bar itself since 0.1.54 (one bar late before)
+        expected += size * (self._px("X", "close", hi) - self._px("X", "close", lo))
         self.assertAlmostEqual(nav, expected, places=4)
         # covered by the harness at the rebalance, settled at the real open
         self.assertEqual(strategy.held[NEXT + 2]["X"], 0)

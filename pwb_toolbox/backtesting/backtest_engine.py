@@ -1003,8 +1003,9 @@ def _with_exposure_cap(
     order on a hedge or benchmark the caller listed itself does not count).
     The harness's close goes first in the broker's queue, so the purchases it
     funds pass the margin check. The feed stays flat outside, so the
-    position is marked to its real close through the cash, one bar late
-    (``_pwb_accrue``), and every sale filled there is settled at the real
+    position is marked to its real close through the cash, on the bar
+    itself, before the strategy's ``next`` (``_pwb_accrue``; one bar late
+    before 0.1.54), and every sale filled there is settled at the real
     price: the broker fills it at the flat price and the difference with
     ``real_prices`` is added to the cash (``membership_settled``). The mark
     is not money: ``FundingAudit`` reads the cash without it
@@ -1026,8 +1027,7 @@ def _with_exposure_cap(
     measured at the close of the bar before (the real close for a non-member
     held under "hold", as the exposure records value it) and taken from the
     cash with ``add_cash`` at the end of the bar that ends the interval
-    (``_pwb_borrow``): like the marks of "hold", it reaches the NAV one bar
-    later, and the charge of the last bar never does. It is real money, so
+    (``_pwb_borrow``): it reaches the NAV one bar later, and the charge of the last bar never does. It is real money, so
     ``FundingAudit`` counts it while it is pending (``_pwb_borrow_added``).
     At 0 nothing is called and the run is the one of the releases without it,
     bit for bit; which names were ever short is recorded either way
@@ -1064,6 +1064,7 @@ def _with_exposure_cap(
             self.membership_settled = {}  # name -> {"fills": n, "cash": added}
             self._pwb_ms_accrued = {}  # name -> cash booked to mark it to its real close
             self._pwb_ms_marked = 0.0  # their sum: in the broker's cash, not money (FundingAudit)
+            self._pwb_ms_settled_now = False  # a settlement queued since the last landing
             self._pwb_ms_added = False  # the harness has called add_cash (FundingAudit)
             self._pwb_shorts = {}  # name -> data whose position is short
             self._pwb_short_seen = set()  # every name that was ever short
@@ -1314,6 +1315,7 @@ def _with_exposure_cap(
             if cash:
                 self.broker.add_cash(cash)
                 self._pwb_ms_added = True
+                self._pwb_ms_settled_now = True  # landed by _pwb_accrue, before next
             entry = self.membership_settled.setdefault(name, {"fills": 0, "cash": 0.0})
             entry["fills"] += 1
             entry["cash"] += cash
@@ -1366,19 +1368,26 @@ def _with_exposure_cap(
                     return False
                 return super().is_tradable(data, *args, **kwargs)
 
-        # -- end of each bar --------------------------------------------------------
+        # -- start of each bar ------------------------------------------------------
         def _pwb_accrue(self):
-            """Mark what is held outside the universe to its real close, through the cash.
+            """Mark what is held outside the universe to this bar's real close, through the cash.
 
             The feed is flat there, so the broker values the position at its
             last member close. The difference with the real close is booked as
-            cash -- ``add_cash`` lands at the end of the next broker cycle, in
-            both engines, so the mark lags one bar and the margin checks of
-            the next bar see the cash the orders were sized on -- and reversed
-            on the bar before the name comes back, when the feed itself jumps
-            to the real price. A sale is
-            settled on its own in ``_pwb_settle``. ``_pwb_ms_marked`` is the
-            sum of these marks, landed or not (``FundingAudit``).
+            cash and landed at once (``broker._get_value()``, which both
+            engines expose: the queued additions land and the portfolio is
+            marked again), *before* the strategy's ``next`` -- so the NAV the
+            bar records, the ``getvalue()`` the strategy sizes its orders on
+            and the analyzers all carry the real close of the bar itself.
+            Before 0.1.54 the mark was booked after ``next`` and landed one bar
+            late: a name held through its exit moved the NAV a day after it
+            moved in the market (QUBT, held short by ``predicting_anomalies``
+            in June 2025, read 7.85 on the feed while it traded 14-21). The
+            mark is reversed on the bar the name comes back, when the feed
+            itself carries the real price. A sale is settled on its own in
+            ``_pwb_settle`` (``notify_order``, which runs before ``next``: it
+            lands here too). ``_pwb_ms_marked`` is the sum of these marks
+            (``FundingAudit``).
             """
             day = self.datas[0].datetime.date(0)
             i = membership.day_index.get(day)
@@ -1386,13 +1395,21 @@ def _with_exposure_cap(
                 return
             if self._pwb_ms_feeds is None:
                 self._pwb_ms_feeds = {getattr(d, "_name", None): d for d in self.datas}
+            exits = membership.exits
+            while self._pwb_ms_next < len(exits) and exits[self._pwb_ms_next][0] <= day:
+                self._pwb_ms_watch.add(exits[self._pwb_ms_next][1])
+                self._pwb_ms_next += 1
+            if self._pwb_ms_filled:
+                self._pwb_ms_watch |= self._pwb_ms_filled
+                self._pwb_ms_filled = set()
+            booked_now = self._pwb_ms_settled_now
+            self._pwb_ms_settled_now = False
             for name in set(self._pwb_ms_accrued) | self._pwb_ms_watch:
                 data = self._pwb_ms_feeds.get(name)
                 if data is None or name not in real_prices:
                     continue
-                flags = membership.out[name]
                 target = 0.0
-                if flags[i] and i + 1 < len(flags) and flags[i + 1]:
+                if membership.out[name][i]:
                     size = self.getposition(data).size
                     real = real_prices[name][1][i]
                     if size and np.isfinite(real):
@@ -1401,11 +1418,16 @@ def _with_exposure_cap(
                 if target != booked:
                     self.broker.add_cash(target - booked)
                     self._pwb_ms_added = True
+                    booked_now = True
                 if target:
                     self._pwb_ms_accrued[name] = target
                 else:
                     self._pwb_ms_accrued.pop(name, None)
             self._pwb_ms_marked = float(sum(self._pwb_ms_accrued.values()))
+            if booked_now:
+                land = getattr(self.broker, "_get_value", None)
+                if land is not None:
+                    land()
 
         # -- short borrow ---------------------------------------------------------
         def _pwb_borrow(self):
@@ -1431,20 +1453,24 @@ def _with_exposure_cap(
                 else:
                     del self._pwb_shorts[name]
 
+        def _pwb_before_bar(self):
+            if real_prices is not None and self.datas:
+                self._pwb_accrue()
+
         def _pwb_after_bar(self):
             self._pwb_cap_close_bar()
             if membership is not None and self.datas:
                 self._pwb_ms_step()
-                if real_prices is not None:
-                    self._pwb_accrue()
             if borrow_rate and self.datas:
                 self._pwb_borrow()
 
         def prenext(self):
+            self._pwb_before_bar()
             super().prenext()
             self._pwb_after_bar()
 
         def next(self):
+            self._pwb_before_bar()
             super().next()
             self._pwb_after_bar()
 
@@ -1540,9 +1566,11 @@ def run_strategy(
       the universe brought in -- not on a hedge it listed itself) is closed
       by the harness, its order checked before the strategy's own. The feed is the same flat line as with ``"liquidate"``
       -- screens that skip flat lines keep working --; a non-member still held
-      is marked to its real close through the cash (one bar late: the
-      broker has marked the bar before the strategy runs), and a sale filled
-      outside is settled at the real price. The funding audit reads the cash
+      is marked to its real close through the cash, landed before the
+      strategy's ``next`` so the NAV of the bar carries that bar's real close
+      (before 0.1.54 it lagged one bar), and a sale filled outside is settled
+      at the real price. The feed and ``position.size * data.close`` still
+      read the flat line; ``broker.getvalue()`` is the marked value. The funding audit reads the cash
       without those marks. ``is_tradable`` and ``is_member`` answer ``False``
       for a non-member. The panel is loaded uncut
       (``get_pricing(pit_cut=False)``) and blanked here, so the era cut reads
@@ -1610,8 +1638,7 @@ def run_strategy(
     ``|value| x short_borrow_bps / 1e4 x calendar days / 365`` out of the cash
     (ACT/365: a Monday pays for the weekend, and a forex or foreign calendar
     pays the same rate per year as a US one). The charge is booked with
-    ``add_cash`` at the end of the bar and reaches the NAV one bar later, like
-    the marks of ``pit_exit="hold"``; the last bar's charge is booked but never
+    ``add_cash`` at the end of the bar and reaches the NAV one bar later; the last bar's charge is booked but never
     reaches the NAV (``run_report["borrow"]["pending_at_end"]``). A non-member
     held short under "hold" pays on its real close. backtrader's own
     ``interest`` (``setcommission(interest=...)``) is not applied: the

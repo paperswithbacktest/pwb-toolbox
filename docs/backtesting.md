@@ -220,7 +220,9 @@ With `"sp500"` or `"liquid1000"` in `symbols`, `pit_exit` (default `"hold"`,
 `PWB_PIT_EXIT` in the environment) says what happens to a name that leaves the
 universe. With `"hold"`, the default, a position formed among the members is kept
 until the strategy's next rebalancing bar and earns the name's **real** returns
-meanwhile (marked through the cash, one bar late); whatever the strategy still holds
+meanwhile (marked through the cash to the real close of each bar, before the
+strategy's `next`, so `broker.getvalue()` and the NAV carry it on that bar; the feed
+and `position.size * data.close` still read the flat line); whatever the strategy still holds
 in a non-member then is closed by the harness, and an order that opens, adds to or
 flips a position in a non-member is refused (a sale passes). With `"liquidate"`
 (0.1.43) the position is closed on the first bar outside, at the last member close,
@@ -236,8 +238,8 @@ Shorting a stock costs a borrow fee; by default the harness charges none.
 night `|value| x 50 / 10 000 x calendar days / 365` (ACT/365, a Monday pays for the
 weekend), out of the cash, at the end of each bar. `PWB_SHORT_BORROW_BPS` in the
 environment sets the default for a whole campaign; `0` (the default) leaves the NAV
-exactly as before the parameter existed. Like the marks of `pit_exit="hold"`, a charge
-reaches the NAV one bar after it is booked. The total is `strategy.borrow_cost` and
+exactly as before the parameter existed. A charge reaches the NAV one bar after it is
+booked. The total is `strategy.borrow_cost` and
 `strategy.run_report["borrow"]` (`total`, `short_borrow_bps`, `start_nav_share`,
 `bars`, `pending_at_end`, `short_names`), printed on one line whenever the book was short:
 

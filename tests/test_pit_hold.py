@@ -233,11 +233,12 @@ class HoldToRebalanceTest(_Base):
         def close(s, i):
             return float(self.prices[(s, "close")].iloc[i])
 
-        # A and B on the feed; X through the cash, one bar late
+        # A and B on the feed; X through the cash, on the same bar (0.1.54;
+        # one bar late before, so the NAV moved a day after the market)
         expected = sum(held[s] * (close(s, hi) - close(s, lo)) for s in ("A", "B"))
-        expected += held["X"] * (close("X", hi - 1) - close("X", lo - 1))
+        expected += held["X"] * (close("X", hi) - close("X", lo))
         self.assertAlmostEqual(nav.loc[days[hi]] - nav.loc[days[lo]], expected, places=4)
-        self.assertGreater(held["X"] * (close("X", hi - 1) - close("X", lo - 1)), 1000)
+        self.assertGreater(held["X"] * (close("X", hi) - close("X", lo)), 1000)
 
     def test_the_book_earns_the_real_return_of_the_name(self):
         hold = self._nav(self._run(EqualWeightOfMembers))
