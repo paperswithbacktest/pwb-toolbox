@@ -1,0 +1,9 @@
+This file was created by using the 202609 CRSP database.
+Synthetic fixture.
+
+,Mkt-RF,SMB,HML,RF
+19260701,    0.10,   -0.20,   -0.30,    0.01
+19260702,    0.40,   -0.50,   -0.60,    0.01
+19260706,    0.70,    0.80,    0.90,    0.01
+
+Copyright 2026 Eugene F. Fama and Kenneth R. French

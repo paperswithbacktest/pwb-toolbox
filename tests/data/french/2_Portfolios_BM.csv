@@ -1,0 +1,22 @@
+This file was created using the 202609 CRSP database.
+Synthetic fixture: characteristic tables with multi-line titles.
+
+
+  Average Value Weighted Returns -- Monthly
+,LoBM,HiBM
+196307,   1.00,   2.00
+
+
+  Value Weight Average of BE/ME Calculated for June of t to June of t+1 as: 
+  Sum[ME(Mth) * BE(Fiscal Year t-1) / ME(Dec t-1)] / Sum[ME(Mth)]
+  and BE(Fiscal Year t-1) is adjusted for net stock issuance to Dec t-1
+,LoBM,HiBM
+196307,   0.3432,   1.5690
+
+
+  Value Weight Average of BE/ME Calculated for June of t to June of t+1 as: 
+  Sum[ME(Mth) * BE(Fiscal Year t-1) / ME(Jun t)] / Sum[ME(Mth)]
+,LoBM,HiBM
+196307,   0.3957,   1.9355
+
+Copyright 2026 Eugene F. Fama and Kenneth R. French

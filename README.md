@@ -65,6 +65,8 @@ bars = pwb_ds.load_dataset(
 
 Without `start`/`end`, a minute dataset still loads but warns (`UnboundedMinuteLoadWarning`): every month is downloaded, about 75 GB for the stocks.
 
+Kenneth French's Data Library (Fama-French factors, momentum, reversals, industry and sorted portfolios) is loaded on the fly with `load_french("ff5")`, `load_french("ind48", frequency="daily")`, etc. These are data from Kenneth R. French's Data Library, downloaded on the user's machine and cached locally; they are not redistributed by Papers With Backtest.
+
 For more, see [docs/datasets.md](/docs/datasets.md).
 
 

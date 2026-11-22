@@ -1,0 +1,40 @@
+This file was created using the 202609 CRSP database.
+It contains value- and equal-weighted returns for 3 industry portfolios (synthetic).
+
+Missing data are indicated by -99.99 or -999.
+
+
+  Average Value Weighted Returns -- Monthly
+,Agric,Food ,Soda ,
+192607,   1.00,   2.00, -99.99,
+192608,   3.00,   4.00,   5.00,
+
+
+  Average Equal Weighted Returns -- Monthly
+,Agric,Food ,Soda ,
+192607,   6.00,   7.00, -99.99,
+192608,   8.00,   9.00,  10.00,
+
+
+  Average Value Weighted Returns -- Annual
+,Agric,Food ,Soda ,
+  1927,  20.00,  30.00, -99.99,
+
+
+  Average Equal Weighted Returns -- Annual
+,Agric,Food ,Soda ,
+  1927,  21.00,  31.00,  41.00,
+
+
+  Number of Firms in Portfolios
+,Agric,Food ,Soda ,
+192607,      5,     40,      0,
+192608,      5,     41,      2,
+
+
+  Average Firm Size
+,Agric,Food ,Soda ,
+192607,   12.50,  -99.99,  300.25,
+192608,   13.50,   20.00,  310.00,
+
+Copyright 2026 Eugene F. Fama and Kenneth R. French

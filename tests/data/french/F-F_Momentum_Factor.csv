@@ -1,0 +1,15 @@
+This file was created using the 202609 CRSP database.  It
+contains a momentum factor (synthetic fixture).
+
+Missing data are indicated by -99.99 or -999.
+
+,Mom
+192701,   1.00
+192702,  -999
+
+Annual Factors:
+January-December 
+,Mom
+  1927,  12.00
+
+Copyright 2026 Eugene F. Fama and Kenneth R. French
