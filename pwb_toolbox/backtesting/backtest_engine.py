@@ -963,6 +963,27 @@ def _reduces(position: float, size: float) -> bool:
     return bool(position) and abs(after) < abs(position) and after * position >= 0
 
 
+#: Examples kept in ``same_bar_orders`` (``run_report["same_bar_orders"]``).
+SAME_BAR_EXAMPLES = 5
+
+
+def _same_bar_record() -> dict:
+    return {"orders": 0, "targets": 0, "first": None, "examples": [],
+            "_names": set(), "_bars": set()}
+
+
+def _same_bar_report(record: dict) -> dict:
+    """``same_bar_orders`` without its working sets: what the run report carries."""
+    return {
+        "orders": int(record["orders"]),
+        "targets": int(record["targets"]),
+        "symbols": len(record["_names"]),
+        "bars": len(record["_bars"]),
+        "first": record["first"],
+        "examples": list(record["examples"]),
+    }
+
+
 def _with_exposure_cap(
     strategy_cls, cap: float = 1.0, schedule=None, membership=None, guard=None,
     pit_exit="liquidate", real_prices=None, short_borrow_bps=0.0,
@@ -1074,6 +1095,9 @@ def _with_exposure_cap(
             self._pwb_borrow_last = 0.0  # the latest charge (pending at the end of the run)
             self.borrow_cost = 0.0  # every charge booked, in cash
             self.borrow_bars = 0  # bars that paid a charge
+            self._pwb_targeting = 0  # inside an order_target_* call
+            self._pwb_bar_orders = (None, {})  # (bar, {name: [orders the strategy sent on it]})
+            self._pwb_same_bar_rec = _same_bar_record()
             super().__init__(*args, **kwargs)
 
         # -- targets ----------------------------------------------------------
@@ -1126,9 +1150,27 @@ def _with_exposure_cap(
 
         def order_target_size(self, data=None, target=0, **kwargs):
             self._pwb_act(data)
-            return super().order_target_size(data=data, target=target, **kwargs)
+            self._pwb_targeting += 1
+            try:
+                return super().order_target_size(data=data, target=target, **kwargs)
+            finally:
+                self._pwb_targeting -= 1
 
         def order_target_percent(self, data=None, target=0.0, **kwargs):
+            self._pwb_targeting += 1
+            try:
+                return self._pwb_target_percent(data, target, **kwargs)
+            finally:
+                self._pwb_targeting -= 1
+
+        def order_target_value(self, data=None, target=0.0, **kwargs):
+            self._pwb_targeting += 1
+            try:
+                return self._pwb_target_value(data, target, **kwargs)
+            finally:
+                self._pwb_targeting -= 1
+
+        def _pwb_target_percent(self, data, target, **kwargs):
             self._pwb_act(data)
             # backtrader's own order_target_percent multiplies by the NAV and
             # calls order_target_value, which lands back here. Without the
@@ -1143,7 +1185,7 @@ def _with_exposure_cap(
             finally:
                 self._pwb_cap_scaling = False
 
-        def order_target_value(self, data=None, target=0.0, **kwargs):
+        def _pwb_target_value(self, data, target, **kwargs):
             self._pwb_act(data)
             if self._pwb_cap_scaling:
                 return super().order_target_value(data=data, target=target, **kwargs)
@@ -1167,6 +1209,8 @@ def _with_exposure_cap(
             return self._pwb_track(super().sell(*args, **kwargs))
 
         def _pwb_track(self, order):
+            if order is not None and not guard.get("liquidating"):
+                self._pwb_same_bar(order)
             if order is not None:
                 name = getattr(order.data, "_name", None) or id(order.data)
                 self._pwb_cap_live[name] = order.data
@@ -1176,6 +1220,53 @@ def _with_exposure_cap(
                 orders.append(order)
                 self._pwb_cap_orders[name] = orders
             return order
+
+        def _pwb_same_bar(self, order):
+            """Count an order sent on a name that already has an open order of the same bar.
+
+            backtrader sizes ``order_target_*`` on the position as it stands,
+            blind to the orders not yet filled: a second target on the same
+            name in the same bar -- ``close()`` then ``order_target_size(0)``,
+            two cohorts that each retarget the name -- is computed as if the
+            first did not exist, and both fill. ``lazy_prices`` doubled or
+            flipped its book every month that way, ``profitable_mean_reversion``
+            doubled its sizes every day until the NAV went through zero. The
+            orders still go through (the behaviour does not change); they are
+            counted in ``same_bar_orders`` and reported. Bracket and OCO legs,
+            and the harness's own closes, are not counted.
+            """
+            if _linked(self.broker, order):
+                return
+            bar = len(self)
+            seen_bar, sent = self._pwb_bar_orders
+            if seen_bar != bar:
+                sent = {}
+                self._pwb_bar_orders = (bar, sent)
+            name = getattr(order.data, "_name", None) or id(order.data)
+            earlier = [o for o in sent.get(name, ()) if o.alive()]
+            if earlier:
+                rec = self._pwb_same_bar_rec
+                rec["orders"] += 1
+                if self._pwb_targeting:
+                    rec["targets"] += 1
+                rec["_names"].add(name)
+                rec["_bars"].add(bar)
+                try:
+                    day = order.data.datetime.date(0).isoformat()
+                except (IndexError, ValueError):
+                    day = None
+                if rec["first"] is None:
+                    rec["first"] = day
+                if len(rec["examples"]) < SAME_BAR_EXAMPLES:
+                    rec["examples"].append({
+                        "date": day,
+                        "symbol": str(name),
+                        "earlier": sum(_signed(o) for o in earlier),
+                        "size": _signed(order),
+                        "position": float(self.getposition(order.data).size),
+                        "target": bool(self._pwb_targeting),
+                    })
+            sent.setdefault(name, []).append(order)
 
         def _pwb_cap_held(self, name, data):
             """Shares held once the open orders fill, or None when nothing is left."""
@@ -1650,6 +1741,20 @@ def run_strategy(
     is the one of the releases before the parameter, bit for bit. A
     long-short template: ``docs/backtesting.md``, "Long-short by quantiles"
     (``python -m pwb_toolbox.docs backtesting``).
+
+    **Several orders on one name in one bar.** backtrader sizes
+    ``order_target_*`` on the position as it stands, blind to the orders not
+    yet filled, so a second order on a name that already has one open on the
+    same bar -- ``close()`` then ``order_target_size(d, 0)``, two cohorts that
+    each retarget the name -- is computed as if the first did not exist, and
+    both are executed: the position doubles or flips. The harness does not
+    change that (since 0.1.54 it reports it): ``strategy.same_bar_orders`` and
+    ``run_report["same_bar_orders"]`` count those orders (``orders``, of which
+    ``targets`` by ``order_target_*``, ``symbols``, ``bars``, ``first``,
+    ``examples``), a ``Warning: same-bar orders`` line is printed, and the
+    ``execution`` check warns when a target was among them. Bracket and OCO
+    legs and the harness's own closes are not counted. The fix is in the
+    strategy: one order, or one target, per name and bar.
     """
     if not 0 < max_leverage <= 1:
         raise ValueError(
@@ -1979,6 +2084,8 @@ def run_strategy(
             "short_names": len(short_names),
             "day_count": "ACT/365",
         }
+        report["same_bar_orders"] = _same_bar_report(strategy._pwb_same_bar_rec)
+        strategy.same_bar_orders = report["same_bar_orders"]
         strategy.exposure_cap = report["exposure_cap"]
         strategy.requested_long = as_published.requested_long
         strategy.requested_gross = as_published.requested_gross
@@ -1993,6 +2100,7 @@ def run_strategy(
                 policy=report["commission_policy"],
                 caller_commission=broker_kwargs.get("commission"),
                 borrow=report["borrow"],
+                same_bar_orders=report["same_bar_orders"],
             )
             if getattr(strategy, "order_journal_error", None):
                 context["journal_error"] = strategy.order_journal_error
@@ -2005,6 +2113,18 @@ def run_strategy(
                 report["checks"], check_seconds + time.perf_counter() - started
             ))
         strategy.run_report = report
+        stacked = report["same_bar_orders"]
+        if stacked["orders"]:
+            example = stacked["examples"][0] if stacked["examples"] else {}
+            print(
+                f"Warning: same-bar orders: {stacked['orders']} orders sent on a name that "
+                f"already had an open order on that bar ({stacked['targets']} by "
+                f"order_target_*, sized on the position before the first one fills), "
+                f"{stacked['symbols']} symbols on {stacked['bars']} bars, first "
+                f"{stacked['first']}"
+                + (f", e.g. {example['symbol']} {example['date']}" if example else "")
+                + ". Both orders are executed; send one order per name and bar."
+            )
         policy = report["commission_policy"] or {}
         if policy.get("calls"):
             print("Commission policy: " + json.dumps({

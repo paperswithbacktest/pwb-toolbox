@@ -17,7 +17,11 @@ Four checks, each a rule with its thresholds declared below:
 * ``universe`` -- a point-in-time universe passes; a fixed list of today's
   stocks replayed over a long history warns (survivorship bias).
 * ``execution`` -- from the run's own order journal: an order filled on the
-  bar whose data produced it (cheat-on-close, cheat-on-open) fails.
+  bar whose data produced it (cheat-on-close, cheat-on-open) fails. An
+  ``order_target_*`` sent on a name that already had an open order on the
+  same bar (``run_report["same_bar_orders"]``) turns a ``pass`` into a
+  ``warn``: it was sized on the position before the first order fills, and
+  both are executed.
 * ``costs`` -- the share of the traded value charged the default floor rather
   than a measured spread; an equity at the floor has no reason to be there.
   A book that was short and paid no borrow (``short_borrow_bps=0``) warns.
@@ -61,6 +65,8 @@ DELISTED_GAP_DAYS = 30
 #: executes at the next bar's open, and any fill on the signal bar means the
 #: strategy traded at a price it read before deciding.
 EXECUTION_SAME_BAR_TOLERANCE = 0
+#: Examples of same-bar orders carried in the ``execution`` detail.
+SAME_BAR_EXAMPLES = 5
 
 # -- costs ------------------------------------------------------------------
 #: Share of the traded value at the default floor, on names that have a
@@ -439,8 +445,35 @@ def check_universe(facts: dict, membership=None) -> dict:
     return _item("universe", "pass", f"no single stocks: {listing}", detail)
 
 
-def check_execution(journal: dict, flags: dict) -> dict:
-    """``fail`` when a fill lands on the bar whose data produced its order."""
+def check_execution(journal: dict, flags: dict, same_bar_orders=None) -> dict:
+    """``fail`` when a fill lands on the bar whose data produced its order.
+
+    ``same_bar_orders`` is ``run_report["same_bar_orders"]``: when an
+    ``order_target_*`` was sent on a name that already had an open order on the
+    same bar, the summary says so and a ``pass`` becomes a ``warn``.
+    """
+    item = _check_execution_timing(journal, flags)
+    stacked = same_bar_orders or {}
+    if not stacked.get("orders"):
+        return item
+    item["detail"] = {
+        **(item.get("detail") or {}),
+        "sameBarOrders": int(stacked["orders"]),
+        "sameBarTargets": int(stacked.get("targets") or 0),
+        "sameBarSymbols": stacked.get("symbols"),
+        "sameBarExamples": list(stacked.get("examples") or [])[:SAME_BAR_EXAMPLES],
+    }
+    if stacked.get("targets"):
+        item["summary"] += (
+            f"; {stacked['targets']} order_target_* on a name with an open order "
+            "of the same bar"
+        )
+        if item["status"] == "pass":
+            item["status"] = "warn"
+    return item
+
+
+def _check_execution_timing(journal: dict, flags: dict) -> dict:
     fills = journal["fills"]
     same = journal["same_bar"]
     unmatched = journal["unmatched"]
@@ -663,7 +696,9 @@ def compute(context: dict) -> dict:
     items = [
         _safely("lookahead", lambda: check_lookahead(need("sources"))),
         _safely("universe", lambda: check_universe(need("facts"), context.get("membership"))),
-        _safely("execution", lambda: check_execution(need("journal"), context.get("flags") or {})),
+        _safely("execution", lambda: check_execution(
+            need("journal"), context.get("flags") or {}, context.get("same_bar_orders"),
+        )),
         _safely("costs", lambda: check_costs(
             need("journal"), context.get("schemes"), context.get("policy"),
             context.get("caller_commission"), context.get("routes"), members,
