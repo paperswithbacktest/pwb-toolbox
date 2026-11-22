@@ -27,6 +27,12 @@ instead login to the Huggingface Hub (where public PWB datasets are hosted) with
 huggingface-cli login
 ```
 
+What `get_pricing`, `load_dataset` and the cost schedules of the backtest harness return is also kept on disk between
+processes (`~/.cache/pwb_toolbox/prepared`, or `$PWB_CACHE_DIR/prepared`; capped at `PWB_PREPARED_CACHE_MAX_GB`, 10 GB by
+default; `PWB_CACHE=0` turns it off). An entry is keyed on the call, the version of the package and the exact revision
+of every dataset read, so a new revision of a dataset is simply another entry; nothing expires by age. A run that falls
+back to a degraded mode (a cost table it cannot read, a dataset whose revision is unknown) neither reads nor writes it.
+
 ## Usage
 
 The `pwb-toolbox` package offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:
