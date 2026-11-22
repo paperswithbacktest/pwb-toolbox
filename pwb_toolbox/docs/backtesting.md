@@ -328,7 +328,7 @@ one `Checks: lookahead pass, universe pass, execution pass, costs pass (3 ms)` l
 |---|---|---|
 | `lookahead` | the code reads future data: a positive index on a feed (`self.data.close[1]`), quarterly fundamentals merged without a reporting lag, an anchored offset that rolls into the current period (`d - MonthBegin(1)`) | a pattern that needs a reader (`shift(-n)`, a `MonthEnd(1)` correct only on a month end...), or the code could not be found |
 | `universe` | -- | a fixed list of single stocks (or of three coins or more) replayed over 5 years or more: today's survivors |
-| `execution` | an order filled on the bar whose data produced it (cheat-on-close, cheat-on-open) | nothing was filled |
+| `execution` | an order filled on the bar whose data produced it (cheat-on-close, cheat-on-open) | nothing was filled; or an `order_target_*` sent on a name that already had an open order on the same bar (see below) |
 | `costs` | more than 20 % of the traded value of stocks and ETFs charged the default floor instead of a measured spread | more than 5 % of it; or a flat commission set by the strategy; or a book that held short positions with `short_borrow_bps=0` ("short leg carries no borrow cost") |
 
 The rules and thresholds are in `pwb_toolbox/backtesting/checks.py`; the look-ahead
@@ -338,7 +338,18 @@ that cannot run is reported as `warn` with the reason. `PWB_HARNESS_CHECKS=0` in
 environment switches them off. When the book held short positions, the `costs`
 detail carries `shortBorrowBps`, `shortBorrowCost`, `shortBorrowStartNavShare` and
 `shortNames`, and its summary ends with `short borrow 50 bp/yr (1,843 paid)` or
-`short leg carries no borrow cost`. Post the block unchanged with the run's results:
+`short leg carries no borrow cost`.
+
+backtrader sizes `order_target_*` on the position as it stands, blind to orders not
+yet filled: a second order on a name in the same bar (`close()` then
+`order_target_size(d, 0)`, two cohorts that each retarget the name) is computed as if
+the first did not exist, and both are executed -- the position doubles or flips. The
+harness still executes them, but counts them in `strategy.same_bar_orders` /
+`run_report["same_bar_orders"]` (`orders`, `targets`, `symbols`, `bars`, `first`,
+`examples`), prints a `Warning: same-bar orders: ...` line, and the `execution` check
+warns when a target was among them. Send one order, or one target, per name and bar.
+
+Post the block unchanged with the run's results:
 `requests.post(".../api/v1/me/strategies/{slug}/results", json={..., "checks": strategy.checks})`.
 
 ### Option contracts
