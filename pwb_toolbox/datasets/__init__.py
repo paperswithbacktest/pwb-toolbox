@@ -2545,8 +2545,130 @@ def _dated_names(universe: pd.DataFrame) -> dict:
     return {k: sorted(v) for k, v in out.items()}
 
 
+def _reused_groups_disjoint(reused: dict) -> bool:
+    """Whether no name (a candidate or the bare ticker itself) belongs to two groups.
+
+    Then the groups do not see each other: a group only drops or renames rows
+    of its own names, into its own bare ticker, so the order in which the
+    sequential loop takes them changes nothing.
+    """
+    seen = set()
+    for bare, names in reused.items():
+        touched = set(names) | {bare}
+        if touched & seen:
+            return False
+        seen |= touched
+    return True
+
+
 def _resolve_reused_tickers(frames: dict, reused: dict, start_date, end_date) -> dict:
     """Keep, for each reused bare ticker, the one instrument that covers the window.
+
+    ``reused`` maps the bare ticker to the names loaded for it (itself, when the
+    index has it, and its dated names). The winner's rows are renamed to the
+    bare ticker; the other candidates' rows are dropped.
+
+    One pass over each frame, whatever the number of reused tickers: the
+    sequential loop (``_resolve_reused_tickers_sequential``) converted, compared
+    and copied the whole panel once per reused ticker -- 620 to 1 450 s, half
+    the run, for the strategies that load 2 700 names or more (A3, 23 Nov 2026).
+    The result is the loop's, frame for frame, including what it did to the
+    ``symbol`` column (converted to ``str`` in every frame still holding rows
+    when a winner is renamed) and to the frames it emptied (left alone after).
+    When two groups share a name the loop's order matters, and the loop runs.
+    """
+    if not reused:
+        return frames
+    if not _reused_groups_disjoint(reused):
+        return _resolve_reused_tickers_sequential(frames, reused, start_date, end_date)
+    start = pd.Timestamp.min if start_date is None else pd.Timestamp(start_date)
+    end = pd.Timestamp.max if end_date is None else pd.Timestamp(end_date)
+    wanted = list({name for names in reused.values() for name in names})
+
+    # The rows of every candidate name, frame by frame: one conversion and one
+    # membership test per frame.
+    live = []
+    for repo, frame in frames.items():
+        if frame is None or frame.empty:
+            continue
+        sym = frame["symbol"].astype(str)
+        hit = sym.isin(wanted).to_numpy()
+        live.append((repo, frame, sym, hit))
+
+    # spans[bare][name] as the loop computed it: from the last frame that holds
+    # rows of the name, its rows in frame order; keys inserted frame by frame
+    # in the order of ``names`` (the warning lists the other instruments so).
+    spans = {bare: {} for bare in reused}
+    for _, frame, sym, hit in live:
+        if not hit.any():
+            continue
+        positions = np.flatnonzero(hit)
+        by_name = pd.Series(positions).groupby(sym.to_numpy()[positions], sort=False).indices
+        dates = frame["date"]
+        for bare, names in reused.items():
+            for name in names:
+                where = by_name.get(name)
+                if where is None:
+                    continue
+                days = pd.to_datetime(dates.iloc[positions[where]])
+                spans[bare][name] = (int(((days >= start) & (days <= end)).sum()),
+                                     days.min(), days.max())
+
+    steps = []  # (losers, best, bare) of each group with rows, in the loop's order
+    for bare, names in reused.items():
+        found = spans[bare]
+        if not found:
+            continue
+        # The loop filled ``spans`` name by name inside each frame; the order of
+        # its keys only breaks ties, and the key below has none.
+        best = max(found, key=lambda n: (found[n][0], n == bare, n))
+        losers = [n for n in found if n != best]
+        steps.append((losers, best, bare))
+    if not steps:
+        return frames
+
+    group_of = {}
+    for index, (losers, _, _) in enumerate(steps):
+        for name in losers:
+            group_of[name] = index
+    renamed_at = [index for index, (_, best, bare) in enumerate(steps) if best != bare]
+    renames = {best: bare for _, best, bare in steps if best != bare}
+    every_loser = list(group_of)
+    for repo, frame, sym, _ in live:
+        gone = sym.isin(every_loser).to_numpy()
+        kept = frame[~gone].copy()
+        if renamed_at:
+            # The loop renames in a frame only while it still has rows: up to
+            # (and including) the step that drops its last one.
+            emptied_at = len(steps)
+            if gone.all():
+                emptied_at = max(group_of[name] for name in pd.unique(sym.to_numpy()[gone]))
+            if renamed_at[0] <= emptied_at:
+                ksym = kept["symbol"].astype(str)
+                kept["symbol"] = ksym.where(~ksym.isin(list(renames)), ksym.map(renames))
+        frames[repo] = kept
+
+    for losers, best, bare in steps:
+        found = spans[bare]
+        if best != bare or any(found[n][0] for n in losers):
+            def describe(n):
+                count, first, last = found[n]
+                return f"'{n}' ({first:%Y-%m-%d}..{last:%Y-%m-%d}, {count} sessions in the window)"
+            others = "; ".join(describe(n) for n in losers) or "none"
+            loaded_as = f", loaded as '{bare}'" if best != bare else ""
+            print(
+                f"Warning: '{bare}' named several instruments over time; for this window it "
+                f"resolves to {describe(best)}{loaded_as}. Other instruments under '{bare}': "
+                f"{others}. Instruments are never stitched; name one explicitly to choose it."
+            )
+    return frames
+
+
+def _resolve_reused_tickers_sequential(frames: dict, reused: dict, start_date, end_date) -> dict:
+    """One reused ticker after the other: the implementation up to 0.1.54, kept for
+    the cases ``_resolve_reused_tickers`` cannot do in one pass (see there).
+
+    Keep, for each reused bare ticker, the one instrument that covers the window.
 
     ``reused`` maps the bare ticker to the names loaded for it (itself, when the
     index has it, and its dated names). The winner's rows are renamed to the
