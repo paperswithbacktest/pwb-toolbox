@@ -33,6 +33,12 @@ default; `PWB_CACHE=0` turns it off). An entry is keyed on the call, the version
 of every dataset read, so a new revision of a dataset is simply another entry; nothing expires by age. A run that falls
 back to a degraded mode (a cost table it cannot read, a dataset whose revision is unknown) neither reads nor writes it.
 
+`load_option_chain` keeps the bytes it fetches from `Options-Daily-Price` on disk too (`$PWB_CACHE_DIR/options`; capped
+at `PWB_OPTIONS_CACHE_MAX_GB`, 20 GB by default; `PWB_CACHE=0` or `PWB_OPTIONS_CACHE=0` turns it off). Blocks are keyed
+on the exact revision of the dataset and the file, so what is read back is what the Hub would have sent; a month read
+once by any strategy is read again from disk, without a request. Offline, degraded, or without a known revision (files
+listed by the subscriber API), it is neither read nor written.
+
 ## Usage
 
 The `pwb-toolbox` package offers a range of functionalities for systematic trading analysis. Here are some examples of how to utilize the package:

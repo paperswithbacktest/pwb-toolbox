@@ -56,6 +56,8 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import requests
 
+from . import option_cache
+
 OPTIONS_DAILY_DATASET = "Options-Daily-Price"
 REPO_ID = f"paperswithbacktest/{OPTIONS_DAILY_DATASET}"
 KEY_COLUMNS = ("symbol", "date", "underlying")
@@ -247,6 +249,9 @@ class RangeFile(io.RawIOBase):
         raise last_exc
 
 
+_CachedRangeFile = option_cache.make_cached_file(RangeFile)
+
+
 def _hf_sources(hf_token: str) -> list[tuple[str, str, dict]]:
     """``(file name, url, headers)`` of every Parquet file on the Hub, at the current revision."""
     from huggingface_hub import hf_hub_url
@@ -256,8 +261,14 @@ def _hf_sources(hf_token: str) -> list[tuple[str, str, dict]]:
 
     sha, files = _hub_snapshot(REPO_ID, hf_token)
     headers = build_hf_headers(token=hf_token)
-    return [(f, hf_hub_url(REPO_ID, f, repo_type="dataset", revision=sha), headers)
-            for f in files if f.endswith(".parquet")]
+    out = []
+    for f in files:
+        if f.endswith(".parquet"):
+            url = hf_hub_url(REPO_ID, f, repo_type="dataset", revision=sha)
+            # The URL names the revision; the byte cache keys on it (option_cache).
+            option_cache.register(url, REPO_ID, sha, f)
+            out.append((f, url, headers))
+    return out
 
 
 def _pwb_sources(pwb_api_key: str) -> list[tuple[str, str, dict]]:
@@ -283,7 +294,14 @@ def _pwb_sources(pwb_api_key: str) -> list[tuple[str, str, dict]]:
 
 
 def _open(url: str, headers: dict):
-    """The file object a shard is read through (replaced in tests)."""
+    """The file object a shard is read through (replaced in tests).
+
+    A Hub file, whose revision is known, is read through the disk cache of
+    ``option_cache`` when it is on; a file listed by the subscriber API, whose
+    revision is not, is read over the network only."""
+    ident = option_cache.identity(url)
+    if ident is not None and option_cache.active(ident[0]):
+        return _CachedRangeFile(url, headers, ident)
     return RangeFile(url, headers)
 
 
