@@ -20,6 +20,7 @@ import pyarrow.parquet as pq
 import requests
 from tqdm import tqdm
 
+from . import prepared_cache as _prepared
 from .index_currencies import (  # noqa: F401  (re-exported)
     INDEX_CURRENCY,
     IndexCurrencyWarning,
@@ -527,7 +528,7 @@ def _shards_in_window(names: list, window, dataset_name: str) -> list:
         warnings.warn(
             f"The {len(names)} files of {dataset_name} carry no period in their names; all of "
             "them are downloaded and start/end only filter the rows read from each.",
-            stacklevel=4,
+            stacklevel=5,
         )
         return list(names)
     picked = [n for n, p in zip(names, periods) if window.overlaps(*p)]
@@ -537,7 +538,7 @@ def _shards_in_window(names: list, window, dataset_name: str) -> list:
         warnings.warn(
             f"No shard of {dataset_name} covers {window.describe()}; the dataset covers "
             f"{first}..{last}. Nothing was downloaded.",
-            stacklevel=4,
+            stacklevel=5,
         )
     else:
         print(f"[datasets] {dataset_name} {window.describe()}: {len(picked)} of {len(names)} shards")
@@ -986,6 +987,9 @@ def _load_dataset_from_pwb(dataset_name: str, split: str, pwb_api_key: str, symb
             files, index = None, None
     if files is None:
         files = _api_listing(dataset_name, split, pwb_api_key)
+    # Read at the commit the Hub index named, or at whatever the API serves
+    # today -- which no cache key can name.
+    _prepared.note_revision("api", dataset_name, index[0] if index is not None else None)
     if not files:
         raise ValueError(f"No files available for dataset '{dataset_name}' and split '{split}'")
 
@@ -1055,13 +1059,16 @@ def _hub_snapshot(repo_id: str, hf_token: str):
     local snapshot is used and said so.
     """
     if repo_id in _HUB_SNAPSHOTS:
-        return _HUB_SNAPSHOTS[repo_id]
+        snapshot = _HUB_SNAPSHOTS[repo_id]
+        _prepared.note_revision("hub", repo_id, snapshot[0])
+        return snapshot
     offline = os.getenv("PWB_HF_OFFLINE", "0") != "0" or os.getenv("HF_HUB_OFFLINE", "0") not in ("", "0")
     if not offline:
         try:
             info = HfApi(token=hf_token).dataset_info(repo_id, files_metadata=False)
             snapshot = (info.sha, sorted(sibling.rfilename for sibling in info.siblings))
             _HUB_SNAPSHOTS[repo_id] = snapshot
+            _prepared.note_revision("hub", repo_id, snapshot[0])
             return snapshot
         except Exception as exc:  # noqa: BLE001 - the local copy is the fallback
             print(f"[datasets] Hub unreachable for {repo_id} ({type(exc).__name__}); using the local snapshot")
@@ -1072,6 +1079,7 @@ def _hub_snapshot(repo_id: str, hf_token: str):
             f"(offline={offline})."
         )
     _HUB_SNAPSHOTS[repo_id] = snapshot
+    _prepared.note_revision("hub", repo_id, snapshot[0])
     return snapshot
 
 
@@ -1913,10 +1921,22 @@ def _warn_unbounded_minute(name: str, symbols) -> None:
         f"the months you need are downloaded, e.g. load_dataset({name!r}, symbols=['SPY'], "
         f"start='2024-01-01', end='2024-03-31', columns=[{price!r}, 'volume']).",
         UnboundedMinuteLoadWarning,
-        stacklevel=3,
+        stacklevel=4,
     )
 
 
+def _load_dataset_uncacheable(arguments) -> bool:
+    """The ``load_dataset`` calls the prepared-data cache leaves alone."""
+    name = str(arguments.get("path")).strip().rsplit("/", 1)[-1]
+    return (
+        is_minute_dataset(name)
+        or name.lower() == "options-daily-price"
+        or _SHARD_WINDOW.get() is not None
+        or _SUPERSET_READS.get()
+    )
+
+
+@_prepared.cached("load_dataset", skip=_load_dataset_uncacheable)
 def load_dataset(
     path,
     symbols=None,
@@ -2181,7 +2201,7 @@ def _convert_bond_rates_to_prices(df: pd.DataFrame, face_value: float = 100.0) -
             f"Bonds-Daily-Price: no maturity readable in {left}; these rows stay "
             "yields in percent, not prices (rate_to_price could not convert them)",
             UnconvertedBondRateWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
     if not mask.any():
         return df
@@ -2661,6 +2681,7 @@ def _load_for_pricing(repo_id, names, extend, shard_window):
         _SHARD_WINDOW.reset(token)
 
 
+@_prepared.cached("get_pricing", skip=lambda arguments: _SUPERSET_READS.get())
 def get_pricing(
     symbol_list,
     fields=None,  # ← default set below

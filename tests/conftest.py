@@ -22,3 +22,7 @@ _API_CACHE_TMP = _tempfile.mkdtemp(prefix="pwb-test-cache-")
 _atexit.register(_shutil.rmtree, _API_CACHE_TMP, True)
 _os.environ["PWB_CACHE_DIR"] = _API_CACHE_TMP
 _os.environ["PWB_API_HUB_INDEX"] = "0"
+# The prepared-data cache is off for every test but its own
+# (``test_prepared_cache.py`` turns it on in a directory of its own): the other
+# tests replace the loaders, which leaves no dataset revision to key on.
+_os.environ["PWB_CACHE"] = "0"

@@ -60,6 +60,7 @@ import numpy as np
 import pandas as pd
 
 from ..datasets import get_pricing, superset_reads
+from ..datasets import prepared_cache as _prepared
 from ..engine import load as _load_engine
 
 bt = _load_engine()  # backtrader by default, Tradewind on request; see pwb_toolbox.engine
@@ -205,15 +206,26 @@ def _read_hub_table(repo_id: str) -> pd.DataFrame:
     ]
     if not files:
         raise FileNotFoundError(f"{repo_id} carries no parquet under data/")
-    frames = [
-        pd.read_parquet(
-            huggingface_hub.hf_hub_download(
-                repo_id, path, repo_type="dataset", token=token
-            )
-        )
+    local = [
+        huggingface_hub.hf_hub_download(repo_id, path, repo_type="dataset", token=token)
         for path in sorted(files)
     ]
+    frames = [pd.read_parquet(path) for path in local]
+    # The commit the files were read at, from the snapshot directory they sit
+    # in: what the prepared-data cache keys the cost schedules on.
+    shas = {m.group(1) for m in (_SNAPSHOT_SHA.search(p.replace(os.sep, "/")) for p in local) if m}
+    _prepared.note_revision("table", repo_id, shas.pop() if len(shas) == 1 else None)
     return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+
+
+_SNAPSHOT_SHA = re.compile(r"/snapshots/([0-9a-f]{40})/")
+
+
+def _table_unavailable(repo_id: str, reason: str) -> None:
+    """A cost table could not be read: the run is degraded (Roll, floor), and
+    the prepared-data cache must neither serve it nor be fed by it."""
+    _prepared.note_revision("table", repo_id, None)
+    _prepared.note_degraded(f"{repo_id}: {reason}")
 
 
 def _read_cost_table(repo_id: str) -> pd.DataFrame:
@@ -247,6 +259,7 @@ def _read_cost_table(repo_id: str) -> pd.DataFrame:
         frame = load_dataset(name)
         if frame is None or frame.empty:
             raise ValueError("the API returned an empty table")
+        _prepared.note_revision("table", repo_id, _prepared.revision_of("api", name))
         return frame
     except Exception as exc:  # noqa: BLE001 - the Hub is still worth trying
         print(f"[costs] {name} unreachable through the API "
@@ -326,6 +339,7 @@ def load_cost_params(repo_id: str = COST_PARAMS_REPO) -> dict:
         }
     except Exception as exc:  # noqa: BLE001 - absence is a degraded mode, not a crash
         print(f"[costs] {_why_unreachable(repo_id, exc)}; falling back to Roll")
+        _table_unavailable(repo_id, "falling back to Roll")
         _PARAMS_CACHE = {}
     return _PARAMS_CACHE
 
@@ -422,6 +436,7 @@ def _roll_for(symbols, start_date) -> dict:
             )
     except Exception as exc:  # noqa: BLE001
         print(f"[costs] pricing unavailable for the Roll fallback ({exc})")
+        _prepared.note_degraded("pricing unavailable for the Roll fallback")
         return out
     if df is None or df.empty:
         return out
@@ -466,6 +481,7 @@ def _universe_repos() -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         print(f"[costs] catalogue index unavailable ({exc}); not filtering by class")
+        _prepared.note_degraded("catalogue index unavailable")
         _UNIVERSE_CACHE = {}
     return _UNIVERSE_CACHE
 
@@ -614,6 +630,7 @@ def _currency_vintages() -> dict:
                 )
         except Exception as exc:  # noqa: BLE001
             print(f"[costs] {_why_unreachable(params_repo, exc)}; using the floor")
+            _table_unavailable(params_repo, "using the floor")
         out[price_repo] = table
     _CURRENCY_CACHE = out
     return out
@@ -688,6 +705,7 @@ def _front_month_vintages() -> dict:
     except Exception as exc:  # noqa: BLE001
         print(f"[costs] {_why_unreachable(FUTURES_PARAMS_REPO, exc)}; "
               f"using the floor")
+        _table_unavailable(FUTURES_PARAMS_REPO, "using the floor")
         _FUTURES_CACHE = {}
     return _FUTURES_CACHE
 
@@ -706,6 +724,7 @@ def _symbol_vintages(params: dict) -> dict:
     return out
 
 
+@_prepared.cached("get_cost_schedules")
 def get_cost_schedules(
     symbols,
     start_date="2020-01-01",
@@ -961,6 +980,7 @@ def load_lambda_params(repo_id: str = COST_PARAMS_REPO) -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         print(f"[costs] lambda unavailable ({exc}); impact term disabled")
+        _table_unavailable(repo_id, "impact term disabled")
         _LAMBDA_CACHE = {}
     return _LAMBDA_CACHE
 
@@ -988,3 +1008,13 @@ if __name__ == "__main__":
         ["AAPL", "MSFT", "GOOGL", "NOTATICKER"], year=2010
     ).items():
         print(f"{symbol:<12} {cost.half_spread * 1e4:>8.2f} bp  {cost.source} {cost.year or ''}")
+
+
+# How the prepared-data cache re-reads a cost table's revision when it checks
+# an entry: through the loader the cost model itself uses, so a table that
+# cannot be read here (offline, gated) is unreadable for the check as well.
+_prepared.register_table(COST_PARAMS_REPO, load_cost_params)
+_prepared.register_table(FUTURES_PARAMS_REPO, _front_month_vintages)
+for _params_repo in CURRENCY_REPOS.values():
+    _prepared.register_table(_params_repo, _currency_vintages)
+del _params_repo
