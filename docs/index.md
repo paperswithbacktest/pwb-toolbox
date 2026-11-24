@@ -36,6 +36,7 @@ df = pwb_ds.load_dataset("Stocks-Daily-Price")
 :maxdepth: 2
 
 datasets
+world_model
 backtesting
 execution
 ```
