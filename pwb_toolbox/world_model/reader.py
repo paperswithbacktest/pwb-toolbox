@@ -48,6 +48,10 @@ ENTITY_COLUMNS = [
     "entity_id", "entity_type", "name", "country", "valid_from", "valid_to", "known_at",
     "source", "source_doc", "vintage",
 ]
+#: ``get_graph(period=...)``: ``None`` tests the intervals on the date;
+#: ``"latest_known"`` returns each edge's latest period known at ``as_of``.
+LATEST_KNOWN = "latest_known"
+PERIODS = (None, LATEST_KNOWN)
 DETAIL_COLUMNS = ["cik", "name", "source", "confidence", "valid_from", "valid_to", "known_at"]
 
 
@@ -309,7 +313,8 @@ class WorldModel:
         """Names of the ``WorldModel-Edges-<Family>`` datasets this source holds."""
         return self.source.edge_families()
 
-    def get_graph(self, as_of, relations=None, method=None, *, date=None, families=None) -> pd.DataFrame:
+    def get_graph(self, as_of, relations=None, method=None, *, date=None, families=None,
+                  period=None) -> pd.DataFrame:
         """Edges of the graph as it was knowable at ``as_of``.
 
         Parameters
@@ -330,12 +335,26 @@ class WorldModel:
             World date for the interval test, when it differs from ``as_of``.
         families : list of str, optional
             ``WorldModel-Edges-<Family>`` datasets to read; default all of them.
+        period : ``None`` or ``"latest_known"``, optional
+            Default (``None``): for each edge key ``(src, dst, relation,
+            method)``, the rows of its latest publication with ``known_at <=
+            as_of`` are kept, then those whose interval holds the date.
+            ``"latest_known"``: the reader picks the vintage instead of the
+            date -- for each edge, among the rows with ``known_at <= as_of``,
+            those of the most recent period (largest ``valid_from``), in their
+            latest publication, whatever ``valid_to`` says. A FY2023 edge
+            published in 2025 is read at 2026-01-01 even though its interval
+            ended in 2024, and is invisible at 2025-01-01, where the latest
+            period then known is read instead. The period chosen is returned in
+            a ``reference_period`` column (its ``valid_from``). ``date`` does
+            not apply.
 
-        For each edge key ``(src, dst, relation, method)``, the rows of its
-        latest publication with ``known_at <= as_of`` are kept, then those
-        whose interval holds the date. Raises :class:`WorldModelNotAvailable`
-        when no Edges dataset exists.
+        Raises :class:`WorldModelNotAvailable` when no Edges dataset exists.
         """
+        if period not in PERIODS:
+            raise ValueError(f"unknown period {period!r}; expected one of {sorted(map(str, PERIODS))}")
+        if period == LATEST_KNOWN and date is not None:
+            raise ValueError("period='latest_known' picks the latest period itself; date= does not apply")
         cutoff, day = _pit.as_of_point(as_of)
         if date is not None:
             day = _pit.world_dates([date]).iloc[0]
@@ -354,7 +373,10 @@ class WorldModel:
         parts = [self._read(family, cutoff, expression) for family in families]
         parts = [p for p in parts if not p.empty]
         if not parts:
-            return self._empty_edges()
+            empty = self._empty_edges()
+            if period == LATEST_KNOWN:
+                empty["reference_period"] = empty["valid_from"]
+            return empty
         edges = pd.concat(parts, ignore_index=True)
 
         if isinstance(method, str) and method not in ("latest", "all"):
@@ -362,10 +384,16 @@ class WorldModel:
         elif isinstance(method, (list, tuple, set)):
             edges = edges[edges["method"].isin(list(method))]
 
-        edges = _pit.latest_publication(edges, EDGE_KEYS, cutoff)
+        if period == LATEST_KNOWN:
+            edges = _pit.latest_period(edges, EDGE_KEYS, cutoff)
+        else:
+            edges = _pit.latest_publication(edges, EDGE_KEYS, cutoff)
         if method is None or method == "latest":
             edges = self._latest_method(edges)
-        edges = _pit.valid_on(edges, day)
+        if period == LATEST_KNOWN:
+            edges = edges.assign(reference_period=edges["valid_from"])
+        else:
+            edges = _pit.valid_on(edges, day)
 
         if requested is not None:
             frames = []
@@ -379,6 +407,8 @@ class WorldModel:
                     frames.append(edges[edges["relation"] == relation])
             edges = pd.concat(frames, ignore_index=True) if frames else edges.iloc[0:0]
         columns = [c for c in EDGE_COLUMNS if c in edges.columns]
+        if period == LATEST_KNOWN:
+            columns.append("reference_period")
         return edges[columns].sort_values(["relation", "src", "dst", "method"]).reset_index(drop=True)
 
     @staticmethod
@@ -459,11 +489,13 @@ def resolve_panel(tickers, dates, *, pairs: bool = False, scheme: str = "ticker_
     )
 
 
-def get_graph(as_of, relations=None, method=None, *, date=None, families=None,
+def get_graph(as_of, relations=None, method=None, *, date=None, families=None, period=None,
               revision=None, local_dir=None) -> pd.DataFrame:
-    """Edges knowable at ``as_of`` and true on its date. See :meth:`WorldModel.get_graph`."""
+    """Edges knowable at ``as_of`` and true on its date (or, with
+    ``period="latest_known"``, of their latest period known then).
+    See :meth:`WorldModel.get_graph`."""
     return _model(revision, local_dir).get_graph(
-        as_of, relations=relations, method=method, date=date, families=families
+        as_of, relations=relations, method=method, date=date, families=families, period=period
     )
 
 

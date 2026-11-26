@@ -446,6 +446,70 @@ class Graph(unittest.TestCase):
             self.wm.get_graph("2020-06-01", relations="in_sector")
 
 
+class GraphLatestKnown(unittest.TestCase):
+    """``period="latest_known"``: the reader picks the vintage, not the date."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        write_table(os.path.join(self.root, "WorldModel-Identifiers"),
+                    [ident("E_A", "AAA", "2000-01-01", None, "2000-01-01")], IDENTIFIERS_SCHEMA)
+        rows = [
+            # the 2022 vintage of a yearly table, published in 2024
+            edge("E_A", "E_B", "io_flow", "2022-01-01", "2023-01-01", "2024-03-01", method="bea", weight=0.1),
+            # the 2023 vintage, published in 2025 (after its interval ended)
+            edge("E_A", "E_B", "io_flow", "2023-01-01", "2024-01-01", "2025-03-01", method="bea", weight=0.2),
+            # a late correction of the 2022 vintage: never replaces the 2023 one
+            edge("E_A", "E_B", "io_flow", "2022-01-01", "2023-01-01", "2025-06-01", method="bea", weight=0.15),
+            # a correction of the 2023 vintage, published after 2026-01-01
+            edge("E_A", "E_B", "io_flow", "2023-01-01", "2024-01-01", "2026-02-01", method="bea", weight=0.25),
+            # another pair, only ever published for 2021
+            edge("E_A", "E_C", "io_flow", "2021-01-01", "2022-01-01", "2022-05-01", method="bea", weight=0.3),
+        ]
+        write_table(os.path.join(self.root, "WorldModel-Edges-IO"), rows, EDGES_SCHEMA)
+        self.wm = WorldModel(local_dir=self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def latest(self, as_of):
+        graph = self.wm.get_graph(as_of, relations="io_flow", period="latest_known")
+        return {dst: (row.reference_period.date().isoformat(), round(float(row.weight), 6))
+                for dst, row in graph.set_index("dst").iterrows()}
+
+    def test_2023_vintage_published_in_2025_is_chosen_in_2026(self):
+        self.assertEqual(self.latest("2026-01-01"),
+                         {"E_B": ("2023-01-01", 0.2), "E_C": ("2021-01-01", 0.3)})
+
+    def test_2023_vintage_is_ignored_before_its_publication(self):
+        self.assertEqual(self.latest("2025-01-01"),
+                         {"E_B": ("2022-01-01", 0.1), "E_C": ("2021-01-01", 0.3)})
+
+    def test_correction_of_the_period_replaces_it_once_published(self):
+        self.assertEqual(self.latest("2026-03-01")["E_B"], ("2023-01-01", 0.25))
+
+    def test_reference_period_column(self):
+        graph = self.wm.get_graph("2026-01-01", period="latest_known")
+        self.assertEqual(graph.columns[-1], "reference_period")
+        self.assertTrue((graph["reference_period"] == graph["valid_from"]).all())
+        empty = self.wm.get_graph("2020-01-01", period="latest_known")
+        self.assertTrue(empty.empty)
+        self.assertIn("reference_period", empty.columns)
+
+    def test_default_reading_is_unchanged(self):
+        # the date test finds nothing: no interval holds 2026-01-01
+        self.assertTrue(self.wm.get_graph("2026-01-01", relations="io_flow").empty)
+        graph = self.wm.get_graph("2025-04-01", relations="io_flow", date="2023-06-01")
+        self.assertEqual([round(float(w), 6) for w in graph["weight"]], [0.2])
+        self.assertNotIn("reference_period", graph.columns)
+
+    def test_bad_period_and_date(self):
+        with self.assertRaises(ValueError):
+            self.wm.get_graph("2026-01-01", period="latest")
+        with self.assertRaises(ValueError):
+            self.wm.get_graph("2026-01-01", period="latest_known", date="2023-06-01")
+
+
 class AsOfConversion(unittest.TestCase):
     def test_vector_and_scalar_agree(self):
         values = ["2020-03-02", pd.Timestamp("2020-07-01"), dt.date(2020, 11, 2),

@@ -91,6 +91,16 @@ Returns the edges (`src`, `dst`, `relation`, `weight`, `sign`, `valid_from`,
 - `date=` tests the intervals on another day than `as_of`. An edge describing a
   past fiscal period is valid over that period, so asking for the period that
   was last reported may need an earlier `date`.
+- `period="latest_known"` lets the reader choose the vintage instead: for each
+  edge, among the rows with `known_at <= as_of`, the most recent period
+  (largest `valid_from`) in its latest publication, whatever `valid_to` says.
+  The period read is returned in a `reference_period` column. A 2023 table
+  published in 2025 is read at 2026-01-01 and ignored at 2025-01-01, where the
+  latest period then known is read. `date=` does not apply.
+
+```python
+edges = wm.get_graph("2026-01-01", relations="io_flow", period="latest_known")
+```
 
 While no `WorldModel-Edges-<Family>` dataset is published, `get_graph` raises
 `WorldModelNotAvailable` and says so.
