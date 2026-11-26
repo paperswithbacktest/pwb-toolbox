@@ -230,7 +230,7 @@ def code_version() -> str:
 #: Settings that change nothing in a result (where the cache lives, how big it
 #: may grow) or that are secrets (only whether they are set matters).
 _ENV_IGNORED = {"PWB_CACHE", "PWB_CACHE_DIR", "PWB_PREPARED_CACHE_MAX_GB", "PWB_API_CACHE_MAX_GB",
-                "PWB_API_WORKERS", "PWB_READ_MEMO_MB"}
+                "PWB_API_WORKERS", "PWB_READ_MEMO_MB", "PWB_OPTIONS_CACHE", "PWB_OPTIONS_CACHE_MAX_GB"}
 _ENV_SECRET = {"PWB_API_KEY"}
 
 

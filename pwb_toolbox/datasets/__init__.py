@@ -1026,6 +1026,9 @@ def _list_hf_split_parquet_files(repo_files: list[str], split: str) -> list[str]
 
 
 _HUB_SNAPSHOTS: dict = {}
+#: Repos whose revision came from a local snapshot (offline, or the Hub
+#: unreachable): the option byte cache stays off for them (option_cache).
+_HUB_LOCAL_FALLBACK: set = set()
 
 
 def _local_snapshot(repo_id: str):
@@ -1073,6 +1076,7 @@ def _hub_snapshot(repo_id: str, hf_token: str):
         except Exception as exc:  # noqa: BLE001 - the local copy is the fallback
             print(f"[datasets] Hub unreachable for {repo_id} ({type(exc).__name__}); using the local snapshot")
     snapshot = _local_snapshot(repo_id)
+    _HUB_LOCAL_FALLBACK.add(repo_id)
     if snapshot is None:
         raise RuntimeError(
             f"No local snapshot of {repo_id} in {HF_HUB_CACHE} and the Hub was not consulted "
