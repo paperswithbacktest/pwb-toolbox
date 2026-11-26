@@ -147,6 +147,23 @@ def latest_publication(rows: pd.DataFrame, keys: list[str], cutoff) -> pd.DataFr
     return rows
 
 
+def latest_period(rows: pd.DataFrame, keys: list[str], cutoff) -> pd.DataFrame:
+    """Rows of each key's most recent period known at ``cutoff``, in its latest publication.
+
+    Among the rows with ``known_at <= cutoff``, each key keeps those with the
+    largest ``valid_from`` (the reference period), then, within that period,
+    the latest publication (``known_at``, then ``vintage``) -- a correction of
+    the period replaces it, a correction of an older period does not. The
+    interval is not tested against a date: the reader chooses the vintage.
+    """
+    rows = rows[rows["known_at"] <= cutoff]
+    if rows.empty:
+        return rows
+    newest = rows.groupby(keys, sort=False)["valid_from"].transform("max")
+    rows = rows[rows["valid_from"] == newest]
+    return latest_publication(rows, keys, cutoff)
+
+
 def valid_on(rows: pd.DataFrame, date) -> pd.DataFrame:
     """Rows whose half-open interval ``[valid_from, valid_to)`` holds ``date``."""
     end = rows["valid_to"].fillna(OPEN_END)
